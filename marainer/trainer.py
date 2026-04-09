@@ -1,46 +1,48 @@
-import mlflow
+from typing import Any, Union
+
+import pytorch_lightning as L
 import torch
 import torch.nn as nn
-import pytorch_lightning as L
+from confluid import Class, configurable, flow
 from logflow import get_logger
-from typing import Any, Optional, Union, List, Dict
-from confluid import configurable, flow, Class
-from torch.utils.data import IterableDataset, DataLoader
+from torch.utils.data import DataLoader, IterableDataset
 
 logger = get_logger(__name__)
+
 
 class MarainerLightningModule(L.LightningModule):
     """
     Generic Lightning wrapper for Marainer models.
     """
+
     def __init__(self, model: nn.Module, optimizer: Any):
         super().__init__()
         self.model = model
         self.optimizer_factory = optimizer
         self.loss_fn = nn.CrossEntropyLoss()
 
-    def forward(self, x):
-        return self.model(x)
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        return self.model(x)  # type: ignore[no-any-return]
 
-    def training_step(self, batch, batch_idx):
+    def training_step(self, batch: Any, batch_idx: int) -> torch.Tensor:
         data, target = self._unpack_batch(batch)
         output = self(data)
-        loss = self.loss_fn(output, target)
+        loss: torch.Tensor = self.loss_fn(output, target)
         self.log("train_loss", loss, on_step=True, on_epoch=True, prog_bar=True)
         return loss
 
-    def validation_step(self, batch, batch_idx):
+    def validation_step(self, batch: Any, batch_idx: int) -> torch.Tensor:
         data, target = self._unpack_batch(batch)
         output = self(data)
-        loss = self.loss_fn(output, target)
+        loss: torch.Tensor = self.loss_fn(output, target)
         self.log("val_loss", loss, on_epoch=True, prog_bar=True)
         return loss
 
-    def configure_optimizers(self):
+    def configure_optimizers(self) -> Any:
         # Use confluid.flow to instantiate the optimizer with model parameters
         return flow(self.optimizer_factory, params=self.parameters())
 
-    def _unpack_batch(self, batch):
+    def _unpack_batch(self, batch: Any) -> tuple[torch.Tensor, torch.Tensor]:
         """Standardizes batch unpacking for DataFlux Samples or tuples."""
         if isinstance(batch, list) and len(batch) > 0 and hasattr(batch[0], "input"):
             data = torch.stack([s.input for s in batch])
@@ -54,12 +56,16 @@ class MarainerLightningModule(L.LightningModule):
             raise ValueError(f"Unknown batch format: {type(batch)}")
         return data, target
 
+
 class FluxIterableDataset(IterableDataset):
     """Bridges DataFlux Flux to PyTorch IterableDataset."""
+
     def __init__(self, flux: Any):
         self.flux = flux
-    def __iter__(self):
+
+    def __iter__(self) -> Any:
         yield from self.flux
+
 
 @configurable
 class Trainer:
@@ -74,14 +80,14 @@ class Trainer:
         optimizer: Any = None,
         train_set: Any = None,
         val_set: Any = None,
-        train_loader: Any = Class(DataLoader), # Default Class citizen
-        val_loader: Any = Class(DataLoader),   # Default Class citizen
+        train_loader: Any = Class(DataLoader),  # Default Class citizen
+        val_loader: Any = Class(DataLoader),  # Default Class citizen
         epochs: int = 10,
         accelerator: str = "auto",
         devices: Union[str, int] = "auto",
         experiment_name: str = "marainer_run",
         run_name: str = "train",
-        **lightning_kwargs: Any
+        **lightning_kwargs: Any,
     ) -> None:
         self.model = model
         self.optimizer = optimizer
@@ -99,21 +105,21 @@ class Trainer:
     def run(self) -> None:
         """Executes the training loop using PyTorch Lightning."""
         logger.info(f"Marainer navigating to: {self.experiment_name} ({self.run_name})")
-        
+
         # 1. Flow Core Components
         model_instance = flow(self.model)
         lightning_model = MarainerLightningModule(model_instance, self.optimizer)
-        
+
         # 2. Flow Data Components (Deferred materialization)
         # We flow the set first, then use it as the 'dataset' argument for the loader
         train_data = flow(self.train_set)
         if hasattr(train_data, "__iter__") and not hasattr(train_data, "__getitem__"):
             train_data = FluxIterableDataset(train_data)
-            
+
         # Materialize the loader with the live dataset
         # This will also pick up any CLI overrides like --num_workers
         t_loader = flow(self.train_loader, dataset=train_data)
-        
+
         v_loader = None
         if self.val_set:
             val_data = flow(self.val_set)
@@ -126,11 +132,15 @@ class Trainer:
             accelerator=self.accelerator,
             devices=self.devices,
             max_epochs=self.epochs,
-            **self.lightning_kwargs
+            **self.lightning_kwargs,
         )
 
         # 4. Fit
-        logger.info(f"Starting Lightning Fit. Train Loader: {t_loader.__class__.__name__}")
-        trainer.fit(model=lightning_model, train_dataloaders=t_loader, val_dataloaders=v_loader)
-        
+        logger.info(
+            f"Starting Lightning Fit. Train Loader: {t_loader.__class__.__name__}"
+        )
+        trainer.fit(
+            model=lightning_model, train_dataloaders=t_loader, val_dataloaders=v_loader
+        )
+
         logger.info("Training complete. Mariner has safely docked.")
