@@ -20,9 +20,8 @@ train_set: !class:dataflux.core.Flux
   ops:
     - !class:dataflux.ops.ToTensorOp
       normalize: true
-  chunk_size: 16
+  chunk_size: null
 
 train_loader: !class:torch.utils.data.DataLoader
-  batch_size: null       # Flux handles batching
-  num_workers: 4       # Override with --num_workers 4 for parallel loading
-  # persistent_workers: true  # Only valid when num_workers > 0
+  batch_size: 16
+  num_workers: 0

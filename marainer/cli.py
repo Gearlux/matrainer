@@ -22,9 +22,7 @@ def log_task_parameters(task: Any) -> None:
     """Extracts and logs all configurable parameters of the task to MLflow."""
     # We use get_configurable_paths to extract parameters from the materialized task
     params = get_configurable_paths(task)
-    clean_params = {
-        k: v for k, v in params.items() if isinstance(v, (int, float, str, bool))
-    }
+    clean_params = {k: v for k, v in params.items() if isinstance(v, (int, float, str, bool))}
     mlflow.log_params(clean_params)
 
 

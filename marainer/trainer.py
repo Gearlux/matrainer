@@ -43,13 +43,21 @@ class MarainerLightningModule(L.LightningModule):
         return flow(self.optimizer_factory, params=self.parameters())
 
     def _unpack_batch(self, batch: Any) -> tuple[torch.Tensor, torch.Tensor]:
-        """Standardizes batch unpacking for DataFlux Samples or tuples."""
+        """Standardizes batch unpacking for DataFlux Samples or tuples.
+
+        Handles three formats:
+        1. List of Samples (from Flux chunk_size batching)
+        2. Collated Sample (from DataLoader batch_size collation)
+        3. Tuple/list of (data, target) tensors (standard PyTorch)
+        """
         if isinstance(batch, list) and len(batch) > 0 and hasattr(batch[0], "input"):
+            # List of individual Samples → stack into batch
             data = torch.stack([s.input for s in batch])
             target = torch.tensor([s.target for s in batch])
         elif hasattr(batch, "input") and hasattr(batch, "target"):
-            data = batch.input.unsqueeze(0)
-            target = torch.tensor([batch.target])
+            # Collated Sample (DataLoader auto-batched) — already batched tensors
+            data = batch.input
+            target = batch.target if isinstance(batch.target, torch.Tensor) else torch.tensor(batch.target)
         elif isinstance(batch, (list, tuple)) and len(batch) >= 2:
             data, target = batch[0], batch[1]
         else:
@@ -136,11 +144,7 @@ class Trainer:
         )
 
         # 4. Fit
-        logger.info(
-            f"Starting Lightning Fit. Train Loader: {t_loader.__class__.__name__}"
-        )
-        trainer.fit(
-            model=lightning_model, train_dataloaders=t_loader, val_dataloaders=v_loader
-        )
+        logger.info(f"Starting Lightning Fit. Train Loader: {t_loader.__class__.__name__}")
+        trainer.fit(model=lightning_model, train_dataloaders=t_loader, val_dataloaders=v_loader)
 
         logger.info("Training complete. Mariner has safely docked.")

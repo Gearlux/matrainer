@@ -36,6 +36,27 @@ marainer = "marainer.cli:main"
 where = ["."]
 include = ["marainer*"]
 
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+
+[tool.coverage.run]
+source = ["marainer"]
+branch = true
+
+[tool.coverage.report]
+show_missing = true
+
+[tool.isort]
+profile = "black"
+line_length = 120
+
+[tool.black]
+line-length = 120
+
+[tool.flake8]
+max-line-length = 120
+extend-ignore = ["E203"]
+
 [tool.mypy]
 warn_return_any = true
 warn_unused_configs = true
