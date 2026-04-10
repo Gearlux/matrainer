@@ -20,10 +20,10 @@ class MNISTSimpleCNN(nn.Module):
             nn.ReLU(),
             nn.MaxPool2d(2),
         )
+        # 28x28 → MaxPool → 14x14 → MaxPool → 7x7
         self.fc = nn.Sequential(
-            nn.AdaptiveAvgPool2d((4, 4)),
             nn.Flatten(),
-            nn.Linear(32 * 4 * 4, 64),
+            nn.Linear(32 * 7 * 7, 64),
             nn.ReLU(),
             nn.Linear(64, num_classes),
         )
