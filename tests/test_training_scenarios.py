@@ -32,7 +32,7 @@ def _negate(x: torch.Tensor) -> torch.Tensor:
 class TestMapStyleFlux:
     def test_dataloader_batches_flux(self) -> None:
         flux = Flux(source=_make_samples(32))
-        loader: DataLoader = DataLoader(flux, batch_size=8)
+        loader: DataLoader = DataLoader(flux, batch_size=8)  # type: ignore[arg-type]
         batches = list(loader)
         assert len(batches) == 4
         assert batches[0].input.shape == (8, 4)
@@ -40,7 +40,7 @@ class TestMapStyleFlux:
     def test_training_step(self) -> None:
         trainer = Trainer(model=TinyModel(), train_set=_make_samples(16))
         flux = Flux(source=_make_samples(16))
-        loader: DataLoader = DataLoader(flux, batch_size=8)
+        loader: DataLoader = DataLoader(flux, batch_size=8)  # type: ignore[arg-type]
         loss = trainer.training_step(next(iter(loader)), 0)
         assert loss.dim() == 0
 
@@ -51,13 +51,13 @@ class TestMapStyleFlux:
             optimizer=Class(torch.optim.SGD, lr=0.01),
         )
         flux = Flux(source=_make_samples(32))
-        loader: DataLoader = DataLoader(flux, batch_size=16)
+        loader: DataLoader = DataLoader(flux, batch_size=16)  # type: ignore[arg-type]
         lt = L.Trainer(max_epochs=1, accelerator="cpu", enable_progress_bar=False, enable_model_summary=False)
         lt.fit(model=trainer, train_dataloaders=loader)
 
     def test_with_num_workers(self) -> None:
         flux = Flux(source=_make_samples(32))
-        loader: DataLoader = DataLoader(flux, batch_size=16, num_workers=2)
+        loader: DataLoader = DataLoader(flux, batch_size=16, num_workers=2)  # type: ignore[arg-type]
         assert len(list(loader)) == 2
 
 
