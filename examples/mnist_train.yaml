@@ -16,15 +16,22 @@ train_set: !class:dataflux.core.Flux()
     target_feature: label
     count: 1000
   ops:
+    - !class:dataflux.ops.numpy.NormalizeOp()
+      max_value: 255
     - !class:dataflux.ops.ToTensorOp()
       normalize: false
-    - !class:dataflux.ops.NormalizeOp()
-      max_value: 255
 
-train_loader: !class:torch.utils.data.DataLoader
-  batch_size: 16
-  num_workers: 0
+val_set: !class:dataflux.core.Flux()
+  source: !class:dataflux.sources.HuggingFaceSource()
+    path: mnist
+    split: test
+    input_feature: image
+    target_feature: label
+    count: 1000
+  ops:
+    - !class:dataflux.ops.ToTensorOp()
+      normalize: true
 
-lightning: !class:pytorch_lightning.Trainer
-  max_epochs: 3
-  accelerator: cpu
+max_epochs: 3
+batch_size: 16
+num_workers: 0
