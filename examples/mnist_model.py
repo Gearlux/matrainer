@@ -29,11 +29,6 @@ class MNISTSimpleCNN(nn.Module):
         )
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
-        """Expects [B, 1, 28, 28] input."""
-
-        # Normalize: MNIST images are 0-255 in PIL/NumPy format
-        if x.max() > 1.0:
-            x = x / 255.0
-
+        """Expects [B, 1, 28, 28] input, pre-normalized to [0, 1]."""
         x = self.conv(x)
         return self.fc(x)  # type: ignore[no-any-return]

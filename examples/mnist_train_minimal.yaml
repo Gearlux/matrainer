@@ -14,6 +14,9 @@ train_set: !class:dataflux.core.Flux()
     count: 1000
   ops:
     - !class:dataflux.ops.ToTensorOp()
-      normalize: true
+      normalize: false
+    - !class:dataflux.ops.NormalizeOp()
+      min_value: 0
+      max_value: 255
 
 max_epochs: 10

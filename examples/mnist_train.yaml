@@ -17,7 +17,9 @@ train_set: !class:dataflux.core.Flux()
     count: 1000
   ops:
     - !class:dataflux.ops.ToTensorOp()
-      normalize: true
+      normalize: false
+    - !class:dataflux.ops.NormalizeOp()
+      max_value: 255
 
 train_loader: !class:torch.utils.data.DataLoader
   batch_size: 16
