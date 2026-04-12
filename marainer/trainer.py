@@ -15,9 +15,9 @@ logger = get_logger(__name__)
 class Trainer(L.LightningModule):
     """Marainer Trainer: configurable Lightning module with integrated training loop.
 
-    Supports YAML-configurable metrics via torchmetrics. Metrics can be declared
-    individually using ``!class:`` tags or loaded in bulk via
-    :class:`~marainer.metrics.MetricPreset`.
+    Supports YAML-configurable metrics via torchmetrics. Train and validation
+    ``MetricCollection`` instances are configured directly in YAML using
+    ``!clone:`` for independent copies (torchmetrics requires separate state).
 
     Args:
         model: The neural network model (deferred via Confluid).
@@ -27,32 +27,38 @@ class Trainer(L.LightningModule):
         train_loader: DataLoader config for training data.
         val_loader: DataLoader config for validation data.
         lightning: PyTorch Lightning Trainer config.
-        metrics: List of torchmetrics ``Metric`` instances and/or
-            :class:`~marainer.metrics.MetricPreset` objects. When provided,
-            separate train and validation MetricCollections are created
-            automatically. Shared parameters like ``num_classes`` are
-            broadcast from the YAML root by Confluid.
         experiment_name: MLflow experiment name.
         run_name: MLflow run name.
 
-    Example YAML with metrics::
+    Post-construction attributes (set via ``@configurable``):
+        train_metrics: Train ``MetricCollection`` (from YAML).
+        val_metrics: Validation ``MetricCollection`` (from YAML).
+        loss_fn: Loss function (default: ``CrossEntropyLoss``).
 
-        num_classes: 10
+    Example YAML::
+
         metrics:
           - !class:torchmetrics.classification.MulticlassAccuracy()
           - !class:torchmetrics.classification.MulticlassF1Score()
+
+        train_metrics: !class:torchmetrics.MetricCollection()
+          metrics: !clone:metrics
+          prefix: "train/"
+
+        val_metrics: !class:torchmetrics.MetricCollection()
+          metrics: !clone:metrics
+          prefix: "val/"
     """
 
     def __init__(
         self,
-        model: Any = None,
-        train_set: Any = None,
+        model: Any,
+        train_set: Any,
         val_set: Any = None,
         optimizer: Any = Class(torch.optim.Adam, lr=1e-3),
         train_loader: Any = Class(DataLoader),
         val_loader: Any = Class(DataLoader),
         lightning: Any = Class(L.Trainer),
-        metrics: list[Any] | None = None,
         experiment_name: str = "marainer_run",
         run_name: str = "train",
     ) -> None:
@@ -64,7 +70,6 @@ class Trainer(L.LightningModule):
         self.train_loader = train_loader
         self.val_loader = val_loader
         self.lightning = lightning
-        self.metrics = metrics
         self.experiment_name = experiment_name
         self.run_name = run_name
         self.loss_fn = nn.CrossEntropyLoss()
@@ -72,7 +77,9 @@ class Trainer(L.LightningModule):
         self.val_metrics: MetricCollection | None = None
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
-        return self.model(x)  # type: ignore[no-any-return]
+        from typing import cast
+
+        return cast(torch.Tensor, self.model(x))
 
     def training_step(self, batch: Any, batch_idx: int) -> torch.Tensor:
         preds = self(batch.input)
@@ -95,26 +102,15 @@ class Trainer(L.LightningModule):
     def configure_optimizers(self) -> Any:
         return flow(self.optimizer, params=self.parameters())
 
-    def _setup_metrics(self) -> None:
-        """Materialize and split metrics into train/val MetricCollections."""
-        if self.metrics is None:
-            return
-
-        from marainer.metrics import build_metric_collection
-
-        raw = self.metrics if isinstance(self.metrics, list) else [self.metrics]
-        materialized = [flow(m) for m in raw]
-        base = build_metric_collection(materialized)
-        self.train_metrics = base.clone(prefix="train/")
-        self.val_metrics = base.clone(prefix="val/")
-        logger.info(f"Metrics configured: {list(base.keys())}")
-
     def run(self) -> None:
         """Execute the training loop."""
         logger.info(f"Marainer navigating to: {self.experiment_name} ({self.run_name})")
 
         self.model = flow(self.model)
-        self._setup_metrics()
+        if self.train_metrics is not None:
+            self.train_metrics = flow(self.train_metrics)
+        if self.val_metrics is not None:
+            self.val_metrics = flow(self.val_metrics)
 
         t_loader = flow(self.train_loader, dataset=flow(self.train_set))
         v_loader = flow(self.val_loader, dataset=flow(self.val_set)) if self.val_set else None

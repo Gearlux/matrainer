@@ -11,3 +11,4 @@ register(torch.optim.SGD)
 
 # Metrics module (registers MetricPreset with confluid)
 import marainer.metrics  # noqa: F401, E402
+import marainer.presets  # noqa: F401, E402

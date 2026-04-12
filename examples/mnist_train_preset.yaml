@@ -10,12 +10,20 @@ model: !class:examples.mnist_model.MNISTSimpleCNN()
 optimizer: !class:torch.optim.Adam
   lr: 0.001
 
-# Category preset: load ALL multiclass classification metrics at once.
-# Non-scalar metrics (ConfusionMatrix, ROC, etc.) are excluded automatically.
-metrics:
-  - !class:marainer.metrics.MetricPreset()
-      category: classification
-      task: multiclass
+# All standard multiclass classification metrics.
+# Use MetricPreset.available_metrics() to discover the full list programmatically.
+classification_metrics: !class:marainer.presets.MetricPreset()
+  category: classification
+  task: multiclass
+  num_classes: !ref:num_classes
+
+train_metrics: !class:torchmetrics.MetricCollection()
+  metrics: !ref:classification_metrics.to_metrics()
+  prefix: "train/"
+
+val_metrics: !class:torchmetrics.MetricCollection()
+  metrics: !ref:classification_metrics.to_metrics()
+  prefix: "val/"
 
 train_set: !class:dataflux.core.Flux()
   source: !class:dataflux.sources.HuggingFaceSource()

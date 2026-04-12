@@ -1,7 +1,6 @@
 """Flexible metric configuration for Marainer trainers.
 
-Provides MetricPreset for category-based metric discovery and
-build_metric_collection for assembling metrics from YAML config.
+Provides MetricPreset for category-based metric discovery.
 """
 
 import importlib
@@ -10,7 +9,7 @@ from typing import Any
 
 from confluid import configurable
 from logflow import get_logger
-from torchmetrics import Metric, MetricCollection
+from torchmetrics import Metric
 
 logger = get_logger(__name__)
 
@@ -53,7 +52,7 @@ class MetricPreset:
     """Factory that discovers and instantiates all torchmetrics for a given category.
 
     When materialized from YAML, produces a set of metric instances that can be
-    assembled into a MetricCollection by ``build_metric_collection``.
+    used programmatically via ``to_metrics()`` for metric discovery.
 
     Args:
         category: torchmetrics sub-module name (e.g. ``"classification"``,
@@ -169,36 +168,3 @@ class MetricPreset:
         effective_exclude = set(self.exclude or [])
         effective_exclude.update(_DEFAULT_EXCLUDE.get(self.category, set()))
         return sorted(n for n in all_names if n not in effective_exclude)
-
-
-def build_metric_collection(metrics: list[Any], prefix: str = "") -> MetricCollection:
-    """Assemble a MetricCollection from a mixed list of Metric and MetricPreset instances.
-
-    Args:
-        metrics: List of instantiated ``torchmetrics.Metric`` objects and/or
-            ``MetricPreset`` instances (which get expanded via ``to_metrics()``).
-        prefix: Prefix prepended to all metric names in the collection
-            (e.g. ``"train/"`` or ``"val/"``).
-
-    Returns:
-        A ``torchmetrics.MetricCollection`` containing all metrics.
-
-    Raises:
-        TypeError: If an item is neither a Metric nor a MetricPreset.
-    """
-    all_metrics: dict[str, Metric] = {}
-    for m in metrics:
-        if isinstance(m, MetricPreset):
-            all_metrics.update(m.to_metrics())
-        elif isinstance(m, Metric):
-            name = m.__class__.__name__
-            # Handle duplicates by appending a suffix
-            if name in all_metrics:
-                i = 2
-                while f"{name}_{i}" in all_metrics:
-                    i += 1
-                name = f"{name}_{i}"
-            all_metrics[name] = m
-        else:
-            raise TypeError(f"Expected Metric or MetricPreset, got {type(m).__name__}")
-    return MetricCollection(all_metrics, prefix=prefix)  # type: ignore[arg-type]

@@ -69,6 +69,15 @@ metrics:
   - !class:torchmetrics.classification.MulticlassAccuracy()
   - !class:torchmetrics.classification.MulticlassF1Score()
 
+# !clone: creates independent deep copies (torchmetrics requires separate state)
+train_metrics: !class:torchmetrics.MetricCollection()
+  metrics: !clone:metrics
+  prefix: "train/"
+
+val_metrics: !class:torchmetrics.MetricCollection()
+  metrics: !clone:metrics
+  prefix: "val/"
+
 train_set: !class:dataflux.core.Flux()
   source: !class:dataflux.sources.HuggingFaceSource()
     path: mnist
@@ -138,8 +147,9 @@ marainer train <config.yaml>
 | `run_name` | `str` | `"train"` | MLflow run name |
 | `model` | `!class:` | *required* | Neural network model |
 | `optimizer` | `!class:` | `Adam(lr=1e-3)` | Optimizer |
-| `loss_fn` | `!class:` | `CrossEntropyLoss()` | Loss function |
-| `metrics` | `list[!class:]` | `None` | Torchmetrics instances or MetricPresets |
+| `loss_fn` | `!class:` | `CrossEntropyLoss()` | Loss function (post-construction) |
+| `train_metrics` | `!class:` | `None` | Train MetricCollection (post-construction) |
+| `val_metrics` | `!class:` | `None` | Validation MetricCollection (post-construction) |
 | `train_set` | `!class:` | *required* | Training dataset (Flux pipeline or Dataset) |
 | `val_set` | `!class:` | `None` | Validation dataset |
 | `train_loader` | `!class:` | `DataLoader` | Training DataLoader config |
@@ -212,7 +222,7 @@ Marainer integrates with [torchmetrics](https://torchmetrics.readthedocs.io/) to
 
 ### Approach 1: Explicit Metrics
 
-Pick exactly the metrics you need:
+Define metrics as a list and use `!clone:` to create independent train/val collections:
 
 ```yaml
 num_classes: 10   # broadcast to all metrics
@@ -223,43 +233,37 @@ metrics:
       average: weighted
   - !class:torchmetrics.classification.MulticlassPrecision()
   - !class:torchmetrics.classification.MulticlassRecall()
-  - !class:torchmetrics.classification.MulticlassAUROC()
+
+train_metrics: !class:torchmetrics.MetricCollection()
+  metrics: !clone:metrics
+  prefix: "train/"
+
+val_metrics: !class:torchmetrics.MetricCollection()
+  metrics: !clone:metrics
+  prefix: "val/"
 ```
 
 Shared parameters like `num_classes` are **broadcast** from the YAML root into each metric's constructor automatically by Confluid. You can override per-metric (e.g., `average: weighted` above overrides the default).
 
-### Approach 2: Category Presets
+The `!clone:` tag deep-copies the referenced `metrics` list, giving each MetricCollection independent metric instances (required by torchmetrics for correct state tracking).
 
-Load all compatible metrics for a task category at once using `MetricPreset`:
+### Approach 2: Inline MetricCollection with !clone:
 
-```yaml
-num_classes: 10
-
-metrics:
-  - !class:marainer.metrics.MetricPreset()
-      category: classification
-      task: multiclass
-```
-
-This discovers and instantiates every `Multiclass*` metric from `torchmetrics.classification`, automatically excluding non-scalar metrics (ConfusionMatrix, ROC curves, etc.) that can't be logged as scalars.
-
-### Approach 3: Mixed
-
-Combine presets with explicit overrides:
+Define a single MetricCollection and clone it with different prefixes:
 
 ```yaml
 num_classes: 10
 
-metrics:
-  # Load all multiclass metrics except ExactMatch
-  - !class:marainer.metrics.MetricPreset()
-      category: classification
-      task: multiclass
-      exclude:
-        - MulticlassExactMatch
-  # Add a custom F1 with weighted averaging (overrides preset's macro default)
-  - !class:torchmetrics.classification.MulticlassF1Score()
-      average: weighted
+metrics: !class:torchmetrics.MetricCollection()
+  metrics:
+    - !class:torchmetrics.classification.MulticlassAccuracy()
+    - !class:torchmetrics.classification.MulticlassF1Score()
+
+train_metrics: !clone:metrics
+  prefix: "train/"
+
+val_metrics: !clone:metrics
+  prefix: "val/"
 ```
 
 ### MetricPreset Reference
@@ -277,13 +281,23 @@ Only parameters that a metric's `__init__` explicitly accepts are passed. Metric
 
 ### Task-Specific Examples
 
+All examples below use the `!clone:` pattern. Define metrics once, then create independent train/val collections.
+
 #### Binary Classification
 
 ```yaml
 metrics:
-  - !class:marainer.metrics.MetricPreset()
-      category: classification
-      task: binary
+  - !class:torchmetrics.classification.BinaryAccuracy()
+  - !class:torchmetrics.classification.BinaryF1Score()
+  - !class:torchmetrics.classification.BinaryAUROC()
+
+train_metrics: !class:torchmetrics.MetricCollection()
+  metrics: !clone:metrics
+  prefix: "train/"
+
+val_metrics: !class:torchmetrics.MetricCollection()
+  metrics: !clone:metrics
+  prefix: "val/"
 ```
 
 #### Multiclass Classification (MNIST, CIFAR, etc.)
@@ -292,34 +306,18 @@ metrics:
 num_classes: 10
 
 metrics:
-  - !class:marainer.metrics.MetricPreset()
-      category: classification
-      task: multiclass
+  - !class:torchmetrics.classification.MulticlassAccuracy()
+  - !class:torchmetrics.classification.MulticlassF1Score()
+  - !class:torchmetrics.classification.MulticlassPrecision()
+
+train_metrics: !class:torchmetrics.MetricCollection()
+  metrics: !clone:metrics
+  prefix: "train/"
+
+val_metrics: !class:torchmetrics.MetricCollection()
+  metrics: !clone:metrics
+  prefix: "val/"
 ```
-
-#### Multilabel Classification
-
-```yaml
-num_labels: 20
-
-metrics:
-  - !class:marainer.metrics.MetricPreset()
-      category: classification
-      task: multilabel
-      num_labels: 20
-```
-
-#### Semantic Segmentation
-
-```yaml
-num_classes: 21
-
-metrics:
-  - !class:marainer.metrics.MetricPreset()
-      category: segmentation
-```
-
-Available segmentation metrics: `DiceScore`, `GeneralizedDiceScore`, `HausdorffDistance`, `MeanIoU`.
 
 #### Regression
 
@@ -328,14 +326,14 @@ metrics:
   - !class:torchmetrics.regression.MeanSquaredError()
   - !class:torchmetrics.regression.MeanAbsoluteError()
   - !class:torchmetrics.regression.R2Score()
-```
 
-Or use the preset:
+train_metrics: !class:torchmetrics.MetricCollection()
+  metrics: !clone:metrics
+  prefix: "train/"
 
-```yaml
-metrics:
-  - !class:marainer.metrics.MetricPreset()
-      category: regression
+val_metrics: !class:torchmetrics.MetricCollection()
+  metrics: !clone:metrics
+  prefix: "val/"
 ```
 
 ### Log Output
@@ -365,8 +363,9 @@ Marainer leverages [Confluid](https://github.com/Gearlux/confluid) for all confi
 
 - **`!class:module.Class()`** -- Instantiates a class immediately (Instance). Parameters are indented below.
 - **`!class:module.Class`** -- Deferred class. Stays as a `Class` object until explicitly `flow()`'d at runtime.
+- **`!clone:ref`** -- Deep-copies a referenced value, producing independent instances. Essential for torchmetrics which requires separate state for train vs validation.
 - **Broadcasting** -- Root-level scalar values are automatically injected into any class constructor that accepts a matching parameter name. This is how `num_classes: 10` reaches both the model and all metrics without repetition.
-- **`@configurable`** -- Decorator that enables post-construction attribute setting. Any YAML key that doesn't match a constructor parameter is set as an attribute (e.g., `loss_fn`).
+- **`@configurable`** -- Decorator that enables post-construction attribute setting. Any YAML key that doesn't match a constructor parameter is set as an attribute (e.g., `loss_fn`, `train_metrics`, `val_metrics`).
 
 ### How Broadcasting Works
 
@@ -456,7 +455,7 @@ marainer train mnist_train_metrics.yaml
 marainer/
   __init__.py       # Package init, optimizer registrations
   trainer.py        # Trainer (LightningModule) with configurable metrics
-  metrics.py        # MetricPreset and build_metric_collection
+  metrics.py        # MetricPreset for category-based metric discovery
   cli.py            # CLI entry point (Liquify app) with MLflow orchestration
 examples/
   mnist_model.py    # Example CNN model

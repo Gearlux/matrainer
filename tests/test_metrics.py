@@ -11,7 +11,7 @@ from torch.utils.data import DataLoader
 from torchmetrics import Metric, MetricCollection
 from torchmetrics.classification import MulticlassAccuracy, MulticlassF1Score, MulticlassPrecision, MulticlassRecall
 
-from marainer.metrics import MetricPreset, build_metric_collection
+from marainer.metrics import MetricPreset
 from marainer.trainer import Trainer
 
 
@@ -125,71 +125,28 @@ class TestMetricPreset:
 
 
 # ---------------------------------------------------------------------------
-# build_metric_collection tests
-# ---------------------------------------------------------------------------
-
-
-class TestBuildMetricCollection:
-    def test_from_explicit_metrics(self) -> None:
-        metrics = [MulticlassAccuracy(num_classes=3), MulticlassF1Score(num_classes=3)]
-        collection = build_metric_collection(metrics)
-        assert isinstance(collection, MetricCollection)
-        assert "MulticlassAccuracy" in collection
-        assert "MulticlassF1Score" in collection
-
-    def test_from_preset(self) -> None:
-        preset = MetricPreset(category="classification", task="multiclass", num_classes=3)
-        collection = build_metric_collection([preset])
-        assert isinstance(collection, MetricCollection)
-        assert len(collection) > 0
-
-    def test_mixed_preset_and_explicit(self) -> None:
-        preset = MetricPreset(
-            category="classification", task="multiclass", num_classes=3, exclude=["MulticlassF1Score"]
-        )
-        explicit_f1 = MulticlassF1Score(num_classes=3, average="weighted")
-        collection = build_metric_collection([preset, explicit_f1])
-        assert isinstance(collection, MetricCollection)
-        assert "MulticlassF1Score" in collection
-
-    def test_prefix_applied(self) -> None:
-        metrics = [MulticlassAccuracy(num_classes=3)]
-        collection = build_metric_collection(metrics, prefix="train/")
-        result = collection(torch.randn(4, 3), torch.randint(0, 3, (4,)))
-        assert any(k.startswith("train/") for k in result)
-
-    def test_duplicate_metric_names_handled(self) -> None:
-        m1 = MulticlassAccuracy(num_classes=3, average="micro")
-        m2 = MulticlassAccuracy(num_classes=3, average="macro")
-        collection = build_metric_collection([m1, m2])
-        assert "MulticlassAccuracy" in collection
-        assert "MulticlassAccuracy_2" in collection
-
-    def test_invalid_item_raises(self) -> None:
-        with pytest.raises(TypeError, match="Expected Metric or MetricPreset"):
-            build_metric_collection(["not_a_metric"])  # type: ignore[list-item]
-
-    def test_empty_list(self) -> None:
-        collection = build_metric_collection([])
-        assert isinstance(collection, MetricCollection)
-        assert len(collection) == 0
-
-
-# ---------------------------------------------------------------------------
 # Trainer integration tests
 # ---------------------------------------------------------------------------
 
 
 class TestTrainerMetricsIntegration:
-    def _make_trainer(self, metrics: list[Metric] | None = None) -> Trainer:
-        return Trainer(
+    def _make_trainer(
+        self,
+        train_metrics: MetricCollection | None = None,
+        val_metrics: MetricCollection | None = None,
+    ) -> Trainer:
+        trainer = Trainer(
             model=TinyModel(),
             train_set=make_samples(16),
-            metrics=metrics,
         )
+        if train_metrics is not None:
+            trainer.train_metrics = train_metrics
+        if val_metrics is not None:
+            trainer.val_metrics = val_metrics
+        return trainer
 
     def test_no_metrics_backward_compat(self) -> None:
-        trainer = self._make_trainer(metrics=None)
+        trainer = self._make_trainer()
         assert trainer.train_metrics is None
         assert trainer.val_metrics is None
         flux = Flux(source=make_samples(16))
@@ -197,64 +154,60 @@ class TestTrainerMetricsIntegration:
         loss = trainer.training_step(next(iter(loader)), 0)
         assert loss.dim() == 0
 
-    def test_setup_metrics_creates_collections(self) -> None:
-        metrics = [
-            MulticlassAccuracy(num_classes=2),
-            MulticlassF1Score(num_classes=2),
-        ]
-        trainer = self._make_trainer(metrics=metrics)
-        trainer._setup_metrics()
+    def test_metrics_set_via_configurable(self) -> None:
+        train_mc = MetricCollection(
+            [MulticlassAccuracy(num_classes=2), MulticlassF1Score(num_classes=2)],
+            prefix="train/",
+        )
+        val_mc = MetricCollection(
+            [MulticlassAccuracy(num_classes=2), MulticlassF1Score(num_classes=2)],
+            prefix="val/",
+        )
+        trainer = self._make_trainer(train_metrics=train_mc, val_metrics=val_mc)
         assert trainer.train_metrics is not None
         assert trainer.val_metrics is not None
         assert isinstance(trainer.train_metrics, MetricCollection)
         assert isinstance(trainer.val_metrics, MetricCollection)
 
     def test_train_metrics_prefixed(self) -> None:
-        metrics = [MulticlassAccuracy(num_classes=2)]
-        trainer = self._make_trainer(metrics=metrics)
-        trainer._setup_metrics()
-        assert any("train/" in k for k in trainer.train_metrics)  # type: ignore[union-attr]
+        train_mc = MetricCollection([MulticlassAccuracy(num_classes=2)], prefix="train/")
+        trainer = self._make_trainer(train_metrics=train_mc)
+        assert trainer.train_metrics is not None
+        assert any("train/" in str(k) for k in trainer.train_metrics)
 
     def test_val_metrics_prefixed(self) -> None:
-        metrics = [MulticlassAccuracy(num_classes=2)]
-        trainer = self._make_trainer(metrics=metrics)
-        trainer._setup_metrics()
-        assert any("val/" in k for k in trainer.val_metrics)  # type: ignore[union-attr]
+        val_mc = MetricCollection([MulticlassAccuracy(num_classes=2)], prefix="val/")
+        trainer = self._make_trainer(val_metrics=val_mc)
+        assert trainer.val_metrics is not None
+        assert any("val/" in str(k) for k in trainer.val_metrics)
 
     def test_training_step_updates_metrics(self) -> None:
-        metrics = [MulticlassAccuracy(num_classes=2)]
-        trainer = self._make_trainer(metrics=metrics)
-        trainer._setup_metrics()
+        train_mc = MetricCollection([MulticlassAccuracy(num_classes=2)], prefix="train/")
+        trainer = self._make_trainer(train_metrics=train_mc)
         flux = Flux(source=make_samples(16))
         loader: DataLoader = DataLoader(flux, batch_size=8)  # type: ignore[arg-type]
         loss = trainer.training_step(next(iter(loader)), 0)
         assert loss.dim() == 0
 
     def test_validation_step_updates_metrics(self) -> None:
-        metrics = [MulticlassAccuracy(num_classes=2)]
-        trainer = self._make_trainer(metrics=metrics)
-        trainer._setup_metrics()
+        val_mc = MetricCollection([MulticlassAccuracy(num_classes=2)], prefix="val/")
+        trainer = self._make_trainer(val_metrics=val_mc)
         flux = Flux(source=make_samples(16))
         loader: DataLoader = DataLoader(flux, batch_size=8)  # type: ignore[arg-type]
         loss = trainer.validation_step(next(iter(loader)), 0)
         assert loss.dim() == 0
 
     def test_full_epoch_with_metrics(self) -> None:
-        metrics = [
-            MulticlassAccuracy(num_classes=2),
-            MulticlassPrecision(num_classes=2),
-            MulticlassRecall(num_classes=2),
-        ]
-        trainer = self._make_trainer(metrics=metrics)
-        trainer._setup_metrics()
+        train_mc = MetricCollection(
+            [
+                MulticlassAccuracy(num_classes=2),
+                MulticlassPrecision(num_classes=2),
+                MulticlassRecall(num_classes=2),
+            ],
+            prefix="train/",
+        )
+        trainer = self._make_trainer(train_metrics=train_mc)
         flux = Flux(source=make_samples(32))
         loader: DataLoader = DataLoader(flux, batch_size=16)  # type: ignore[arg-type]
         lt = L.Trainer(max_epochs=1, accelerator="cpu", enable_progress_bar=False, enable_model_summary=False)
         lt.fit(model=trainer, train_dataloaders=loader)
-
-    def test_preset_in_trainer(self) -> None:
-        preset = MetricPreset(category="classification", task="multiclass", num_classes=2)
-        trainer = self._make_trainer(metrics=[preset])  # type: ignore[list-item]
-        trainer._setup_metrics()
-        assert trainer.train_metrics is not None
-        assert len(trainer.train_metrics) > 0

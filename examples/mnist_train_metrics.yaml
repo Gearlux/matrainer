@@ -10,14 +10,23 @@ model: !class:examples.mnist_model.MNISTSimpleCNN()
 optimizer: !class:torch.optim.Adam
   lr: 0.001
 
-# Explicit metrics: pick exactly what you need.
-# num_classes is broadcast automatically from the root level.
+# Explicit metrics list — num_classes is broadcast automatically from root.
 metrics:
   - !class:torchmetrics.classification.MulticlassAccuracy()
   - !class:torchmetrics.classification.MulticlassF1Score()
       average: macro
   - !class:torchmetrics.classification.MulticlassPrecision()
   - !class:torchmetrics.classification.MulticlassRecall()
+
+# Train and val MetricCollections use !clone: for independent copies
+# (torchmetrics requires separate state for train vs val).
+train_metrics: !class:torchmetrics.MetricCollection()
+  metrics: !clone:metrics
+  prefix: "train/"
+
+val_metrics: !class:torchmetrics.MetricCollection()
+  metrics: !clone:metrics
+  prefix: "val/"
 
 train_set: !class:dataflux.core.Flux()
   source: !class:dataflux.sources.HuggingFaceSource()
