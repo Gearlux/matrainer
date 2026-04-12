@@ -12,7 +12,8 @@ dependencies = [
     "mlflow",
     "torch",
     "numpy",
-    "pytorch-lightning"
+    "pytorch-lightning",
+    "torchmetrics"
 ]
 requires-python = ">=3.12"
 
@@ -72,6 +73,7 @@ explicit_package_bases = true
 [[tool.mypy.overrides]]
 module = [
     "mlflow.*",
-    "torch.*"
+    "torch.*",
+    "torchmetrics.*"
 ]
 ignore_missing_imports = true

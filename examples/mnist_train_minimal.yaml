@@ -16,15 +16,4 @@ train_set: !class:dataflux.core.Flux()
     - !class:dataflux.ops.ToTensorOp()
       normalize: true
 
-val_set: !class:dataflux.core.Flux()
-  source: !class:dataflux.sources.HuggingFaceSource()
-    path: mnist
-    split: test
-    input_feature: image
-    target_feature: label
-    count: 1000
-  ops:
-    - !class:dataflux.ops.ToTensorOp()
-      normalize: true
-
 max_epochs: 10

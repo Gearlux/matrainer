@@ -1,0 +1,46 @@
+experiment_name: mnist_digits
+run_name: all_multiclass_metrics
+
+# Shared parameter — broadcast to MetricPreset and model
+num_classes: 10
+
+model: !class:examples.mnist_model.MNISTSimpleCNN()
+  input_channels: 1
+
+optimizer: !class:torch.optim.Adam
+  lr: 0.001
+
+# Category preset: load ALL multiclass classification metrics at once.
+# Non-scalar metrics (ConfusionMatrix, ROC, etc.) are excluded automatically.
+metrics:
+  - !class:marainer.metrics.MetricPreset()
+      category: classification
+      task: multiclass
+
+train_set: !class:dataflux.core.Flux()
+  source: !class:dataflux.sources.HuggingFaceSource()
+    path: mnist
+    split: train
+    input_feature: image
+    target_feature: label
+    count: 1000
+  ops:
+    - !class:dataflux.ops.numpy.NormalizeOp()
+      max_value: 255
+    - !class:dataflux.ops.ToTensorOp()
+      normalize: false
+
+val_set: !class:dataflux.core.Flux()
+  source: !class:dataflux.sources.HuggingFaceSource()
+    path: mnist
+    split: test
+    input_feature: image
+    target_feature: label
+    count: 1000
+  ops:
+    - !class:dataflux.ops.ToTensorOp()
+      normalize: true
+
+max_epochs: 3
+batch_size: 16
+num_workers: 0
