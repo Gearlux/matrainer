@@ -20,8 +20,13 @@ jobs:
     - name: Install dependencies
       run: |
         python -m pip install --upgrade pip
-        pip install git+https://github.com/Gearlux/logflow.git@main || true
-        pip install git+https://github.com/Gearlux/confluid.git@main || true
+        
+        # Internal Gearlux dependencies
+        pip install git+https://github.com/Gearlux/liquify.git@main
+        pip install git+https://github.com/Gearlux/logflow.git@main
+        pip install git+https://github.com/Gearlux/confluid.git@main
+        pip install git+https://github.com/Gearlux/dataflux.git@main
+        pip install git+https://github.com/Gearlux/torpedo.git@main
         pip install -e ".[dev]"
     - name: Run Isort
       run: isort --check-only .
@@ -46,8 +51,13 @@ jobs:
     - name: Install dependencies
       run: |
         python -m pip install --upgrade pip
-        pip install git+https://github.com/Gearlux/logflow.git@main || true
-        pip install git+https://github.com/Gearlux/confluid.git@main || true
+        
+        # Internal Gearlux dependencies
+        pip install git+https://github.com/Gearlux/liquify.git@main
+        pip install git+https://github.com/Gearlux/logflow.git@main
+        pip install git+https://github.com/Gearlux/confluid.git@main
+        pip install git+https://github.com/Gearlux/dataflux.git@main
+        pip install git+https://github.com/Gearlux/torpedo.git@main
         pip install -e ".[dev]"
     - name: Run Tests
       run: |
@@ -73,8 +83,13 @@ jobs:
     - name: Install dependencies
       run: |
         python -m pip install --upgrade pip
-        pip install git+https://github.com/Gearlux/logflow.git@main || true
-        pip install git+https://github.com/Gearlux/confluid.git@main || true
+        
+        # Internal Gearlux dependencies
+        pip install git+https://github.com/Gearlux/liquify.git@main
+        pip install git+https://github.com/Gearlux/logflow.git@main
+        pip install git+https://github.com/Gearlux/confluid.git@main
+        pip install git+https://github.com/Gearlux/dataflux.git@main
+        pip install git+https://github.com/Gearlux/torpedo.git@main
         pip install -e ".[dev]"
     - name: Run Examples
       run: |

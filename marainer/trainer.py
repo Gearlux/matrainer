@@ -1,3 +1,4 @@
+import subprocess
 from typing import Any
 
 import pytorch_lightning as L
@@ -9,6 +10,14 @@ from torch.utils.data import DataLoader
 from torchmetrics import MetricCollection
 
 logger = get_logger(__name__)
+
+
+def _get_git_hash() -> str | None:
+    """Return current git commit hash, or None if unavailable."""
+    try:
+        return subprocess.check_output(["git", "rev-parse", "HEAD"], stderr=subprocess.DEVNULL).decode().strip()
+    except (subprocess.CalledProcessError, FileNotFoundError):
+        return None
 
 
 @configurable
@@ -29,6 +38,7 @@ class Trainer(L.LightningModule):
         lightning: PyTorch Lightning Trainer config.
         experiment_name: MLflow experiment name.
         run_name: MLflow run name.
+        loggers: List of Lightning loggers (deferred via Confluid).
 
     Post-construction attributes (set via ``@configurable``):
         train_metrics: Train ``MetricCollection`` (from YAML).
@@ -61,6 +71,7 @@ class Trainer(L.LightningModule):
         lightning: Any = Class(L.Trainer),
         experiment_name: str = "marainer_run",
         run_name: str = "train",
+        loggers: Any = None,
     ) -> None:
         super().__init__()
         self.model = model
@@ -72,6 +83,7 @@ class Trainer(L.LightningModule):
         self.lightning = lightning
         self.experiment_name = experiment_name
         self.run_name = run_name
+        self._loggers_config = loggers
         self.loss_fn = nn.CrossEntropyLoss()
         self.train_metrics: MetricCollection | None = None
         self.val_metrics: MetricCollection | None = None
@@ -102,6 +114,25 @@ class Trainer(L.LightningModule):
     def configure_optimizers(self) -> Any:
         return flow(self.optimizer, params=self.parameters())
 
+    def _marainer_log_hyperparams(self, lightning_trainer: L.Trainer) -> None:
+        """Log hyperparameters, git hash, and config path to all loggers."""
+        from liquify.context import get_context
+        from liquify.discovery import get_configurable_paths
+
+        params = get_configurable_paths(self)
+        clean_params = {k: v for k, v in params.items() if isinstance(v, (int, float, str, bool))}
+
+        git_hash = _get_git_hash()
+        if git_hash:
+            clean_params["git_hash"] = git_hash
+
+        ctx = get_context()
+        if ctx and ctx.config_path:
+            clean_params["config_script"] = str(ctx.config_path)
+
+        for lg in lightning_trainer.loggers:
+            lg.log_hyperparams(clean_params)
+
     def run(self) -> None:
         """Execute the training loop."""
         logger.info(f"Marainer navigating to: {self.experiment_name} ({self.run_name})")
@@ -115,6 +146,12 @@ class Trainer(L.LightningModule):
         t_loader = flow(self.train_loader, dataset=flow(self.train_set))
         v_loader = flow(self.val_loader, dataset=flow(self.val_set)) if self.val_set else None
 
-        lightning_trainer = flow(self.lightning)
+        # Pass loggers to Lightning Trainer — Confluid auto-flows Instance objects in the list
+        logger_kwarg: dict[str, Any] = {}
+        if self._loggers_config is not None:
+            logger_kwarg["logger"] = self._loggers_config
+
+        lightning_trainer = flow(self.lightning, **logger_kwarg)
+        self._marainer_log_hyperparams(lightning_trainer)
         lightning_trainer.fit(model=self, train_dataloaders=t_loader, val_dataloaders=v_loader)
         logger.info("Training complete.")

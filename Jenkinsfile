@@ -14,9 +14,13 @@ pipeline {
                 sh "python3 -m venv ${VENV_PATH}"
                 echo 'Installing Dependencies...'
                 sh "${VENV_BIN}/pip install --upgrade pip"
-                # Internal workspace dependencies
-                sh "${VENV_BIN}/pip install --no-cache-dir git+https://github.com/Gearlux/logflow.git@main || true"
-                sh "${VENV_BIN}/pip install --no-cache-dir git+https://github.com/Gearlux/confluid.git@main || true"
+                
+        # Internal Gearlux dependencies
+        pip install git+https://github.com/Gearlux/liquify.git@main
+        pip install git+https://github.com/Gearlux/logflow.git@main
+        pip install git+https://github.com/Gearlux/confluid.git@main
+        pip install git+https://github.com/Gearlux/dataflux.git@main
+        pip install git+https://github.com/Gearlux/torpedo.git@main
                 sh "${VENV_BIN}/pip install -e .[dev]"
             }
         }

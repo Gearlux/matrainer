@@ -13,6 +13,7 @@ dependencies = [
     "torch",
     "numpy",
     "pytorch-lightning",
+    "tensorboard",
     "torchmetrics"
 ]
 requires-python = ">=3.12"
@@ -74,6 +75,7 @@ explicit_package_bases = true
 module = [
     "mlflow.*",
     "torch.*",
-    "torchmetrics.*"
+    "torchmetrics.*",
+    "pytorch_lightning.*"
 ]
 ignore_missing_imports = true
