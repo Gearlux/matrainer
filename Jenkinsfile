@@ -15,12 +15,12 @@ pipeline {
                 echo 'Installing Dependencies...'
                 sh "${VENV_BIN}/pip install --upgrade pip"
                 
-        # Internal Gearlux dependencies
-        pip install git+https://github.com/Gearlux/liquify.git@main
-        pip install git+https://github.com/Gearlux/logflow.git@main
-        pip install git+https://github.com/Gearlux/confluid.git@main
-        pip install git+https://github.com/Gearlux/dataflux.git@main
-        pip install git+https://github.com/Gearlux/torpedo.git@main
+                // Internal Gearlux dependencies
+                sh "${VENV_BIN}/pip install git+https://github.com/Gearlux/liquify.git@main"
+                sh "${VENV_BIN}/pip install git+https://github.com/Gearlux/logflow.git@main"
+                sh "${VENV_BIN}/pip install git+https://github.com/Gearlux/confluid.git@main"
+                sh "${VENV_BIN}/pip install git+https://github.com/Gearlux/dataflux.git@main"
+                sh "${VENV_BIN}/pip install git+https://github.com/Gearlux/torpedo.git@main"
                 sh "${VENV_BIN}/pip install -e .[dev]"
             }
         }
