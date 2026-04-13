@@ -1,136 +1,157 @@
-import mlflow
+import subprocess
+from typing import Any
+
+import pytorch_lightning as L
 import torch
 import torch.nn as nn
-import pytorch_lightning as L
+from confluid import Class, configurable, flow
 from logflow import get_logger
-from typing import Any, Optional, Union, List, Dict
-from confluid import configurable, flow, Class
-from torch.utils.data import IterableDataset, DataLoader
+from torch.utils.data import DataLoader
+from torchmetrics import MetricCollection
 
 logger = get_logger(__name__)
 
-class MarainerLightningModule(L.LightningModule):
-    """
-    Generic Lightning wrapper for Marainer models.
-    """
-    def __init__(self, model: nn.Module, optimizer: Any):
-        super().__init__()
-        self.model = model
-        self.optimizer_factory = optimizer
-        self.loss_fn = nn.CrossEntropyLoss()
 
-    def forward(self, x):
-        return self.model(x)
+def _get_git_hash() -> str | None:
+    """Return current git commit hash, or None if unavailable."""
+    try:
+        return subprocess.check_output(["git", "rev-parse", "HEAD"], stderr=subprocess.DEVNULL).decode().strip()
+    except (subprocess.CalledProcessError, FileNotFoundError):
+        return None
 
-    def training_step(self, batch, batch_idx):
-        data, target = self._unpack_batch(batch)
-        output = self(data)
-        loss = self.loss_fn(output, target)
-        self.log("train_loss", loss, on_step=True, on_epoch=True, prog_bar=True)
-        return loss
-
-    def validation_step(self, batch, batch_idx):
-        data, target = self._unpack_batch(batch)
-        output = self(data)
-        loss = self.loss_fn(output, target)
-        self.log("val_loss", loss, on_epoch=True, prog_bar=True)
-        return loss
-
-    def configure_optimizers(self):
-        # Use confluid.flow to instantiate the optimizer with model parameters
-        return flow(self.optimizer_factory, params=self.parameters())
-
-    def _unpack_batch(self, batch):
-        """Standardizes batch unpacking for DataFlux Samples or tuples."""
-        if isinstance(batch, list) and len(batch) > 0 and hasattr(batch[0], "input"):
-            data = torch.stack([s.input for s in batch])
-            target = torch.tensor([s.target for s in batch])
-        elif hasattr(batch, "input") and hasattr(batch, "target"):
-            data = batch.input.unsqueeze(0)
-            target = torch.tensor([batch.target])
-        elif isinstance(batch, (list, tuple)) and len(batch) >= 2:
-            data, target = batch[0], batch[1]
-        else:
-            raise ValueError(f"Unknown batch format: {type(batch)}")
-        return data, target
-
-class FluxIterableDataset(IterableDataset):
-    """Bridges DataFlux Flux to PyTorch IterableDataset."""
-    def __init__(self, flux: Any):
-        self.flux = flux
-    def __iter__(self):
-        yield from self.flux
 
 @configurable
-class Trainer:
-    """
-    Marainer Trainer powered by PyTorch Lightning.
-    Orchestrates the lifecycle using explicitly defined datasets and deferred loaders.
+class Trainer(L.LightningModule):
+    """Marainer Trainer: configurable Lightning module with integrated training loop.
+
+    Supports YAML-configurable metrics via torchmetrics. Train and validation
+    ``MetricCollection`` instances are configured directly in YAML using
+    ``!clone:`` for independent copies (torchmetrics requires separate state).
+
+    Args:
+        model: The neural network model (deferred via Confluid).
+        train_set: Training dataset or Flux pipeline.
+        val_set: Validation dataset or Flux pipeline.
+        optimizer: Optimizer class/config (deferred, default: Adam lr=1e-3).
+        train_loader: DataLoader config for training data.
+        val_loader: DataLoader config for validation data.
+        lightning: PyTorch Lightning Trainer config.
+        experiment_name: MLflow experiment name.
+        run_name: MLflow run name.
+        loggers: List of Lightning loggers (deferred via Confluid).
+
+    Post-construction attributes (set via ``@configurable``):
+        train_metrics: Train ``MetricCollection`` (from YAML).
+        val_metrics: Validation ``MetricCollection`` (from YAML).
+        loss_fn: Loss function (default: ``CrossEntropyLoss``).
+
+    Example YAML::
+
+        metrics:
+          - !class:torchmetrics.classification.MulticlassAccuracy()
+          - !class:torchmetrics.classification.MulticlassF1Score()
+
+        train_metrics: !class:torchmetrics.MetricCollection()
+          metrics: !clone:metrics
+          prefix: "train/"
+
+        val_metrics: !class:torchmetrics.MetricCollection()
+          metrics: !clone:metrics
+          prefix: "val/"
     """
 
     def __init__(
         self,
-        model: Any = None,
-        optimizer: Any = None,
-        train_set: Any = None,
+        model: Any,
+        train_set: Any,
         val_set: Any = None,
-        train_loader: Any = Class(DataLoader), # Default Class citizen
-        val_loader: Any = Class(DataLoader),   # Default Class citizen
-        epochs: int = 10,
-        accelerator: str = "auto",
-        devices: Union[str, int] = "auto",
+        optimizer: Any = Class(torch.optim.Adam, lr=1e-3),
+        train_loader: Any = Class(DataLoader),
+        val_loader: Any = Class(DataLoader),
+        lightning: Any = Class(L.Trainer),
         experiment_name: str = "marainer_run",
         run_name: str = "train",
-        **lightning_kwargs: Any
+        loggers: Any = None,
     ) -> None:
+        super().__init__()
         self.model = model
-        self.optimizer = optimizer
         self.train_set = train_set
         self.val_set = val_set
+        self.optimizer = optimizer
         self.train_loader = train_loader
         self.val_loader = val_loader
-        self.epochs = epochs
-        self.accelerator = accelerator
-        self.devices = devices
+        self.lightning = lightning
         self.experiment_name = experiment_name
         self.run_name = run_name
-        self.lightning_kwargs = lightning_kwargs
+        self._loggers_config = loggers
+        self.loss_fn = nn.CrossEntropyLoss()
+        self.train_metrics: MetricCollection | None = None
+        self.val_metrics: MetricCollection | None = None
+
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        from typing import cast
+
+        return cast(torch.Tensor, self.model(x))
+
+    def training_step(self, batch: Any, batch_idx: int) -> torch.Tensor:
+        preds = self(batch.input)
+        loss: torch.Tensor = self.loss_fn(preds, batch.target)
+        self.log("train/loss", loss, on_step=True, on_epoch=True, prog_bar=True, batch_size=batch.input.shape[0])
+        if self.train_metrics is not None:
+            self.train_metrics(preds, batch.target)
+            self.log_dict(self.train_metrics, on_step=False, on_epoch=True, batch_size=batch.input.shape[0])
+        return loss
+
+    def validation_step(self, batch: Any, batch_idx: int) -> torch.Tensor:
+        preds = self(batch.input)
+        loss: torch.Tensor = self.loss_fn(preds, batch.target)
+        self.log("val/loss", loss, on_epoch=True, prog_bar=True, batch_size=batch.input.shape[0])
+        if self.val_metrics is not None:
+            self.val_metrics(preds, batch.target)
+            self.log_dict(self.val_metrics, on_step=False, on_epoch=True, batch_size=batch.input.shape[0])
+        return loss
+
+    def configure_optimizers(self) -> Any:
+        return flow(self.optimizer, params=self.parameters())
+
+    def _marainer_log_hyperparams(self, lightning_trainer: L.Trainer) -> None:
+        """Log hyperparameters, git hash, and config path to all loggers."""
+        from liquify.context import get_context
+        from liquify.discovery import get_configurable_paths
+
+        params = get_configurable_paths(self)
+        clean_params = {k: v for k, v in params.items() if isinstance(v, (int, float, str, bool))}
+
+        git_hash = _get_git_hash()
+        if git_hash:
+            clean_params["git_hash"] = git_hash
+
+        ctx = get_context()
+        if ctx and ctx.config_path:
+            clean_params["config_script"] = str(ctx.config_path)
+
+        for lg in lightning_trainer.loggers:
+            lg.log_hyperparams(clean_params)
 
     def run(self) -> None:
-        """Executes the training loop using PyTorch Lightning."""
+        """Execute the training loop."""
         logger.info(f"Marainer navigating to: {self.experiment_name} ({self.run_name})")
-        
-        # 1. Flow Core Components
-        model_instance = flow(self.model)
-        lightning_model = MarainerLightningModule(model_instance, self.optimizer)
-        
-        # 2. Flow Data Components (Deferred materialization)
-        # We flow the set first, then use it as the 'dataset' argument for the loader
-        train_data = flow(self.train_set)
-        if hasattr(train_data, "__iter__") and not hasattr(train_data, "__getitem__"):
-            train_data = FluxIterableDataset(train_data)
-            
-        # Materialize the loader with the live dataset
-        # This will also pick up any CLI overrides like --num_workers
-        t_loader = flow(self.train_loader, dataset=train_data)
-        
-        v_loader = None
-        if self.val_set:
-            val_data = flow(self.val_set)
-            if hasattr(val_data, "__iter__") and not hasattr(val_data, "__getitem__"):
-                val_data = FluxIterableDataset(val_data)
-            v_loader = flow(self.val_loader, dataset=val_data)
 
-        # 3. Initialize Lightning Trainer
-        trainer = L.Trainer(
-            accelerator=self.accelerator,
-            devices=self.devices,
-            max_epochs=self.epochs,
-            **self.lightning_kwargs
-        )
+        self.model = flow(self.model)
+        if self.train_metrics is not None:
+            self.train_metrics = flow(self.train_metrics)
+        if self.val_metrics is not None:
+            self.val_metrics = flow(self.val_metrics)
 
-        # 4. Fit
-        logger.info(f"Starting Lightning Fit. Train Loader: {t_loader.__class__.__name__}")
-        trainer.fit(model=lightning_model, train_dataloaders=t_loader, val_dataloaders=v_loader)
-        
-        logger.info("Training complete. Mariner has safely docked.")
+        t_loader = flow(self.train_loader, dataset=flow(self.train_set))
+        v_loader = flow(self.val_loader, dataset=flow(self.val_set)) if self.val_set else None
+
+        # Pass loggers to Lightning Trainer — Confluid auto-flows Instance objects in the list
+        logger_kwarg: dict[str, Any] = {}
+        if self._loggers_config is not None:
+            logger_kwarg["logger"] = self._loggers_config
+
+        lightning_trainer = flow(self.lightning, **logger_kwarg)
+        self._marainer_log_hyperparams(lightning_trainer)
+        lightning_trainer.fit(model=self, train_dataloaders=t_loader, val_dataloaders=v_loader)
+        logger.info("Training complete.")
