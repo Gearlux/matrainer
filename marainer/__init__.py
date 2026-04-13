@@ -2,9 +2,13 @@
 
 __version__ = "0.1.0"
 
-from confluid import register
 import torch.optim
+from confluid import register
 
 # Register standard torch optimizers for confluid usage
 register(torch.optim.Adam)
 register(torch.optim.SGD)
+
+# Metrics module (registers MetricPreset with confluid)
+import marainer.metrics  # noqa: F401, E402
+import marainer.presets  # noqa: F401, E402

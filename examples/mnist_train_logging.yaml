@@ -1,0 +1,70 @@
+experiment_name: mnist_digits
+run_name: with_logging
+
+# Shared parameter — broadcast to all metrics and the model
+num_classes: 10
+
+model: !class:examples.mnist_model.MNISTSimpleCNN()
+  input_channels: 1
+
+optimizer: !class:torch.optim.Adam
+  lr: 0.001
+
+# Explicit metrics list — num_classes is broadcast automatically from root.
+metrics:
+  - !class:torchmetrics.classification.MulticlassAccuracy()
+  - !class:torchmetrics.classification.MulticlassF1Score()
+      average: macro
+  - !class:torchmetrics.classification.MulticlassPrecision()
+  - !class:torchmetrics.classification.MulticlassRecall()
+
+# Train and val MetricCollections use !clone: for independent copies
+# (torchmetrics requires separate state for train vs val).
+train_metrics: !class:torchmetrics.MetricCollection()
+  metrics: !clone:metrics
+  prefix: "train/"
+
+val_metrics: !class:torchmetrics.MetricCollection()
+  metrics: !clone:metrics
+  prefix: "val/"
+
+# --- Logging backends ---
+# All loggers receive metrics via self.log() AND hyperparams (config params, git hash, config script).
+loggers:
+  - !class:pytorch_lightning.loggers.TensorBoardLogger()
+      save_dir: "."
+      name: "tb_logs"
+  - !class:pytorch_lightning.loggers.CSVLogger()
+      save_dir: "."
+      name: "csv_logs"
+  - !class:pytorch_lightning.loggers.MLFlowLogger()
+      experiment_name: !ref:experiment_name
+      run_name: !ref:run_name
+
+train_set: !class:dataflux.core.Flux()
+  source: !class:dataflux.sources.HuggingFaceSource()
+    path: mnist
+    split: train
+    input_feature: image
+    target_feature: label
+    count: 1000
+  ops:
+    - !class:dataflux.ops.numpy.NormalizeOp()
+      max_value: 255
+    - !class:dataflux.ops.ToTensorOp()
+      normalize: false
+
+val_set: !class:dataflux.core.Flux()
+  source: !class:dataflux.sources.HuggingFaceSource()
+    path: mnist
+    split: test
+    input_feature: image
+    target_feature: label
+    count: 1000
+  ops:
+    - !class:dataflux.ops.ToTensorOp()
+      normalize: true
+
+max_epochs: 3
+batch_size: 16
+num_workers: 0

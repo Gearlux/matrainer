@@ -1,27 +1,37 @@
 experiment_name: mnist_digits
 run_name: lightning_baseline
-epochs: 3
-accelerator: cpu
 
-model: !class:examples.mnist_model.MNISTSimpleCNN
+model: !class:examples.mnist_model.MNISTSimpleCNN()
   num_classes: 10
   input_channels: 1
 
 optimizer: !class:torch.optim.Adam
   lr: 0.001
 
-train_set: !class:dataflux.core.Flux
-  source: !class:dataflux.sources.HuggingFaceSource
+train_set: !class:dataflux.core.Flux()
+  source: !class:dataflux.sources.HuggingFaceSource()
     path: mnist
     split: train
     input_feature: image
     target_feature: label
     count: 1000
   ops:
-    - !class:dataflux.ops.ToTensorOp
-      normalize: true
-  batch_size: 32
+    - !class:dataflux.ops.numpy.NormalizeOp()
+      max_value: 255
+    - !class:dataflux.ops.ToTensorOp()
+      normalize: false
 
-train_loader: !class:torch.utils.data.DataLoader
-  batch_size: null  # Flux handles batching
-  # num_workers: 4
+val_set: !class:dataflux.core.Flux()
+  source: !class:dataflux.sources.HuggingFaceSource()
+    path: mnist
+    split: test
+    input_feature: image
+    target_feature: label
+    count: 1000
+  ops:
+    - !class:dataflux.ops.ToTensorOp()
+      normalize: true
+
+max_epochs: 3
+batch_size: 16
+num_workers: 0
