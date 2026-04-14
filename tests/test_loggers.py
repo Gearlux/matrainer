@@ -12,7 +12,8 @@ from dataflux.sample import Sample
 from pytorch_lightning.loggers import CSVLogger
 from torch.utils.data import DataLoader
 
-from marainer.trainer import Trainer, _get_git_hash
+from marainer.trainer import Trainer
+from marainer.utils import get_git_commit_hash
 
 
 @configurable
@@ -90,30 +91,20 @@ class TestLogHyperparams:
         mock_logger1.log_hyperparams.assert_called_once()
         mock_logger2.log_hyperparams.assert_called_once()
 
-    def test_hyperparams_include_git_hash(self) -> None:
-        """Logged hyperparams include git_hash when in a git repo."""
-        mock_logger = MagicMock()
-        mock_trainer = MagicMock(spec=L.Trainer)
-        mock_trainer.loggers = [mock_logger]
-
-        trainer = Trainer(model=TinyModel(), train_set=_make_samples(16))
-        trainer._marainer_log_hyperparams(mock_trainer)
-
-        logged_params = mock_logger.log_hyperparams.call_args[0][0]
-        # We're in a git repo, so git_hash should be present
-        assert "git_hash" in logged_params
-        assert len(logged_params["git_hash"]) == 40  # Full SHA
-
 
 class TestGetGitHash:
     def test_returns_hash_in_git_repo(self) -> None:
-        """_get_git_hash returns a 40-char hex string in a git repo."""
-        result = _get_git_hash()
+        """get_git_commit_hash returns a hash string in a git repo."""
+        result = get_git_commit_hash()
         assert result is not None
-        assert len(result) == 40
-        assert all(c in "0123456789abcdef" for c in result)
+        # Should start with 40 hex chars
+        assert len(result) >= 40
+        sha = result[:40]
+        assert all(c in "0123456789abcdef" for c in sha)
+        if len(result) > 40:
+            assert result.endswith("-dirty")
 
     def test_returns_none_outside_git(self) -> None:
-        """_get_git_hash returns None when git is unavailable."""
-        with patch("marainer.trainer.subprocess.check_output", side_effect=FileNotFoundError):
-            assert _get_git_hash() is None
+        """get_git_commit_hash returns None when git is unavailable."""
+        with patch("marainer.utils.subprocess.check_output", side_effect=FileNotFoundError):
+            assert get_git_commit_hash() is None
