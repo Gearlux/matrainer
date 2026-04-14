@@ -11,15 +11,6 @@ from torchmetrics import MetricCollection
 
 logger = get_logger(__name__)
 
-
-def _get_git_hash() -> str | None:
-    """Return current git commit hash, or None if unavailable."""
-    try:
-        return subprocess.check_output(["git", "rev-parse", "HEAD"], stderr=subprocess.DEVNULL).decode().strip()
-    except (subprocess.CalledProcessError, FileNotFoundError):
-        return None
-
-
 @configurable
 class Trainer(L.LightningModule):
     """Marainer Trainer: configurable Lightning module with integrated training loop.
@@ -121,10 +112,6 @@ class Trainer(L.LightningModule):
 
         params = get_configurable_paths(self)
         clean_params = {k: v for k, v in params.items() if isinstance(v, (int, float, str, bool))}
-
-        git_hash = _get_git_hash()
-        if git_hash:
-            clean_params["git_hash"] = git_hash
 
         ctx = get_context()
         if ctx and ctx.config_path:
