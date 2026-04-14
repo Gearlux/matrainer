@@ -40,6 +40,9 @@ loggers:
   - !class:pytorch_lightning.loggers.MLFlowLogger()
       experiment_name: !ref:experiment_name
       run_name: !ref:run_name
+      tracking_uri: http://localhost:5005
+      tags:
+        mlflow.source.git.commit: !ref:marainer.utils.get_git_commit_hash()
 
 train_set: !class:dataflux.core.Flux()
   source: !class:dataflux.sources.HuggingFaceSource()
