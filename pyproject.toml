@@ -38,6 +38,9 @@ marainer = "marainer.cli:main"
 where = ["."]
 include = ["marainer*"]
 
+[tool.setuptools.package-data]
+marainer = ["py.typed"]
+
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 
