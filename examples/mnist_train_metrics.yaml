@@ -18,8 +18,8 @@ metrics:
   - !class:torchmetrics.classification.MulticlassPrecision()
   - !class:torchmetrics.classification.MulticlassRecall()
 
-# Train and val MetricCollections use !clone: for independent copies
-# (torchmetrics requires separate state for train vs val).
+# Train / val / test MetricCollections use !clone: for independent state
+# (torchmetrics requires separate state per phase).
 train_metrics: !class:torchmetrics.MetricCollection()
   metrics: !clone:metrics
   prefix: "train/"
@@ -28,13 +28,30 @@ val_metrics: !class:torchmetrics.MetricCollection()
   metrics: !clone:metrics
   prefix: "val/"
 
+test_metrics: !class:torchmetrics.MetricCollection()
+  metrics: !clone:metrics
+  prefix: "test/"
+
+hf_train: !class:dataflux.sources.HuggingFaceSource()
+  path: mnist
+  split: train
+  input_feature: image
+  target_feature: label
+  count: 1000
+
+hf_test: !class:dataflux.sources.HuggingFaceSource()
+  path: mnist
+  split: test
+  input_feature: image
+  target_feature: label
+  count: 1000
+
 train_set: !class:dataflux.core.Flux()
-  source: !class:dataflux.sources.HuggingFaceSource()
-    path: mnist
+  source: !class:dataflux.sources.DatasetSplit()
+    source: !ref:hf_train
     split: train
-    input_feature: image
-    target_feature: label
-    count: 1000
+    val_fraction: 0.1
+    seed: 42
   ops:
     - !class:dataflux.ops.numpy.NormalizeOp()
       max_value: 255
@@ -42,12 +59,17 @@ train_set: !class:dataflux.core.Flux()
       normalize: false
 
 val_set: !class:dataflux.core.Flux()
-  source: !class:dataflux.sources.HuggingFaceSource()
-    path: mnist
-    split: test
-    input_feature: image
-    target_feature: label
-    count: 1000
+  source: !class:dataflux.sources.DatasetSplit()
+    source: !ref:hf_train
+    split: val
+    val_fraction: 0.1
+    seed: 42
+  ops:
+    - !class:dataflux.ops.ToTensorOp()
+      normalize: true
+
+test_set: !class:dataflux.core.Flux()
+  source: !ref:hf_test
   ops:
     - !class:dataflux.ops.ToTensorOp()
       normalize: true

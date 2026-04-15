@@ -1,6 +1,6 @@
 """Integration tests for Trainer with map-style Flux."""
 
-from typing import cast
+from typing import Any, cast
 
 import pytorch_lightning as L
 import torch
@@ -73,3 +73,75 @@ class TestFluxGetitem:
 
     def test_len(self) -> None:
         assert len(Flux(source=_make_samples(10))) == 10
+
+
+class TestTestSet:
+    """Verify that an optional test_set triggers lightning_trainer.test() after fit()."""
+
+    def test_run_invokes_test_when_test_set_provided(self) -> None:
+        """When test_set is set, Trainer.run() should call lightning_trainer.test()."""
+        trainer = Trainer(
+            model=TinyModel(),
+            train_set=Flux(source=_make_samples(16)),
+        )
+        trainer.val_set = Flux(source=_make_samples(8))
+        trainer.test_set = Flux(source=_make_samples(8))
+        trainer.lightning = Class(
+            L.Trainer,
+            max_epochs=1,
+            accelerator="cpu",
+            enable_progress_bar=False,
+            enable_model_summary=False,
+            logger=False,
+        )
+        trainer.train_loader = Class(DataLoader, batch_size=8)
+        trainer.val_loader = Class(DataLoader, batch_size=8)
+        trainer.test_loader = Class(DataLoader, batch_size=8)
+
+        # Spy on Lightning's test() method.
+        original_test = L.Trainer.test
+        call_counter = {"count": 0}
+
+        def _spy(self: L.Trainer, *args: Any, **kwargs: Any) -> Any:
+            call_counter["count"] += 1
+            return original_test(self, *args, **kwargs)
+
+        L.Trainer.test = _spy  # type: ignore[assignment]
+        try:
+            trainer.run()
+        finally:
+            L.Trainer.test = original_test  # type: ignore[assignment]
+
+        assert call_counter["count"] == 1
+        logged = trainer.trainer.callback_metrics
+        assert any(k.startswith("test/") for k in logged), f"expected test/* metrics, got: {list(logged)}"
+
+    def test_run_skips_test_when_test_set_absent(self) -> None:
+        trainer = Trainer(
+            model=TinyModel(),
+            train_set=Flux(source=_make_samples(16)),
+        )
+        trainer.lightning = Class(
+            L.Trainer,
+            max_epochs=1,
+            accelerator="cpu",
+            enable_progress_bar=False,
+            enable_model_summary=False,
+            logger=False,
+        )
+        trainer.train_loader = Class(DataLoader, batch_size=8)
+
+        original_test = L.Trainer.test
+        call_counter = {"count": 0}
+
+        def _spy(self: L.Trainer, *args: Any, **kwargs: Any) -> Any:
+            call_counter["count"] += 1
+            return original_test(self, *args, **kwargs)
+
+        L.Trainer.test = _spy  # type: ignore[assignment]
+        try:
+            trainer.run()
+        finally:
+            L.Trainer.test = original_test  # type: ignore[assignment]
+
+        assert call_counter["count"] == 0

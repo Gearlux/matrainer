@@ -22,10 +22,13 @@ class Trainer(L.LightningModule):
     Args:
         model: The neural network model (deferred via Confluid).
         train_set: Training dataset or Flux pipeline.
-        val_set: Validation dataset or Flux pipeline.
+        val_set: Validation dataset or Flux pipeline (used during ``fit``).
+        test_set: Held-out test dataset or Flux pipeline. When set,
+            ``lightning_trainer.test(...)`` runs after ``fit``.
         optimizer: Optimizer class/config (deferred, default: Adam lr=1e-3).
         train_loader: DataLoader config for training data.
         val_loader: DataLoader config for validation data.
+        test_loader: DataLoader config for test data.
         lightning: PyTorch Lightning Trainer config.
         experiment_name: MLflow experiment name.
         run_name: MLflow run name.
@@ -34,6 +37,7 @@ class Trainer(L.LightningModule):
     Post-construction attributes (set via ``@configurable``):
         train_metrics: Train ``MetricCollection`` (from YAML).
         val_metrics: Validation ``MetricCollection`` (from YAML).
+        test_metrics: Test ``MetricCollection`` (from YAML), used after ``fit``.
         loss_fn: Loss function (default: ``CrossEntropyLoss``).
 
     Example YAML::
@@ -56,9 +60,11 @@ class Trainer(L.LightningModule):
         model: Any,
         train_set: Any,
         val_set: Any = None,
+        test_set: Any = None,
         optimizer: Any = Class(torch.optim.Adam, lr=1e-3),
         train_loader: Any = Class(DataLoader),
         val_loader: Any = Class(DataLoader),
+        test_loader: Any = Class(DataLoader),
         lightning: Any = Class(L.Trainer),
         experiment_name: str = "marainer_run",
         run_name: str = "train",
@@ -68,9 +74,11 @@ class Trainer(L.LightningModule):
         self.model = model
         self.train_set = train_set
         self.val_set = val_set
+        self.test_set: Any = test_set
         self.optimizer = optimizer
         self.train_loader = train_loader
         self.val_loader = val_loader
+        self.test_loader = test_loader
         self.lightning = lightning
         self.experiment_name = experiment_name
         self.run_name = run_name
@@ -78,6 +86,7 @@ class Trainer(L.LightningModule):
         self.loss_fn = nn.CrossEntropyLoss()
         self.train_metrics: MetricCollection | None = None
         self.val_metrics: MetricCollection | None = None
+        self.test_metrics: MetricCollection | None = None
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         from typing import cast
@@ -100,6 +109,15 @@ class Trainer(L.LightningModule):
         if self.val_metrics is not None:
             self.val_metrics(preds, batch.target)
             self.log_dict(self.val_metrics, on_step=False, on_epoch=True, batch_size=batch.input.shape[0])
+        return loss
+
+    def test_step(self, batch: Any, batch_idx: int) -> torch.Tensor:
+        preds = self(batch.input)
+        loss: torch.Tensor = self.loss_fn(preds, batch.target)
+        self.log("test/loss", loss, on_epoch=True, prog_bar=True, batch_size=batch.input.shape[0])
+        if self.test_metrics is not None:
+            self.test_metrics(preds, batch.target)
+            self.log_dict(self.test_metrics, on_step=False, on_epoch=True, batch_size=batch.input.shape[0])
         return loss
 
     def configure_optimizers(self) -> Any:
@@ -129,16 +147,19 @@ class Trainer(L.LightningModule):
             self.train_metrics = flow(self.train_metrics)
         if self.val_metrics is not None:
             self.val_metrics = flow(self.val_metrics)
+        if self.test_metrics is not None:
+            self.test_metrics = flow(self.test_metrics)
 
         t_loader = flow(self.train_loader, dataset=flow(self.train_set))
         v_loader = flow(self.val_loader, dataset=flow(self.val_set)) if self.val_set else None
 
-        # Pass loggers to Lightning Trainer — Confluid auto-flows Instance objects in the list
-        logger_kwarg: dict[str, Any] = {}
-        if self._loggers_config is not None:
-            logger_kwarg["logger"] = self._loggers_config
-
-        lightning_trainer = flow(self.lightning, **logger_kwarg)
+        lightning_trainer = flow(self.lightning)
         self._marainer_log_hyperparams(lightning_trainer)
         lightning_trainer.fit(model=self, train_dataloaders=t_loader, val_dataloaders=v_loader)
         logger.info("Training complete.")
+
+        if self.test_set is not None:
+            logger.info("Evaluating on held-out test set...")
+            test_loader = flow(self.test_loader, dataset=flow(self.test_set))
+            lightning_trainer.test(model=self, dataloaders=test_loader)
+            logger.info("Test evaluation complete.")

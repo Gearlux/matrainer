@@ -150,10 +150,13 @@ marainer train <config.yaml>
 | `loss_fn` | `!class:` | `CrossEntropyLoss()` | Loss function (post-construction) |
 | `train_metrics` | `!class:` | `None` | Train MetricCollection (post-construction) |
 | `val_metrics` | `!class:` | `None` | Validation MetricCollection (post-construction) |
+| `test_metrics` | `!class:` | `None` | Test MetricCollection (post-construction) |
 | `train_set` | `!class:` | *required* | Training dataset (Flux pipeline or Dataset) |
-| `val_set` | `!class:` | `None` | Validation dataset |
+| `val_set` | `!class:` | `None` | Validation dataset (used during `fit`) |
+| `test_set` | `!class:` | `None` | Held-out test dataset. When set, `lightning_trainer.test()` runs after `fit()` |
 | `train_loader` | `!class:` | `DataLoader` | Training DataLoader config |
 | `val_loader` | `!class:` | `DataLoader` | Validation DataLoader config |
+| `test_loader` | `!class:` | `DataLoader` | Test DataLoader config |
 | `loggers` | `list[!class:]` | `None` | Logging backends (TensorBoard, CSV, MLflow) |
 | `lightning` | `!class:` | `L.Trainer` | PyTorch Lightning Trainer config |
 | `batch_size` | `int` | -- | Broadcast to DataLoaders |
@@ -405,6 +408,45 @@ train_set: !class:dataflux.core.Flux()
 ```
 
 DataFlux pipelines support functional composition with operations like normalization, tensor conversion, augmentation, and more. See the DataFlux documentation for available sources and operations.
+
+### Train / Val / Test Splits
+
+Marainer treats `val_set` and `test_set` as distinct signals: `val_set` is used per-epoch during `fit()` for model selection, and `test_set` is evaluated once via `lightning_trainer.test()` after `fit()` completes.
+
+The recommended pattern carves the training split of the source into a disjoint train/val view via DataFlux's `DatasetSplit`, and reserves the source's own test split for `test_set`:
+
+```yaml
+hf_train: !class:dataflux.sources.HuggingFaceSource()
+  path: mnist
+  split: train
+  input_feature: image
+  target_feature: label
+
+hf_test: !class:dataflux.sources.HuggingFaceSource()
+  path: mnist
+  split: test
+  input_feature: image
+  target_feature: label
+
+train_set: !class:dataflux.core.Flux()
+  source: !class:dataflux.sources.DatasetSplit()
+    source: !ref:hf_train
+    split: train
+    val_fraction: 0.1
+    seed: 42
+
+val_set: !class:dataflux.core.Flux()
+  source: !class:dataflux.sources.DatasetSplit()
+    source: !ref:hf_train
+    split: val
+    val_fraction: 0.1
+    seed: 42
+
+test_set: !class:dataflux.core.Flux()
+  source: !ref:hf_test
+```
+
+`DatasetSplit` also supports explicit `start`/`end` ranges and works with any indexable source. See DataFlux's README for the full reference and the HuggingFace native slicing alternative.
 
 ---
 

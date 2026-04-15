@@ -2,7 +2,7 @@
 name = "marainer"
 version = "0.1.0"
 description = "Project-agnostic training and processing pipeline orchestrator."
-authors = [{name = "gearlux"}]
+authors = [{name = "Taidal"}]
 license = {text = "MIT"}
 dependencies = [
     "liquify",
