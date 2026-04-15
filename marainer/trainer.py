@@ -1,4 +1,3 @@
-import subprocess
 from typing import Any
 
 import pytorch_lightning as L
@@ -10,6 +9,7 @@ from torch.utils.data import DataLoader
 from torchmetrics import MetricCollection
 
 logger = get_logger(__name__)
+
 
 @configurable
 class Trainer(L.LightningModule):
