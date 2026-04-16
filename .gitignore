@@ -44,3 +44,8 @@ flake8.txt
 mypy.txt
 coverage.xml
 test-report.xml
+
+# Training artifacts
+csv_logs/
+tb_logs/
+checkpoints/

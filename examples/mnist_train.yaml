@@ -8,13 +8,30 @@ model: !class:examples.mnist_model.MNISTSimpleCNN()
 optimizer: !class:torch.optim.Adam
   lr: 0.001
 
+# Load each HuggingFace split once. The !ref: tag lets us point to these
+# from multiple DatasetSplits below — !ref: shares the same live object,
+# so the HF dataset is loaded exactly once.
+hf_train: !class:dataflux.sources.HuggingFaceSource()
+  path: mnist
+  split: train
+  input_feature: image
+  target_feature: label
+  count: 1000
+
+hf_test: !class:dataflux.sources.HuggingFaceSource()
+  path: mnist
+  split: test
+  input_feature: image
+  target_feature: label
+  count: 1000
+
+# 90/10 reproducible train/val split out of the HuggingFace train data.
 train_set: !class:dataflux.core.Flux()
-  source: !class:dataflux.sources.HuggingFaceSource()
-    path: mnist
+  source: !class:dataflux.sources.DatasetSplit()
+    source: !ref:hf_train
     split: train
-    input_feature: image
-    target_feature: label
-    count: 1000
+    val_fraction: 0.1
+    seed: 42
   ops:
     - !class:dataflux.ops.numpy.NormalizeOp()
       max_value: 255
@@ -22,12 +39,18 @@ train_set: !class:dataflux.core.Flux()
       normalize: false
 
 val_set: !class:dataflux.core.Flux()
-  source: !class:dataflux.sources.HuggingFaceSource()
-    path: mnist
-    split: test
-    input_feature: image
-    target_feature: label
-    count: 1000
+  source: !class:dataflux.sources.DatasetSplit()
+    source: !ref:hf_train
+    split: val
+    val_fraction: 0.1
+    seed: 42
+  ops:
+    - !class:dataflux.ops.ToTensorOp()
+      normalize: true
+
+# Held-out test set — evaluated once after fit() via lightning_trainer.test().
+test_set: !class:dataflux.core.Flux()
+  source: !ref:hf_test
   ops:
     - !class:dataflux.ops.ToTensorOp()
       normalize: true
