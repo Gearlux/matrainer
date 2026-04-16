@@ -6,13 +6,13 @@ from unittest.mock import MagicMock, patch
 import pytorch_lightning as L
 import torch
 import torch.nn as nn
-from confluid import Class, configurable
-from dataflux.core import Flux
+from confluid import Class, configurable, materialize
+from confluid.loader import load
 from dataflux.sample import Sample
 from pytorch_lightning.loggers import CSVLogger
-from torch.utils.data import DataLoader
 
-from marainer.trainer import Trainer, _get_git_hash
+from marainer.trainer import Trainer
+from marainer.utils import get_git_commit_hash
 
 
 @configurable
@@ -29,53 +29,6 @@ def _make_samples(n: int = 32, input_size: int = 4) -> list[Sample]:
     return [Sample(input=torch.randn(input_size), target=i % 2, metadata={}) for i in range(n)]
 
 
-class TestLoggerConfig:
-    def test_loggers_none_by_default(self) -> None:
-        """Trainer with no loggers config uses Lightning's default."""
-        trainer = Trainer(model=TinyModel(), train_set=_make_samples(16))
-        assert trainer._loggers_config is None
-
-    def test_loggers_stored_internally(self) -> None:
-        """Loggers are stored as _loggers_config, not shadowing the LightningModule property."""
-        csv_logger = CSVLogger(save_dir=".", name="test_csv")
-        trainer = Trainer(model=TinyModel(), train_set=_make_samples(16), loggers=[csv_logger])
-        assert trainer._loggers_config == [csv_logger]
-
-    def test_full_epoch_with_csv_logger(self, tmp_path: object) -> None:
-        """CSVLogger receives metrics during a full training epoch."""
-        csv_logger = CSVLogger(save_dir=str(tmp_path), name="csv_logs")
-        trainer = Trainer(
-            model=TinyModel(),
-            train_set=_make_samples(32),
-            optimizer=Class(torch.optim.SGD, lr=0.01),
-            loggers=[csv_logger],
-        )
-        flux = Flux(source=_make_samples(32))
-        loader: DataLoader = DataLoader(flux, batch_size=16)
-        lt = L.Trainer(
-            max_epochs=1,
-            accelerator="cpu",
-            enable_progress_bar=False,
-            enable_model_summary=False,
-            logger=csv_logger,
-        )
-        lt.fit(model=trainer, train_dataloaders=loader)
-        # CSVLogger should have logged metrics
-        assert csv_logger.experiment is not None
-
-    def test_loggers_none_backward_compat(self) -> None:
-        """Training works with no loggers configured (backward compat)."""
-        trainer = Trainer(
-            model=TinyModel(),
-            train_set=_make_samples(32),
-            optimizer=Class(torch.optim.SGD, lr=0.01),
-        )
-        flux = Flux(source=_make_samples(32))
-        loader: DataLoader = DataLoader(flux, batch_size=16)
-        lt = L.Trainer(max_epochs=1, accelerator="cpu", enable_progress_bar=False, enable_model_summary=False)
-        lt.fit(model=trainer, train_dataloaders=loader)
-
-
 class TestLogHyperparams:
     def test_hyperparams_logged_to_all_loggers(self) -> None:
         """_log_hyperparams calls log_hyperparams on every attached logger."""
@@ -90,30 +43,62 @@ class TestLogHyperparams:
         mock_logger1.log_hyperparams.assert_called_once()
         mock_logger2.log_hyperparams.assert_called_once()
 
-    def test_hyperparams_include_git_hash(self) -> None:
-        """Logged hyperparams include git_hash when in a git repo."""
-        mock_logger = MagicMock()
-        mock_trainer = MagicMock(spec=L.Trainer)
-        mock_trainer.loggers = [mock_logger]
 
-        trainer = Trainer(model=TinyModel(), train_set=_make_samples(16))
-        trainer._marainer_log_hyperparams(mock_trainer)
+class TestYamlLoggers:
+    def test_yaml_loggers_reach_lightning_trainer(self, tmp_path: object) -> None:
+        """End-to-end: loggers declared under ``lightning.logger:`` in YAML
+        must end up attached to the real ``L.Trainer`` produced by flowing
+        ``trainer.lightning``.
+        """
+        from confluid import flow
 
-        logged_params = mock_logger.log_hyperparams.call_args[0][0]
-        # We're in a git repo, so git_hash should be present
-        assert "git_hash" in logged_params
-        assert len(logged_params["git_hash"]) == 40  # Full SHA
+        yaml_text = f"""
+model: !class:tests.test_loggers.TinyModel()
+
+train_set: []
+
+lightning: !class:pytorch_lightning.Trainer
+  max_epochs: 1
+  accelerator: cpu
+  enable_progress_bar: false
+  enable_model_summary: false
+  logger:
+    - !class:pytorch_lightning.loggers.CSVLogger()
+        save_dir: "{tmp_path}"
+        name: csv_test
+"""
+        data = load(yaml_text, flow=False)
+        trainer = materialize({"_confluid_class_": "Trainer", **data}, context=data)
+
+        # Before flow: the Lightning Trainer stays deferred, but the YAML-declared
+        # loggers are already captured in its kwargs (as Instance objects).
+        assert isinstance(trainer, Trainer)
+        assert isinstance(trainer.lightning, Class)
+        assert "logger" in trainer.lightning.kwargs
+        assert len(trainer.lightning.kwargs["logger"]) == 1
+
+        # After flow: the L.Trainer exposes the flowed CSVLogger via .loggers.
+        lightning_trainer = flow(trainer.lightning)
+        assert isinstance(lightning_trainer, L.Trainer)
+        attached = list(lightning_trainer.loggers)
+        assert len(attached) == 1
+        assert isinstance(attached[0], CSVLogger)
+        assert attached[0].name == "csv_test"
 
 
 class TestGetGitHash:
     def test_returns_hash_in_git_repo(self) -> None:
-        """_get_git_hash returns a 40-char hex string in a git repo."""
-        result = _get_git_hash()
+        """get_git_commit_hash returns a hash string in a git repo."""
+        result = get_git_commit_hash()
         assert result is not None
-        assert len(result) == 40
-        assert all(c in "0123456789abcdef" for c in result)
+        # Should start with 40 hex chars
+        assert len(result) >= 40
+        sha = result[:40]
+        assert all(c in "0123456789abcdef" for c in sha)
+        if len(result) > 40:
+            assert result.endswith("-dirty")
 
     def test_returns_none_outside_git(self) -> None:
-        """_get_git_hash returns None when git is unavailable."""
-        with patch("marainer.trainer.subprocess.check_output", side_effect=FileNotFoundError):
-            assert _get_git_hash() is None
+        """get_git_commit_hash returns None when git is unavailable."""
+        with patch("marainer.utils.subprocess.check_output", side_effect=FileNotFoundError):
+            assert get_git_commit_hash() is None

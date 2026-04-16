@@ -93,14 +93,14 @@ class TestMetricPreset:
         metrics = preset.to_metrics()
         acc = metrics.get("MulticlassAccuracy")
         assert acc is not None
-        assert acc.num_classes == 7  # type: ignore[attr-defined]
+        assert acc.num_classes == 7
 
     def test_average_propagated(self) -> None:
         preset = MetricPreset(category="classification", task="multiclass", num_classes=3, average="weighted")
         metrics = preset.to_metrics()
         f1 = metrics.get("MulticlassF1Score")
         assert f1 is not None
-        assert f1.average == "weighted"  # type: ignore[attr-defined]
+        assert f1.average == "weighted"
 
     def test_available_metrics_returns_names(self) -> None:
         preset = MetricPreset(category="classification", task="multiclass")
@@ -150,7 +150,7 @@ class TestTrainerMetricsIntegration:
         assert trainer.train_metrics is None
         assert trainer.val_metrics is None
         flux = Flux(source=make_samples(16))
-        loader: DataLoader = DataLoader(flux, batch_size=8)  # type: ignore[arg-type]
+        loader: DataLoader = DataLoader(flux, batch_size=8)
         loss = trainer.training_step(next(iter(loader)), 0)
         assert loss.dim() == 0
 
@@ -185,7 +185,7 @@ class TestTrainerMetricsIntegration:
         train_mc = MetricCollection([MulticlassAccuracy(num_classes=2)], prefix="train/")
         trainer = self._make_trainer(train_metrics=train_mc)
         flux = Flux(source=make_samples(16))
-        loader: DataLoader = DataLoader(flux, batch_size=8)  # type: ignore[arg-type]
+        loader: DataLoader = DataLoader(flux, batch_size=8)
         loss = trainer.training_step(next(iter(loader)), 0)
         assert loss.dim() == 0
 
@@ -193,7 +193,7 @@ class TestTrainerMetricsIntegration:
         val_mc = MetricCollection([MulticlassAccuracy(num_classes=2)], prefix="val/")
         trainer = self._make_trainer(val_metrics=val_mc)
         flux = Flux(source=make_samples(16))
-        loader: DataLoader = DataLoader(flux, batch_size=8)  # type: ignore[arg-type]
+        loader: DataLoader = DataLoader(flux, batch_size=8)
         loss = trainer.validation_step(next(iter(loader)), 0)
         assert loss.dim() == 0
 
@@ -208,6 +208,6 @@ class TestTrainerMetricsIntegration:
         )
         trainer = self._make_trainer(train_metrics=train_mc)
         flux = Flux(source=make_samples(32))
-        loader: DataLoader = DataLoader(flux, batch_size=16)  # type: ignore[arg-type]
+        loader: DataLoader = DataLoader(flux, batch_size=16)
         lt = L.Trainer(max_epochs=1, accelerator="cpu", enable_progress_bar=False, enable_model_summary=False)
         lt.fit(model=trainer, train_dataloaders=loader)

@@ -61,7 +61,7 @@ class TestMetricPresetBasic:
         metrics = preset.to_metrics()
         acc = metrics.get("MulticlassAccuracy")
         assert acc is not None
-        assert acc.num_classes == 7  # type: ignore[attr-defined]
+        assert acc.num_classes == 7
 
     def test_available_metrics_returns_names(self) -> None:
         preset = MetricPreset(category="classification", task="multiclass")

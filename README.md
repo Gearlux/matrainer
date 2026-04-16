@@ -2,7 +2,7 @@
 
 Project-agnostic training and processing pipeline orchestrator built on PyTorch Lightning, Confluid, and DataFlux.
 
-Marainer provides a fully YAML-configurable training loop with integrated experiment tracking (MLflow), flexible data pipelines (DataFlux), and a comprehensive metrics system (torchmetrics).
+Marainer provides a fully YAML-configurable training loop with multi-backend logging (TensorBoard, CSV, MLflow), flexible data pipelines (DataFlux), and a comprehensive metrics system (torchmetrics).
 
 ## Installation
 
@@ -113,7 +113,7 @@ Marainer will:
 - Instantiate the model, optimizer, data pipelines, and metrics from YAML
 - Create separate train and validation metric collections
 - Run the training loop via PyTorch Lightning
-- Log all parameters and metrics to MLflow
+- Log hyperparameters (config params, git hash, config script) and metrics to all configured loggers
 
 ---
 
@@ -133,9 +133,9 @@ marainer train <config.yaml>
 
 2. **Trainer construction** -- A `Trainer` instance is created with all parameters from the YAML. Confluid's broadcasting pushes root-level scalars (like `num_classes`, `batch_size`, `max_epochs`) into matching constructor parameters across all configured objects.
 
-3. **MLflow setup** -- An experiment is created (or reused) with the configured `experiment_name`, and a new run starts with `run_name`.
+3. **Logger setup** -- Configured logging backends (TensorBoard, CSV, MLflow) are attached to the Lightning Trainer.
 
-4. **Parameter logging** -- All configurable parameters are extracted and logged to MLflow for full traceability.
+4. **Hyperparameter logging** -- All configurable parameters, the git commit hash, and the config script path are logged to every attached logger.
 
 5. **Training execution** -- `Trainer.run()` materializes all deferred objects and starts the Lightning training loop.
 
@@ -150,10 +150,14 @@ marainer train <config.yaml>
 | `loss_fn` | `!class:` | `CrossEntropyLoss()` | Loss function (post-construction) |
 | `train_metrics` | `!class:` | `None` | Train MetricCollection (post-construction) |
 | `val_metrics` | `!class:` | `None` | Validation MetricCollection (post-construction) |
+| `test_metrics` | `!class:` | `None` | Test MetricCollection (post-construction) |
 | `train_set` | `!class:` | *required* | Training dataset (Flux pipeline or Dataset) |
-| `val_set` | `!class:` | `None` | Validation dataset |
+| `val_set` | `!class:` | `None` | Validation dataset (used during `fit`) |
+| `test_set` | `!class:` | `None` | Held-out test dataset. When set, `lightning_trainer.test()` runs after `fit()` |
 | `train_loader` | `!class:` | `DataLoader` | Training DataLoader config |
 | `val_loader` | `!class:` | `DataLoader` | Validation DataLoader config |
+| `test_loader` | `!class:` | `DataLoader` | Test DataLoader config |
+| `loggers` | `list[!class:]` | `None` | Logging backends (TensorBoard, CSV, MLflow) |
 | `lightning` | `!class:` | `L.Trainer` | PyTorch Lightning Trainer config |
 | `batch_size` | `int` | -- | Broadcast to DataLoaders |
 | `num_workers` | `int` | -- | Broadcast to DataLoaders |
@@ -217,7 +221,7 @@ Marainer integrates with [torchmetrics](https://torchmetrics.readthedocs.io/) to
 
 - **Split** into independent train and validation collections (required by torchmetrics for correct state tracking)
 - **Prefixed** with `train/` and `val/` for unambiguous logging
-- **Logged** to both the Lightning progress bar and MLflow at epoch end
+- **Logged** to the Lightning progress bar and all configured loggers at epoch end
 - **Moved** to the correct device (CPU/GPU) by Lightning
 
 ### Approach 1: Explicit Metrics
@@ -405,26 +409,108 @@ train_set: !class:dataflux.core.Flux()
 
 DataFlux pipelines support functional composition with operations like normalization, tensor conversion, augmentation, and more. See the DataFlux documentation for available sources and operations.
 
----
+### Train / Val / Test Splits
 
-## MLflow Integration
+Marainer treats `val_set` and `test_set` as distinct signals: `val_set` is used per-epoch during `fit()` for model selection, and `test_set` is evaluated once via `lightning_trainer.test()` after `fit()` completes.
 
-Every training run is automatically tracked in MLflow:
-
-- **Parameters** -- All configurable parameters (model architecture, optimizer settings, data pipeline config) are logged
-- **Metrics** -- Loss and all configured torchmetrics are logged per epoch
-- **Experiment organization** -- Runs are grouped by `experiment_name`
+The recommended pattern carves the training split of the source into a disjoint train/val view via DataFlux's `DatasetSplit`, and reserves the source's own test split for `test_set`:
 
 ```yaml
-experiment_name: mnist_experiment    # MLflow experiment
-run_name: baseline_v2               # MLflow run name
+hf_train: !class:dataflux.sources.HuggingFaceSource()
+  path: mnist
+  split: train
+  input_feature: image
+  target_feature: label
+
+hf_test: !class:dataflux.sources.HuggingFaceSource()
+  path: mnist
+  split: test
+  input_feature: image
+  target_feature: label
+
+train_set: !class:dataflux.core.Flux()
+  source: !class:dataflux.sources.DatasetSplit()
+    source: !ref:hf_train
+    split: train
+    val_fraction: 0.1
+    seed: 42
+
+val_set: !class:dataflux.core.Flux()
+  source: !class:dataflux.sources.DatasetSplit()
+    source: !ref:hf_train
+    split: val
+    val_fraction: 0.1
+    seed: 42
+
+test_set: !class:dataflux.core.Flux()
+  source: !ref:hf_test
 ```
 
-View results with:
+`DatasetSplit` also supports explicit `start`/`end` ranges and works with any indexable source. See DataFlux's README for the full reference and the HuggingFace native slicing alternative.
 
-```bash
-mlflow ui
+---
+
+## Logging
+
+Marainer supports multiple logging backends via PyTorch Lightning's logger system. Configure any combination of TensorBoard, CSV, and MLflow loggers in YAML:
+
+```yaml
+loggers:
+  - !class:pytorch_lightning.loggers.TensorBoardLogger()
+      save_dir: "."
+      name: "tb_logs"
+  - !class:pytorch_lightning.loggers.CSVLogger()
+      save_dir: "."
+      name: "csv_logs"
+  - !class:pytorch_lightning.loggers.MLFlowLogger()
+      experiment_name: !ref:experiment_name
+      run_name: !ref:run_name
 ```
+
+All configured loggers automatically receive:
+
+- **Hyperparameters** -- All configurable parameters from the YAML config
+- **Git hash** -- Current commit hash for reproducibility
+- **Config script** -- Path to the YAML config file used
+- **Metrics** -- Loss and all configured torchmetrics logged per epoch via `self.log()`
+
+When `loggers` is omitted, Lightning uses its default logger (CSVLogger).
+
+### TensorBoard
+
+```yaml
+loggers:
+  - !class:pytorch_lightning.loggers.TensorBoardLogger()
+      save_dir: "."
+      name: "tb_logs"
+```
+
+View results: `tensorboard --logdir tb_logs`
+
+### CSV
+
+```yaml
+loggers:
+  - !class:pytorch_lightning.loggers.CSVLogger()
+      save_dir: "."
+      name: "csv_logs"
+```
+
+Metrics are written to `csv_logs/version_N/metrics.csv`, hyperparameters to `hparams.yaml`.
+
+### MLflow
+
+```yaml
+experiment_name: mnist_experiment
+run_name: baseline_v2
+
+loggers:
+  - !class:pytorch_lightning.loggers.MLFlowLogger()
+      experiment_name: !ref:experiment_name
+      run_name: !ref:run_name
+```
+
+Use `!ref:` to reuse root-level `experiment_name` and `run_name` values. View results: `mlflow ui`
 
 ---
 
@@ -438,6 +524,7 @@ The `examples/` directory contains ready-to-run configurations:
 | `mnist_train.yaml` | MNIST with data preprocessing |
 | `mnist_train_metrics.yaml` | MNIST with explicit metrics (Accuracy, F1, Precision, Recall) |
 | `mnist_train_preset.yaml` | MNIST with MetricPreset (all multiclass metrics) |
+| `mnist_train_logging.yaml` | MNIST with TensorBoard, CSV, and MLflow loggers |
 | `mnist_model.py` | Simple CNN model for MNIST |
 
 Run any example from the `examples/` directory:
@@ -456,7 +543,7 @@ marainer/
   __init__.py       # Package init, optimizer registrations
   trainer.py        # Trainer (LightningModule) with configurable metrics
   metrics.py        # MetricPreset for category-based metric discovery
-  cli.py            # CLI entry point (Liquify app) with MLflow orchestration
+  cli.py            # CLI entry point (Liquify app)
 examples/
   mnist_model.py    # Example CNN model
   mnist_train*.yaml # Example configurations
@@ -480,3 +567,4 @@ tests/
 | `dataflux` | Data pipeline abstraction |
 | `logflow` | Structured logging |
 | `mlflow` | Experiment tracking |
+| `tensorboard` | TensorBoard logging backend |

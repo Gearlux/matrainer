@@ -2,7 +2,7 @@
 name = "marainer"
 version = "0.1.0"
 description = "Project-agnostic training and processing pipeline orchestrator."
-authors = [{name = "gearlux"}]
+authors = [{name = "Taidal"}]
 license = {text = "MIT"}
 dependencies = [
     "liquify",
@@ -37,6 +37,9 @@ marainer = "marainer.cli:main"
 [tool.setuptools.packages.find]
 where = ["."]
 include = ["marainer*"]
+
+[tool.setuptools.package-data]
+marainer = ["py.typed"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
