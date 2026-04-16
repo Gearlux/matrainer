@@ -106,11 +106,11 @@ class TestTestSet:
             call_counter["count"] += 1
             return original_test(self, *args, **kwargs)
 
-        L.Trainer.test = _spy  # type: ignore[assignment]
+        L.Trainer.test = _spy  # type: ignore[method-assign]
         try:
             trainer.run()
         finally:
-            L.Trainer.test = original_test  # type: ignore[assignment]
+            L.Trainer.test = original_test  # type: ignore[method-assign]
 
         assert call_counter["count"] == 1
         logged = trainer.trainer.callback_metrics
@@ -138,10 +138,10 @@ class TestTestSet:
             call_counter["count"] += 1
             return original_test(self, *args, **kwargs)
 
-        L.Trainer.test = _spy  # type: ignore[assignment]
+        L.Trainer.test = _spy  # type: ignore[method-assign]
         try:
             trainer.run()
         finally:
-            L.Trainer.test = original_test  # type: ignore[assignment]
+            L.Trainer.test = original_test  # type: ignore[method-assign]
 
         assert call_counter["count"] == 0
