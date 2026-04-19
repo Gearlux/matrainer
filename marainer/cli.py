@@ -1,4 +1,5 @@
 import sys
+from typing import Any
 
 from liquify import LiquifyApp
 from logflow import get_logger
@@ -29,16 +30,30 @@ def train(trainer: Trainer) -> None:
         logger.error("The injected trainer object does not implement 'run()'.")
 
 
-# @app.script_command()
-# def process(task: Any, config_path: Path) -> None:
-#     """Generic processing task orchestration."""
-#     mlflow.set_experiment(getattr(task, "experiment_name", "marainer_processing"))
-#     with mlflow.start_run(run_name=getattr(task, "run_name", "process")):
-#         log_task_parameters(task)
-#         if config_path.exists():
-#             mlflow.log_artifact(str(config_path), "config")
-#         if hasattr(task, "run"):
-#             task.run()
+@app.script_command()
+def process(processor: Any) -> None:
+    """Run any Confluid-instantiated processor object that exposes ``.run()``.
+
+    The YAML config is expected to bind the object under the top-level
+    ``processor:`` key. Liquify's DI resolves it from the loaded config —
+    when the annotation is ``Any``, the value comes back as a deferred
+    ``confluid.Fluid``, which we materialize here via :func:`confluid.flow`.
+    """
+    if processor is None:
+        logger.error("'processor' was not bound — provide one under 'processor:' in your YAML.")
+        return
+    from confluid import flow
+    from confluid.fluid import Fluid
+
+    if isinstance(processor, Fluid):
+        processor = flow(processor)
+
+    label = getattr(processor, "experiment_name", processor.__class__.__name__)
+    logger.info(f"Marainer running processor: {label}")
+    if hasattr(processor, "run"):
+        processor.run()
+    else:
+        logger.error("The injected processor object does not implement 'run()'.")
 
 
 def main() -> None:
