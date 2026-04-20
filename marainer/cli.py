@@ -1,7 +1,7 @@
 import sys
 from typing import Any
 
-from liquify import LiquifyApp
+from liquifai import LiquifyApp
 from logflow import get_logger
 
 from marainer.trainer import Trainer
@@ -36,8 +36,10 @@ def process(processor: Any) -> None:
 
     The YAML config is expected to bind the object under the top-level
     ``processor:`` key. Liquify's DI resolves it from the loaded config —
-    when the annotation is ``Any``, the value comes back as a deferred
-    ``confluid.Fluid``, which we materialize here via :func:`confluid.flow`.
+    when the annotation is ``Any`` the value comes back as a deferred
+    ``confluid.Fluid``, so we materialize the top-level here. Any deferred
+    deps inside the processor (source / sink / ops) are the processor's
+    responsibility to materialize on ``.run()``.
     """
     if processor is None:
         logger.error("'processor' was not bound — provide one under 'processor:' in your YAML.")
@@ -48,7 +50,7 @@ def process(processor: Any) -> None:
     if isinstance(processor, Fluid):
         processor = flow(processor)
 
-    label = getattr(processor, "experiment_name", processor.__class__.__name__)
+    label = processor.__class__.__name__
     logger.info(f"Marainer running processor: {label}")
     if hasattr(processor, "run"):
         processor.run()
