@@ -563,7 +563,7 @@ tests/
 | `torch` | Neural networks, tensors, optimizers |
 | `torchmetrics` | Flexible metric computation |
 | `confluid` | YAML configuration and dependency injection |
-| `liquify` | CLI framework with automatic DI |
+| `liquifai` | CLI framework with automatic DI |
 | `dataflux` | Data pipeline abstraction |
 | `logflow` | Structured logging |
 | `mlflow` | Experiment tracking |

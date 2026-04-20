@@ -5,10 +5,10 @@ description = "Project-agnostic training and processing pipeline orchestrator."
 authors = [{name = "Taidal"}]
 license = {text = "MIT"}
 dependencies = [
-    "liquify",
-    "logflow",
-    "confluid",
-    "dataflux",
+    "liquifai>=0.1.0",
+    "log-flow>=0.1.0",
+    "confluid>=0.1.0",
+    "data-flux>=0.1.0",
     "mlflow",
     "torch",
     "numpy",
@@ -27,8 +27,8 @@ dev = [
     "pytest>=7.0.0",
     "pytest-cov>=4.0.0",
 ]
-torpedo = [
-    "torpedo"
+torpaido = [
+    "torpaido>=0.1.0"
 ]
 
 [project.scripts]
@@ -63,6 +63,7 @@ max-line-length = 120
 extend-ignore = ["E203"]
 
 [tool.mypy]
+disable_error_code = ["import-untyped"]
 warn_return_any = true
 warn_unused_configs = true
 disallow_untyped_defs = true
