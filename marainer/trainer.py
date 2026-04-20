@@ -125,8 +125,8 @@ class Trainer(L.LightningModule):
 
     def _marainer_log_hyperparams(self, lightning_trainer: L.Trainer) -> None:
         """Log hyperparameters, git hash, and config path to all loggers."""
-        from liquify.context import get_context
-        from liquify.discovery import get_configurable_paths
+        from liquifai.context import get_context
+        from liquifai.discovery import get_configurable_paths
 
         params = get_configurable_paths(self)
         clean_params = {k: v for k, v in params.items() if isinstance(v, (int, float, str, bool))}
