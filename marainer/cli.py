@@ -4,6 +4,7 @@ from typing import Any
 from liquifai import LiquifyApp
 from logflow import get_logger
 
+from marainer.evaluator import Evaluator
 from marainer.trainer import Trainer
 
 logger = get_logger(__name__)
@@ -28,6 +29,24 @@ def train(trainer: Trainer) -> None:
         trainer.run()
     else:
         logger.error("The injected trainer object does not implement 'run()'.")
+
+
+@app.script_command()
+def evaluate(evaluator: Evaluator) -> None:
+    """Evaluate a trained model over a dataset.
+
+    Loads a checkpoint into the injected :class:`~marainer.evaluator.Evaluator`,
+    runs one pass over its dataset, logs metrics, and (if configured) streams
+    predictions to a sink.
+    """
+    if evaluator is None:
+        logger.error("'evaluator' was not bound — provide one under 'evaluator:' in your YAML.")
+        return
+    logger.info(f"Marainer evaluating: {evaluator.experiment_name}")
+    if hasattr(evaluator, "run"):
+        evaluator.run()
+    else:
+        logger.error("The injected evaluator object does not implement 'run()'.")
 
 
 @app.script_command()
