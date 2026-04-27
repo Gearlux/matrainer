@@ -17,7 +17,7 @@ if "." not in sys.path:
 app = LiquifyApp(name="marainer")
 
 
-@app.script_command()
+@app.script_command(flow_mode="auto")
 def train(trainer: Trainer) -> None:
     """Orchestrate a training task."""
     from confluid import dump
@@ -31,7 +31,7 @@ def train(trainer: Trainer) -> None:
         logger.error("The injected trainer object does not implement 'run()'.")
 
 
-@app.script_command()
+@app.script_command(flow_mode="auto")
 def evaluate(evaluator: Evaluator) -> None:
     """Evaluate a trained model over a dataset.
 

@@ -31,7 +31,7 @@ from typing import Any, Optional
 
 import pytorch_lightning as L
 import torch
-from confluid import Class, configurable, flow
+from confluid import Class, Lazy, configurable, flow
 from logflow import get_logger
 from torch.utils.data import DataLoader
 from torchmetrics import MetricCollection
@@ -69,7 +69,7 @@ class Evaluator(L.LightningModule):
         self,
         model: Any,
         dataset: Any,
-        loader: Any = Class(DataLoader),
+        loader: Lazy[Any] = Class(DataLoader),
         metrics: Any = None,
         predictions_sink: Any = None,
         checkpoint_path: Optional[str] = None,

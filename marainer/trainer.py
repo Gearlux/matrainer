@@ -3,7 +3,7 @@ from typing import Any
 import pytorch_lightning as L
 import torch
 import torch.nn as nn
-from confluid import Class, configurable, flow
+from confluid import Class, Lazy, configurable, flow
 from logflow import get_logger
 from torch.utils.data import DataLoader
 from torchmetrics import MetricCollection
@@ -61,10 +61,10 @@ class Trainer(L.LightningModule):
         train_set: Any,
         val_set: Any = None,
         test_set: Any = None,
-        optimizer: Any = Class(torch.optim.Adam, lr=1e-3),
-        train_loader: Any = Class(DataLoader),
-        val_loader: Any = Class(DataLoader),
-        test_loader: Any = Class(DataLoader),
+        optimizer: Lazy[Any] = Class(torch.optim.Adam, lr=1e-3),
+        train_loader: Lazy[Any] = Class(DataLoader),
+        val_loader: Lazy[Any] = Class(DataLoader),
+        test_loader: Lazy[Any] = Class(DataLoader),
         lightning: Any = Class(L.Trainer),
         experiment_name: str = "marainer_run",
         run_name: str = "train",
