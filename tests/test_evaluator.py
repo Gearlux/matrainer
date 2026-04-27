@@ -40,7 +40,7 @@ class _ClassificationModel(nn.Module):
         self.fc = nn.Linear(4, 3)
 
     def forward(self, x: Tensor) -> Tensor:
-        return self.fc(x)
+        return self.fc(x)  # type: ignore[no-any-return]
 
 
 def test_evaluator_runs_on_classification_task(tmp_path: Any) -> None:
