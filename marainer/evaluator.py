@@ -1,8 +1,9 @@
 """Marainer Evaluator: run a trained model over a dataset and collect predictions.
 
-Sibling to :class:`~marainer.trainer.Trainer`. The Evaluator loads a model
-(optionally from a checkpoint), streams a dataset through it, accumulates
-metrics that understand the model's prediction contract (see
+Sibling to :class:`~marainer.trainer.Trainer`. The Evaluator streams a dataset
+through a model (already weight-loaded by the model itself — see e.g.
+:class:`raidar.yolo26.YOLO26Model`'s ``checkpoint_path`` argument),
+accumulates metrics that understand the model's prediction contract (see
 :mod:`marainer.outputs`), and optionally forwards each prediction to a sink
 for persistence.
 
@@ -14,23 +15,23 @@ and ``predictions_sink`` expect.
 YAML example (detection)::
 
     evaluator: !class:marainer.evaluator.Evaluator
-      model: !class:marainer.detection.FasterRCNNModel { num_classes: 2 }
-      checkpoint_path: ./checkpoints/best.ckpt
+      model: !class:raidar.faster_rcnn.FasterRCNNModel
+        num_classes: 2
+        checkpoint_path: ./checkpoints/best.ckpt   # the model loads itself
       dataset: !ref:eval_set
       loader: !class:torch.utils.data.DataLoader
         batch_size: 4
-        collate_fn: !ref:marainer.detection.detection_collate_fn
-      metrics: !class:marainer.detection.DetectionMetricAdapter
+        collate_fn: !ref:raidar.detection.detection_collate_fn
+      metrics: !class:raidar.detection.DetectionMetricAdapter
         inner: !class:torchmetrics.detection.MeanAveragePrecision
           iou_type: bbox
 
     cli:  marainer evaluate config.yaml
 """
 
-from typing import Any, Optional
+from typing import Any
 
 import pytorch_lightning as L
-import torch
 from confluid import Class, Lazy, configurable, flow
 from logflow import get_logger
 from torch.utils.data import DataLoader
@@ -43,12 +44,19 @@ logger = get_logger(__name__)
 class Evaluator(L.LightningModule):
     """Run a model over a dataset, update metrics, and optionally persist predictions.
 
+    Checkpoint loading is the model's responsibility — pass ``checkpoint_path``
+    to your model class (e.g. :class:`raidar.yolo26.YOLO26Model`) instead of
+    to the Evaluator.
+
     Args:
-        model: The neural network (deferred via Confluid).
+        model: The neural network (deferred via Confluid). The model is
+            expected to arrive ALREADY weight-loaded — instantiate it with
+            its own ``checkpoint_path`` argument if you need to start from
+            a saved run.
         dataset: Evaluation dataset or Flux pipeline (deferred).
         loader: DataLoader config (deferred). Supply a matching
             ``collate_fn`` for task types that need one (e.g.
-            :func:`marainer.detection.detection_collate_fn`).
+            :func:`raidar.detection.detection_collate_fn`).
         metrics: Optional :class:`~torchmetrics.MetricCollection` or adapter
             that understands the model's step output. Logged via Lightning's
             ``log_dict`` at epoch end.
@@ -57,8 +65,6 @@ class Evaluator(L.LightningModule):
             per sample within each batch with the per-sample prediction and
             its metadata (if the batch carries a ``per_sample`` metadata
             list, as the standard Marainer collate does).
-        checkpoint_path: Optional path to a Lightning checkpoint. When set,
-            ``state_dict`` is loaded (``strict=False``) before evaluation.
         lightning: PyTorch Lightning Trainer config (deferred). Only ``test``
             is invoked, so training knobs like ``max_epochs`` are ignored.
         experiment_name / run_name: Metadata for loggers (MLflow, TB, etc.).
@@ -72,7 +78,6 @@ class Evaluator(L.LightningModule):
         loader: Lazy[Any] = Class(DataLoader),
         metrics: Any = None,
         predictions_sink: Any = None,
-        checkpoint_path: Optional[str] = None,
         lightning: Any = Class(L.Trainer),
         experiment_name: str = "marainer_eval",
         run_name: str = "evaluate",
@@ -84,7 +89,6 @@ class Evaluator(L.LightningModule):
         self.loader = loader
         self.metrics: Any = metrics
         self._predictions_sink = predictions_sink
-        self.checkpoint_path = checkpoint_path
         self.lightning = lightning
         self.experiment_name = experiment_name
         self.run_name = run_name
@@ -133,23 +137,17 @@ class Evaluator(L.LightningModule):
             self._predictions_sink.write(p, m)
 
     def run(self) -> None:
-        """Materialize deferred components, load checkpoint if any, and evaluate."""
+        """Materialize deferred components and evaluate.
+
+        The model is responsible for its own weight loading — pass
+        ``checkpoint_path`` to the model class, not to this Evaluator.
+        """
         logger.info(f"Marainer evaluating: {self.experiment_name} ({self.run_name})")
         self.model = flow(self.model)
         if self.metrics is not None:
             self.metrics = flow(self.metrics)
         if self._predictions_sink is not None:
             self._predictions_sink = flow(self._predictions_sink)
-
-        if self.checkpoint_path:
-            logger.info(f"Loading checkpoint from {self.checkpoint_path}")
-            state = torch.load(self.checkpoint_path, map_location="cpu")
-            state_dict = state.get("state_dict", state)
-            missing, unexpected = self.load_state_dict(state_dict, strict=False)
-            if missing:
-                logger.info(f"Checkpoint missing keys: {len(missing)}")
-            if unexpected:
-                logger.info(f"Checkpoint unexpected keys: {len(unexpected)}")
 
         loader = flow(self.loader, dataset=flow(self.dataset))
         lightning_trainer = flow(self.lightning)
