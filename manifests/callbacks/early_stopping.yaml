@@ -1,0 +1,27 @@
+description: "Lightning EarlyStopping callback — halt training when a metric stops improving."
+use_case: "Set patience=5 on a val/loss monitor for a sane default; raise patience for noisier metrics like mAP."
+category: "Generic"
+flux_type: "Callback"
+class_path: "pytorch_lightning.callbacks.EarlyStopping"
+params:
+  monitor:
+    type: "str"
+    required: true
+    description: "Logged scalar to track."
+  patience:
+    type: "int"
+    default: 3
+    description: "Consecutive epochs without improvement before stopping."
+  mode:
+    type: "str"
+    default: "min"
+    choices: ["min", "max"]
+    description: "Whether lower or higher is better."
+  min_delta:
+    type: "float"
+    default: 0.0
+    description: "Minimum change to qualify as 'improvement'."
+  verbose:
+    type: "bool"
+    default: false
+    description: "Print stop reason."

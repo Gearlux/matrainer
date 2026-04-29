@@ -1,0 +1,22 @@
+description: "torchmetrics MetricCollection — bundle several metrics under a shared prefix."
+use_case: "Use to combine e.g. DetectionMetricAdapter (mAP) and DetectionConfusionMatrix (TP/FP/FN) in a single val_metrics block. The prefix gives every surfaced key a 'val/' / 'test/' qualifier so multiple collections can coexist."
+category: "Generic"
+flux_type: "MetricCollection"
+class_path: "torchmetrics.MetricCollection"
+params:
+  metrics:
+    type: "List[torchmetrics.Metric] | Dict[str, torchmetrics.Metric]"
+    required: true
+    description: "Metrics to bundle. Lists auto-name by class; dicts provide explicit keys."
+  prefix:
+    type: "str | null"
+    default: null
+    description: "Optional string prepended to each surfaced key."
+  postfix:
+    type: "str | null"
+    default: null
+    description: "Optional string appended to each surfaced key."
+  compute_groups:
+    type: "bool"
+    default: true
+    description: "Auto-group state-compatible metrics for shared updates (faster)."

@@ -1,0 +1,26 @@
+description: "SGD with optional momentum."
+use_case: "Classical choice for vision backbones; pair with a step or cosine LR scheduler."
+category: "Generic"
+flux_type: "Optimizer"
+class_path: "torch.optim.SGD"
+params:
+  lr:
+    type: "float"
+    default: 0.01
+    description: "Learning rate."
+  momentum:
+    type: "float"
+    default: 0.0
+    description: "Momentum factor (0.9 is conventional)."
+  weight_decay:
+    type: "float"
+    default: 0.0
+    description: "L2 regularization."
+  dampening:
+    type: "float"
+    default: 0.0
+    description: "Dampening for momentum."
+  nesterov:
+    type: "bool"
+    default: false
+    description: "Enable Nesterov momentum."

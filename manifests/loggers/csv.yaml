@@ -1,0 +1,23 @@
+description: "PyTorch Lightning CSV logger."
+use_case: "Plain-text scalar log to <save_dir>/<name>/version_N/metrics.csv — easiest to read with pandas. Useful for quick comparisons without spinning up TB."
+category: "Generic"
+flux_type: "Logger"
+class_path: "pytorch_lightning.loggers.CSVLogger"
+metric_source: "csv"
+params:
+  save_dir:
+    type: "str"
+    required: true
+    description: "Root directory for the CSV log."
+  name:
+    type: "str | null"
+    default: null
+    description: "Subdirectory grouping versions."
+  version:
+    type: "int | str | null"
+    default: null
+    description: "Optional explicit version."
+  flush_logs_every_n_steps:
+    type: "int"
+    default: 100
+    description: "Flush cadence for the underlying file handle."
