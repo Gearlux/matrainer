@@ -401,8 +401,9 @@ train_set: !class:dataflux.core.Flux()
     target_feature: label
     count: 1000                    # Optional: limit samples
   ops:
-    - !class:dataflux.ops.numpy.NormalizeOp()
-      max_value: 255
+    - !class:dataflux.ops.numpy.RescaleOp()
+      in_min: 0
+      in_max: 255
     - !class:dataflux.ops.ToTensorOp()
       normalize: false
 ```
