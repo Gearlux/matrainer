@@ -1,0 +1,26 @@
+description: "Adam optimizer."
+use_case: "Default reasonable choice for most networks. AdamW is usually preferred for transformers."
+category: "Generic"
+flux_type: "Optimizer"
+class_path: "torch.optim.Adam"
+params:
+  lr:
+    type: "float"
+    default: 0.001
+    description: "Learning rate."
+  betas:
+    type: "Tuple[float, float]"
+    default: [0.9, 0.999]
+    description: "Coefficients for running averages of gradient and squared gradient."
+  eps:
+    type: "float"
+    default: 1.0e-8
+    description: "Numerical stability term added to the denominator."
+  weight_decay:
+    type: "float"
+    default: 0.0
+    description: "L2 regularization."
+  amsgrad:
+    type: "bool"
+    default: false
+    description: "Use AMSGrad variant."

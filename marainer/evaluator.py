@@ -25,19 +25,55 @@ YAML example (detection)::
       metrics: !class:raidar.detection.DetectionMetricAdapter
         inner: !class:torchmetrics.detection.MeanAveragePrecision
           iou_type: bbox
+      metrics_sidecar_path: ./eval_metrics.json   # optional — see below
 
     cli:  marainer evaluate config.yaml
+
+When ``metrics_sidecar_path`` is set, the final ``metrics.compute()`` dict is
+written as JSON after the test loop completes. This is **logger-agnostic**:
+it works whether the user wires TensorBoard, MLflow, CSV, or no Lightning
+logger at all — the sidecar is a deterministic file at a known path that
+downstream tooling (e.g. Navigator's ``read_run_metrics``) can rely on
+without scraping logger backends.
 """
 
-from typing import Any
+import json
+from pathlib import Path
+from typing import Any, Dict, Optional
 
 import pytorch_lightning as L
 from confluid import Class, Lazy, configurable, flow
 from logflow import get_logger
+from torch import Tensor
 from torch.utils.data import DataLoader
 from torchmetrics import MetricCollection
 
 logger = get_logger(__name__)
+
+
+def _coerce_metric_value(value: Any) -> Any:
+    """Convert a torchmetrics compute() value into a JSON-safe Python scalar.
+
+    Tensors become floats (or ints for integer-typed scalars); nested dicts /
+    lists / tuples recurse. Anything already JSON-safe (str / bool / None /
+    int / float) passes through. Used by :meth:`Evaluator._write_metrics_sidecar`
+    so the sidecar is human-readable and ``json.load``-able from any tool.
+    """
+    if isinstance(value, Tensor):
+        if value.numel() == 1:
+            try:
+                return value.item()
+            except RuntimeError:
+                # Non-numeric (rare) — fall through to string repr.
+                return str(value)
+        return [_coerce_metric_value(v) for v in value.detach().cpu().tolist()]
+    if isinstance(value, dict):
+        return {k: _coerce_metric_value(v) for k, v in value.items()}
+    if isinstance(value, (list, tuple)):
+        return [_coerce_metric_value(v) for v in value]
+    if isinstance(value, (int, float, str, bool)) or value is None:
+        return value
+    return str(value)
 
 
 @configurable
@@ -82,6 +118,7 @@ class Evaluator(L.LightningModule):
         experiment_name: str = "marainer_eval",
         run_name: str = "evaluate",
         loggers: Any = None,
+        metrics_sidecar_path: Optional[str] = None,
     ) -> None:
         super().__init__()
         self.model = model
@@ -93,6 +130,7 @@ class Evaluator(L.LightningModule):
         self.experiment_name = experiment_name
         self.run_name = run_name
         self._loggers_config = loggers
+        self.metrics_sidecar_path: Optional[str] = metrics_sidecar_path
 
     def forward(self, x: Any) -> Any:
         return self.model(x)
@@ -136,6 +174,42 @@ class Evaluator(L.LightningModule):
             m = per_sample_meta[i] if per_sample_meta and i < len(per_sample_meta) else {}
             self._predictions_sink.write(p, m)
 
+    def _write_metrics_sidecar(self) -> None:
+        """Dump the final metrics.compute() dict to ``metrics_sidecar_path`` as JSON.
+
+        Skipped silently when ``metrics_sidecar_path`` is None or ``self.metrics``
+        is None — the sidecar is opt-in and shouldn't error when the user
+        configured the Evaluator without metrics.
+
+        The sidecar is the **logger-agnostic** read path for downstream tooling
+        (Navigator's ``read_run_metrics``). Users who want full TB / MLflow
+        history still get it via the configured Lightning loggers; the sidecar
+        is the deterministic final-value record.
+        """
+        if self.metrics_sidecar_path is None or self.metrics is None:
+            return
+        try:
+            raw = self.metrics.compute()
+        except Exception as exc:  # pragma: no cover - defensive log path
+            logger.warning(f"Could not compute final metrics for sidecar dump: {exc}")
+            return
+        if isinstance(raw, Tensor):
+            payload: Any = _coerce_metric_value(raw)
+        elif isinstance(raw, dict):
+            payload = {k: _coerce_metric_value(v) for k, v in raw.items()}
+        else:
+            payload = _coerce_metric_value(raw)
+
+        wrapped: Dict[str, Any] = {
+            "experiment_name": self.experiment_name,
+            "run_name": self.run_name,
+            "metrics": payload,
+        }
+        out_path = Path(self.metrics_sidecar_path)
+        out_path.parent.mkdir(parents=True, exist_ok=True)
+        out_path.write_text(json.dumps(wrapped, indent=2, sort_keys=True))
+        logger.info(f"Wrote final metrics sidecar to {out_path}")
+
     def run(self) -> None:
         """Materialize deferred components and evaluate.
 
@@ -154,4 +228,5 @@ class Evaluator(L.LightningModule):
         lightning_trainer.test(model=self, dataloaders=loader)
         if self._predictions_sink is not None and hasattr(self._predictions_sink, "close"):
             self._predictions_sink.close()
+        self._write_metrics_sidecar()
         logger.info("Evaluation complete.")

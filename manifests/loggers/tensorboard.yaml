@@ -1,0 +1,27 @@
+description: "PyTorch Lightning TensorBoard logger."
+use_case: "Standard local-first logger. Writes scalar curves to ./<save_dir>/<name>/version_N/events.* — readable by Navigator's read_run_metrics for both train and eval flows."
+category: "Generic"
+flux_type: "Logger"
+class_path: "pytorch_lightning.loggers.TensorBoardLogger"
+metric_source: "tensorboard"
+params:
+  save_dir:
+    type: "str"
+    required: true
+    description: "Root directory for the TB event files. Conventionally './lightning_logs'."
+  name:
+    type: "str | null"
+    default: null
+    description: "Subdirectory under save_dir grouping all versions of the same experiment."
+  version:
+    type: "int | str | null"
+    default: null
+    description: "Optional explicit version. Default auto-increments per save_dir/name."
+  log_graph:
+    type: "bool"
+    default: false
+    description: "Log the model computational graph."
+  default_hp_metric:
+    type: "bool"
+    default: true
+    description: "Auto-log a placeholder hp_metric=-1 if log_hyperparams is called without metrics."

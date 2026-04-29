@@ -1,0 +1,70 @@
+description: "Marainer Trainer: configurable Lightning module driving fit() over a Flux dataset."
+use_case: "Top-level trainer object for any task. Wraps a model + train/val datasets + optimizer + Lightning Trainer config + (optional) train/val metrics. The CLI binds this under 'trainer:' in your YAML."
+category: "Generic"
+flux_type: "Trainer"
+class_path: "marainer.trainer.Trainer"
+params:
+  model:
+    type: "torch.nn.Module"
+    required: true
+    description: "The neural network model (deferred via Confluid)."
+  train_set:
+    type: "Any"
+    required: true
+    description: "Training dataset or Flux pipeline."
+  val_set:
+    type: "Any | null"
+    default: null
+    description: "Validation dataset or Flux pipeline."
+  test_set:
+    type: "Any | null"
+    default: null
+    description: "Held-out test dataset. When set, lightning.test() runs after fit()."
+  optimizer:
+    type: "Lazy[torch.optim.Optimizer]"
+    default: "Class(torch.optim.Adam, lr=1e-3)"
+    description: "Optimizer class/config (deferred)."
+  train_loader:
+    type: "Lazy[DataLoader]"
+    default: "Class(DataLoader)"
+    description: "DataLoader config for training data."
+  val_loader:
+    type: "Lazy[DataLoader]"
+    default: "Class(DataLoader)"
+    description: "DataLoader config for validation data."
+  test_loader:
+    type: "Lazy[DataLoader]"
+    default: "Class(DataLoader)"
+    description: "DataLoader config for test data."
+  lightning:
+    type: "Lazy[pytorch_lightning.Trainer]"
+    default: "Class(L.Trainer)"
+    description: "PyTorch Lightning Trainer config."
+  experiment_name:
+    type: "str"
+    default: "marainer_run"
+    description: "MLflow experiment name."
+  run_name:
+    type: "str"
+    default: "train"
+    description: "MLflow run name."
+  loggers:
+    type: "List[pytorch_lightning.loggers.Logger] | null"
+    default: null
+    description: "Optional list of Lightning loggers (TensorBoard, MLflow, CSV, ...)."
+  loss_fn:
+    type: "Callable | null"
+    default: null
+    description: "Loss function (post-construction; default is CrossEntropyLoss)."
+  train_metrics:
+    type: "torchmetrics.MetricCollection | null"
+    default: null
+    description: "Train-time MetricCollection (post-construction)."
+  val_metrics:
+    type: "torchmetrics.MetricCollection | null"
+    default: null
+    description: "Validation MetricCollection (post-construction)."
+  test_metrics:
+    type: "torchmetrics.MetricCollection | null"
+    default: null
+    description: "Test MetricCollection (post-construction)."
