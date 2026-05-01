@@ -68,7 +68,6 @@ class Trainer(L.LightningModule):
         lightning: Any = Class(L.Trainer),
         experiment_name: str = "marainer_run",
         run_name: str = "train",
-        loggers: Any = None,
     ) -> None:
         super().__init__()
         self.model = model
@@ -82,7 +81,6 @@ class Trainer(L.LightningModule):
         self.lightning = lightning
         self.experiment_name = experiment_name
         self.run_name = run_name
-        self._loggers_config = loggers
         self.loss_fn = nn.CrossEntropyLoss()
         self.train_metrics: MetricCollection | None = None
         self.val_metrics: MetricCollection | None = None

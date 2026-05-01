@@ -117,7 +117,6 @@ class Evaluator(L.LightningModule):
         lightning: Any = Class(L.Trainer),
         experiment_name: str = "marainer_eval",
         run_name: str = "evaluate",
-        loggers: Any = None,
         metrics_sidecar_path: Optional[str] = None,
     ) -> None:
         super().__init__()
@@ -129,7 +128,6 @@ class Evaluator(L.LightningModule):
         self.lightning = lightning
         self.experiment_name = experiment_name
         self.run_name = run_name
-        self._loggers_config = loggers
         self.metrics_sidecar_path: Optional[str] = metrics_sidecar_path
 
     def forward(self, x: Any) -> Any:
