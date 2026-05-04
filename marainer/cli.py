@@ -5,6 +5,7 @@ from liquifai import LiquifyApp
 from logflow import get_logger
 
 from marainer.evaluator import Evaluator
+from marainer.plugins import load_plugins
 from marainer.trainer import Trainer
 
 logger = get_logger(__name__)
@@ -49,16 +50,15 @@ def evaluate(evaluator: Evaluator) -> None:
         logger.error("The injected evaluator object does not implement 'run()'.")
 
 
-@app.script_command()
+@app.script_command(flow_mode="auto")
 def process(processor: Any) -> None:
     """Run any Confluid-instantiated processor object that exposes ``.run()``.
 
     The YAML config is expected to bind the object under the top-level
-    ``processor:`` key. Liquify's DI resolves it from the loaded config —
-    when the annotation is ``Any`` the value comes back as a deferred
-    ``confluid.Fluid``, so we materialize the top-level here. Any deferred
-    deps inside the processor (source / sink / ops) are the processor's
-    responsibility to materialize on ``.run()``.
+    ``processor:`` key. ``flow_mode="auto"`` deep-flows the processor under
+    confluid's active context so nested ``!ref:`` markers (e.g.
+    ``drone_filter: !ref:drone``) resolve against the loaded YAML's
+    top-level keys rather than against an empty context.
     """
     if processor is None:
         logger.error("'processor' was not bound — provide one under 'processor:' in your YAML.")
@@ -78,6 +78,7 @@ def process(processor: Any) -> None:
 
 
 def main() -> None:
+    load_plugins(app)
     app.run()
 
 
