@@ -10,6 +10,8 @@ Marainer provides a fully YAML-configurable training loop with multi-backend log
 pip install git+https://github.com/Gearlux/marainer.git@main
 ```
 
+Tab completion: `marainer --install-completion` (bash/zsh/fish auto-detected from `$SHELL`).
+
 ### Development
 
 ```bash
