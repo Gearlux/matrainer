@@ -50,15 +50,12 @@ def evaluate(evaluator: Evaluator) -> None:
         logger.error("The injected evaluator object does not implement 'run()'.")
 
 
-@app.script_command(flow_mode="auto")
-def process(processor: Any) -> None:
-    """Run any Confluid-instantiated processor object that exposes ``.run()``.
+def _dispatch_processor(processor: Any, verb_label: str) -> None:
+    """Shared body for ``process`` / ``download`` / ``convert``.
 
-    The YAML config is expected to bind the object under the top-level
-    ``processor:`` key. ``flow_mode="auto"`` deep-flows the processor under
-    confluid's active context so nested ``!ref:`` markers (e.g.
-    ``drone_filter: !ref:drone``) resolve against the loaded YAML's
-    top-level keys rather than against an empty context.
+    The three CLI verbs are semantic aliases — same Confluid DI under the
+    ``processor:`` key, same ``.run()`` dispatch. ``verb_label`` only shapes
+    the log message so the operator can tell which verb was invoked.
     """
     if processor is None:
         logger.error("'processor' was not bound — provide one under 'processor:' in your YAML.")
@@ -70,11 +67,50 @@ def process(processor: Any) -> None:
         processor = flow(processor)
 
     label = processor.__class__.__name__
-    logger.info(f"Marainer running processor: {label}")
+    logger.info(f"Marainer {verb_label}: {label}")
     if hasattr(processor, "run"):
         processor.run()
     else:
         logger.error("The injected processor object does not implement 'run()'.")
+
+
+@app.script_command(flow_mode="auto")
+def process(processor: Any) -> None:
+    """Run any Confluid-instantiated processor object that exposes ``.run()``.
+
+    Generic dispatcher (escape hatch). Prefer the more specific ``download``
+    or ``convert`` verbs when the intent fits. The YAML config is expected
+    to bind the object under the top-level ``processor:`` key.
+    ``flow_mode="auto"`` deep-flows the processor under confluid's active
+    context so nested ``!ref:`` markers (e.g. ``drone_filter: !ref:drone``)
+    resolve against the loaded YAML's top-level keys rather than against an
+    empty context.
+    """
+    _dispatch_processor(processor, "running processor")
+
+
+@app.script_command(flow_mode="auto")
+def download(processor: Any) -> None:
+    """Run a data-acquisition processor (HTTP / CCXT / API → dataset on disk).
+
+    Convention: YAML name ``download_*.yaml``, processor class name
+    ``Download*``. Semantic alias of ``process`` — the YAML still binds
+    under ``processor:`` and dispatch is identical, the verb only signals
+    intent and shapes the log message.
+    """
+    _dispatch_processor(processor, "downloading via")
+
+
+@app.script_command(flow_mode="auto")
+def convert(processor: Any) -> None:
+    """Run a format-conversion processor (transform existing data on disk).
+
+    Convention: YAML name ``*_to_*.yaml``, processor class name ``*To*``.
+    Semantic alias of ``process`` — the YAML still binds under
+    ``processor:`` and dispatch is identical, the verb only signals intent
+    and shapes the log message.
+    """
+    _dispatch_processor(processor, "converting via")
 
 
 def main() -> None:

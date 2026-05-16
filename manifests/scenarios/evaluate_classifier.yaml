@@ -1,0 +1,74 @@
+flux_type: Scenario
+scenario: evaluate_classifier
+verb: evaluate
+target: marainer
+description: |
+  Generic single-model classification evaluation scenario. Plug in any
+  classification model class + dataset class + a checkpoint path; the
+  template wires them through MetricCollection (top-1 + macro-F1) and calls
+  `marainer evaluate`. Domain-specific tweaks (custom collates, dataset
+  splits, etc.) belong in a domain scenario.
+classes:
+  evaluator: marainer.evaluator.Evaluator
+slots:
+  run_name:
+    type: str
+    required: true
+    prompt: "Short run name (used as MLflow run name)?"
+    validation: "matches:^[a-zA-Z0-9_-]+$"
+  experiment_name:
+    type: str
+    required: true
+    prompt: "MLflow experiment name?"
+  model_class:
+    type: str
+    required: true
+    prompt: "Dotted class_path of the classification model?"
+  checkpoint_path:
+    type: str
+    required: true
+    prompt: "Path to the trained Lightning .ckpt to evaluate?"
+  eval_dataset_class:
+    type: str
+    required: true
+    prompt: "Dotted class_path of the evaluation dataset?"
+  num_classes:
+    type: int
+    required: true
+    prompt: "Number of output classes?"
+    validation: ">= 2"
+  batch_size:
+    type: int
+    default: 32
+    validation: ">= 1"
+template: |
+  num_classes: {{ num_classes }}
+  checkpoint_path: {{ checkpoint_path }}
+
+  eval_set: !class:{{ eval_dataset_class }}
+
+  model: !class:{{ model_class }}
+    num_classes: !ref:num_classes
+    checkpoint_path: !ref:checkpoint_path
+
+  evaluator: !class:marainer.evaluator.Evaluator
+    experiment_name: {{ experiment_name }}
+    run_name: {{ run_name }}
+    model: !ref:model
+    dataset: !ref:eval_set
+    loader: !class:torch.utils.data.DataLoader
+      batch_size: {{ batch_size }}
+      shuffle: false
+      num_workers: 0
+    metrics: !class:torchmetrics.MetricCollection
+      metrics:
+        top1: !class:torchmetrics.classification.MulticlassAccuracy
+          num_classes: !ref:num_classes
+          top_k: 1
+        f1_macro: !class:torchmetrics.classification.MulticlassF1Score
+          num_classes: !ref:num_classes
+          average: macro
+      prefix: "test/"
+    lightning: !class:pytorch_lightning.Trainer
+      accelerator: auto
+      devices: 1
