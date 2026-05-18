@@ -97,7 +97,9 @@ class Trainer(L.LightningModule):
         self.log("train/loss", loss, on_step=True, on_epoch=True, prog_bar=True, batch_size=batch.input.shape[0])
         if self.train_metrics is not None:
             self.train_metrics(preds, batch.target)
-            self.log_dict(self.train_metrics, on_step=False, on_epoch=True, batch_size=batch.input.shape[0])
+            scalars = {k: v for k, v in self.train_metrics.items() if isinstance(v, torch.Tensor) and v.numel() == 1}
+            if scalars:
+                self.log_dict(scalars, on_step=False, on_epoch=True, batch_size=batch.input.shape[0])
         return loss
 
     def validation_step(self, batch: Any, batch_idx: int) -> torch.Tensor:
@@ -106,7 +108,9 @@ class Trainer(L.LightningModule):
         self.log("val/loss", loss, on_epoch=True, prog_bar=True, batch_size=batch.input.shape[0])
         if self.val_metrics is not None:
             self.val_metrics(preds, batch.target)
-            self.log_dict(self.val_metrics, on_step=False, on_epoch=True, batch_size=batch.input.shape[0])
+            scalars = {k: v for k, v in self.val_metrics.items() if isinstance(v, torch.Tensor) and v.numel() == 1}
+            if scalars:
+                self.log_dict(scalars, on_step=False, on_epoch=True, batch_size=batch.input.shape[0])
         return loss
 
     def test_step(self, batch: Any, batch_idx: int) -> torch.Tensor:
@@ -115,7 +119,9 @@ class Trainer(L.LightningModule):
         self.log("test/loss", loss, on_epoch=True, prog_bar=True, batch_size=batch.input.shape[0])
         if self.test_metrics is not None:
             self.test_metrics(preds, batch.target)
-            self.log_dict(self.test_metrics, on_step=False, on_epoch=True, batch_size=batch.input.shape[0])
+            scalars = {k: v for k, v in self.test_metrics.items() if isinstance(v, torch.Tensor) and v.numel() == 1}
+            if scalars:
+                self.log_dict(scalars, on_step=False, on_epoch=True, batch_size=batch.input.shape[0])
         return loss
 
     def configure_optimizers(self) -> Any:
