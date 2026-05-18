@@ -10,10 +10,6 @@ from marainer.trainer import Trainer
 
 logger = get_logger(__name__)
 
-# Ensure CWD is in path for example/project resolution
-if "." not in sys.path:
-    sys.path.insert(0, ".")
-
 # Main App Instance
 app = LiquifyApp(name="marainer")
 
