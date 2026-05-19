@@ -14,7 +14,9 @@ dependencies = [
     "numpy",
     "pytorch-lightning",
     "tensorboard",
-    "torchmetrics"
+    "torchmetrics",
+    "tabulate",
+    "matplotlib"
 ]
 requires-python = ">=3.12"
 
@@ -80,6 +82,8 @@ module = [
     "mlflow.*",
     "torch.*",
     "torchmetrics.*",
-    "pytorch_lightning.*"
+    "pytorch_lightning.*",
+    "tabulate.*",
+    "matplotlib.*"
 ]
 ignore_missing_imports = true
