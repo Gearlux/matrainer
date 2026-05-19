@@ -141,10 +141,7 @@ class Evaluator(L.LightningModule):
             if isinstance(self.metrics, MetricCollection):
                 # Filter for scalars to prevent Lightning logging crashes (e.g. for confusion matrices).
                 # Non-scalars are still computed and available in compute() for the sidecar.
-                scalars = {
-                    k: v for k, v in self.metrics.items() 
-                    if isinstance(v, Tensor) and v.numel() == 1
-                }
+                scalars = {k: v for k, v in self.metrics.items() if isinstance(v, Tensor) and v.numel() == 1}
                 if scalars:
                     self.log_dict(scalars, on_step=False, on_epoch=True, batch_size=batch_size)
         if self._predictions_sink is not None:
