@@ -2,7 +2,7 @@ description: "Marainer Evaluator: run a (pre-loaded) model over a dataset, log m
 use_case: "Top-level evaluator object for any task. The model is responsible for its own weight loading — pass checkpoint_path to the model class, not to this Evaluator. Pair with a metrics_sidecar_path if you want a logger-agnostic JSON dump of the final metric values for downstream tooling."
 category: "Generic"
 flux_type: "Evaluator"
-class_path: "marainer.evaluator.Evaluator"
+class_path: "marainer.evaluator.LightningEvaluator"
 params:
   model:
     type: "torch.nn.Module"

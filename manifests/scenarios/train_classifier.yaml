@@ -10,7 +10,7 @@ description: |
   source, custom collates, etc.) belong in a domain scenario; this one is
   for quickly bootstrapping a baseline.
 classes:
-  model: marainer.trainer.Trainer
+  model: marainer.trainer.LightningTrainer
 slots:
   run_name:
     type: str
@@ -105,7 +105,7 @@ template: |
     devices: 1
     log_every_n_steps: 10
 
-  trainer: !class:marainer.trainer.Trainer
+  trainer: !class:marainer.trainer.LightningTrainer
     experiment_name: {{ experiment_name }}
     run_name: {{ run_name }}
     model: !ref:model

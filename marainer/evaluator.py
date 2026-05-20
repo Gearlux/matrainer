@@ -1,6 +1,6 @@
 """Marainer Evaluator: run a trained model over a dataset and collect predictions.
 
-Sibling to :class:`~marainer.trainer.Trainer`. The Evaluator streams a dataset
+Sibling to :class:`~marainer.trainer.LightningTrainer`. The LightningEvaluator streams a dataset
 through a model (already weight-loaded by the model itself — see e.g.
 :class:`raidar.yolo26.YOLO26Model`'s ``checkpoint_path`` argument),
 accumulates metrics that understand the model's prediction contract (see
@@ -14,7 +14,7 @@ and ``predictions_sink`` expect.
 
 YAML example (detection)::
 
-    evaluator: !class:marainer.evaluator.Evaluator
+    evaluator: !class:marainer.evaluator.LightningEvaluator
       model: !class:raidar.faster_rcnn.FasterRCNNModel
         num_classes: 2
         checkpoint_path: ./checkpoints/best.ckpt   # the model loads itself
@@ -77,7 +77,7 @@ def _coerce_metric_value(value: Any) -> Any:
 
 
 @configurable
-class Evaluator(L.LightningModule):
+class LightningEvaluator(L.LightningModule):
     """Run a model over a dataset, update metrics, and optionally persist predictions.
 
     Checkpoint loading is the model's responsibility — pass ``checkpoint_path``

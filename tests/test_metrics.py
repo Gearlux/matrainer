@@ -12,7 +12,7 @@ from torchmetrics import Metric, MetricCollection
 from torchmetrics.classification import MulticlassAccuracy, MulticlassF1Score, MulticlassPrecision, MulticlassRecall
 
 from marainer.metrics import MetricPreset
-from marainer.trainer import Trainer
+from marainer.trainer import LightningTrainer
 
 
 @configurable
@@ -134,8 +134,8 @@ class TestTrainerMetricsIntegration:
         self,
         train_metrics: MetricCollection | None = None,
         val_metrics: MetricCollection | None = None,
-    ) -> Trainer:
-        trainer = Trainer(
+    ) -> LightningTrainer:
+        trainer = LightningTrainer(
             model=TinyModel(),
             train_set=make_samples(16),
         )
