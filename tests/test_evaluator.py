@@ -26,7 +26,7 @@ from torchmetrics.classification import MulticlassAccuracy, MulticlassConfusionM
 
 from marainer.evaluator import (  # noqa: E402
     LightningEvaluator,
-    _coerce_metric_value, 
+    _coerce_metric_value,
     _ensure_class_names,
     _is_square_2d_tensor,
     _log_figure_to_loggers,
