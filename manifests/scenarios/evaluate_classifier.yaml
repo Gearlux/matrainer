@@ -62,13 +62,16 @@ template: |
       num_workers: 0
     metrics: !class:torchmetrics.MetricCollection
       metrics:
-        top1: !class:torchmetrics.classification.MulticlassAccuracy
+        accuracy: !class:torchmetrics.classification.MulticlassAccuracy
           num_classes: !ref:num_classes
           top_k: 1
         f1_macro: !class:torchmetrics.classification.MulticlassF1Score
           num_classes: !ref:num_classes
           average: macro
+        confusion_matrix: !class:torchmetrics.classification.MulticlassConfusionMatrix
+          num_classes: !ref:num_classes
       prefix: "test/"
+    metrics_sidecar_path: "eval_metrics.json"
     lightning: !class:pytorch_lightning.Trainer
       accelerator: auto
       devices: 1

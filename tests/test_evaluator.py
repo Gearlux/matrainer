@@ -6,20 +6,32 @@ here we exercise the classification-shaped path only.
 
 import json
 from typing import Any, Dict, List
+from unittest.mock import MagicMock
 
-import pytest
-import pytorch_lightning as L
-import torch
-import torch.nn as nn
-from confluid import Class
-from dataflux.core import Flux
-from dataflux.sample import Sample
-from torch import Tensor
-from torch.utils.data import DataLoader
-from torchmetrics import MetricCollection
-from torchmetrics.classification import MulticlassAccuracy
+import matplotlib
 
-from marainer.evaluator import LightningEvaluator, _coerce_metric_value
+matplotlib.use("Agg")
+import matplotlib.figure  # noqa: E402
+import pytest  # noqa: E402
+import pytorch_lightning as L  # noqa: E402
+import torch  # noqa: E402
+import torch.nn as nn  # noqa: E402
+from confluid import Class  # noqa: E402
+from dataflux.core import Flux  # noqa: E402
+from dataflux.sample import Sample  # noqa: E402
+from torch import Tensor  # noqa: E402
+from torch.utils.data import DataLoader  # noqa: E402
+from torchmetrics import MetricCollection  # noqa: E402
+from torchmetrics.classification import MulticlassAccuracy, MulticlassConfusionMatrix  # noqa: E402
+
+from marainer.evaluator import (  # noqa: E402
+    LightningEvaluator,
+    _coerce_metric_value, 
+    _ensure_class_names,
+    _is_square_2d_tensor,
+    _log_figure_to_loggers,
+    _render_matrix_as_table,
+)
 
 
 class _RecordingSink:
@@ -204,3 +216,280 @@ def test_coerce_metric_value_falls_back_to_str_for_unknown() -> None:
             return "<custom>"
 
     assert _coerce_metric_value(_Custom()) == "<custom>"
+
+
+# --- confusion-matrix render pass ---------------------------------------------
+
+
+def test_is_square_2d_tensor_accepts_only_square_matrices() -> None:
+    assert _is_square_2d_tensor(torch.zeros(3, 3))
+    assert _is_square_2d_tensor(torch.ones(1, 1))
+    assert not _is_square_2d_tensor(torch.zeros(2, 3))
+    assert not _is_square_2d_tensor(torch.zeros(4))
+    assert not _is_square_2d_tensor(torch.tensor(0.5))
+    assert not _is_square_2d_tensor([[1, 2], [3, 4]])  # not a tensor
+    assert not _is_square_2d_tensor(torch.zeros(0, 0))
+
+
+def test_ensure_class_names_returns_input_when_length_matches() -> None:
+    assert _ensure_class_names(["a", "b", "c"], 3) == ["a", "b", "c"]
+
+
+def test_ensure_class_names_falls_back_when_none_or_mismatched() -> None:
+    assert _ensure_class_names(None, 3) == ["0", "1", "2"]
+    assert _ensure_class_names(["a", "b"], 3) == ["0", "1", "2"]
+
+
+def test_render_matrix_as_table_contains_labels_and_values() -> None:
+    cm = torch.tensor([[5, 1], [2, 7]])
+    rendered = _render_matrix_as_table("test/confusion_matrix", cm, ["cat", "dog"])
+
+    assert "test/confusion_matrix" in rendered
+    assert "pred:cat" in rendered and "pred:dog" in rendered
+    assert "true:cat" in rendered and "true:dog" in rendered
+    for cell in ("5", "1", "2", "7"):
+        assert cell in rendered
+
+
+def test_log_figure_to_loggers_forwards_to_tensorboard_style() -> None:
+    """A logger whose ``experiment.add_figure`` is callable receives the figure."""
+    lt = MagicMock()
+    tb_logger = MagicMock()
+    tb_logger.experiment.add_figure = MagicMock()
+    lt.loggers = [tb_logger]
+    lt.global_step = 42
+
+    fig = matplotlib.figure.Figure()
+    _log_figure_to_loggers(lt, "cm", fig)
+
+    tb_logger.experiment.add_figure.assert_called_once_with("cm", fig, 42)
+
+
+def test_log_figure_to_loggers_forwards_to_mlflow_style() -> None:
+    """A logger with only ``log_figure`` + a ``run_id`` is dispatched via MLflow path."""
+    lt = MagicMock()
+
+    mlflow_logger = MagicMock()
+    # Make sure add_figure path is NOT triggered — drop the attribute.
+    mlflow_logger.experiment = MagicMock(spec=["log_figure"])
+    mlflow_logger.experiment.log_figure = MagicMock()
+    mlflow_logger.run_id = "run-xyz"
+    lt.loggers = [mlflow_logger]
+    lt.global_step = 0
+
+    fig = matplotlib.figure.Figure()
+    _log_figure_to_loggers(lt, "test/cm", fig)
+
+    mlflow_logger.experiment.log_figure.assert_called_once_with("run-xyz", fig, "test_cm.png")
+
+
+def test_log_figure_to_loggers_handles_no_trainer() -> None:
+    """``trainer=None`` (called outside a Lightning run) must not raise."""
+    _log_figure_to_loggers(None, "cm", matplotlib.figure.Figure())  # must not raise
+
+
+def test_evaluator_logs_confusion_matrix_text_table(tmp_path: Any) -> None:
+    """End-to-end: a confusion-matrix metric in the collection triggers a rendered
+    table emitted via logflow's loguru sink."""
+    from loguru import logger as _loguru_logger
+
+    captured: List[str] = []
+    sink_id = _loguru_logger.add(lambda m: captured.append(str(m)), level="INFO")
+    try:
+        model = _ClassificationModel()
+        samples = [Sample(input=torch.randn(4), target=i % 3, metadata={"idx": i}) for i in range(12)]
+        flux = Flux(source=samples)
+        metrics = MetricCollection(
+            {
+                "acc": MulticlassAccuracy(num_classes=3),
+                "cm": MulticlassConfusionMatrix(num_classes=3),
+            }
+        )
+        evaluator = LightningEvaluator(
+            model=model,
+            dataset=flux,
+            loader=Class(DataLoader, batch_size=4),
+            metrics=metrics,
+            class_names=["cat", "dog", "bird"],
+            lightning=Class(
+                L.Trainer,
+                accelerator="cpu",
+                enable_progress_bar=False,
+                enable_model_summary=False,
+                logger=False,
+                default_root_dir=str(tmp_path),
+            ),
+        )
+        evaluator.run()
+    finally:
+        _loguru_logger.remove(sink_id)
+
+    rendered = "".join(captured)
+    assert "cm:" in rendered
+    assert "pred:cat" in rendered and "true:bird" in rendered
+
+
+def test_evaluator_resolves_class_names_from_dataset(tmp_path: Any) -> None:
+    """Without an explicit ``class_names``, the Evaluator picks up
+    ``dataset.label_names`` and uses it for axis labels."""
+
+    class _Labeled(Flux):
+        label_names = ("a", "b", "c")
+
+    samples = [Sample(input=torch.randn(4), target=i % 3, metadata={"idx": i}) for i in range(6)]
+    flux = _Labeled(source=samples)
+
+    evaluator = LightningEvaluator(
+        model=_ClassificationModel(),
+        dataset=flux,
+        loader=Class(DataLoader, batch_size=3),
+        metrics=MetricCollection({"cm": MulticlassConfusionMatrix(num_classes=3)}),
+        lightning=Class(
+            L.Trainer,
+            accelerator="cpu",
+            enable_progress_bar=False,
+            enable_model_summary=False,
+            logger=False,
+            default_root_dir=str(tmp_path),
+        ),
+    )
+    evaluator.run()
+    assert evaluator._resolved_class_names == ["a", "b", "c"]
+
+
+def test_evaluator_resolves_class_names_from_json_file(tmp_path: Any) -> None:
+    """An explicit ``class_names=<path>`` reads the public JSON format the
+    Trainer writes."""
+    names_path = tmp_path / "class_names.json"
+    names_path.write_text(json.dumps({"class_names": ["x", "y", "z"]}))
+
+    samples = [Sample(input=torch.randn(4), target=i % 3, metadata={"idx": i}) for i in range(6)]
+    evaluator = LightningEvaluator(
+        model=_ClassificationModel(),
+        dataset=Flux(source=samples),
+        loader=Class(DataLoader, batch_size=3),
+        metrics=MetricCollection({"cm": MulticlassConfusionMatrix(num_classes=3)}),
+        class_names=str(names_path),
+        lightning=Class(
+            L.Trainer,
+            accelerator="cpu",
+            enable_progress_bar=False,
+            enable_model_summary=False,
+            logger=False,
+            default_root_dir=str(tmp_path),
+        ),
+    )
+    evaluator.run()
+    assert evaluator._resolved_class_names == ["x", "y", "z"]
+
+
+def test_evaluator_resolves_class_names_next_to_checkpoint(tmp_path: Any) -> None:
+    """No explicit param and no ``dataset.label_names`` → the Evaluator looks
+    for ``class_names.json`` next to ``model.checkpoint_path``."""
+    ckpt = tmp_path / "model.ckpt"
+    ckpt.write_bytes(b"")
+    (tmp_path / "class_names.json").write_text(json.dumps({"class_names": ["p", "q", "r"]}))
+
+    model = _ClassificationModel()
+    # Monkey-patch a checkpoint_path attribute the way the real model classes
+    # (e.g. raidar.yolo26.YOLO26Model) expose it for self-loading.
+    setattr(model, "checkpoint_path", str(ckpt))
+
+    samples = [Sample(input=torch.randn(4), target=i % 3, metadata={"idx": i}) for i in range(3)]
+    evaluator = LightningEvaluator(
+        model=model,
+        dataset=Flux(source=samples),
+        loader=Class(DataLoader, batch_size=3),
+        metrics=MetricCollection({"cm": MulticlassConfusionMatrix(num_classes=3)}),
+        lightning=Class(
+            L.Trainer,
+            accelerator="cpu",
+            enable_progress_bar=False,
+            enable_model_summary=False,
+            logger=False,
+            default_root_dir=str(tmp_path),
+        ),
+    )
+    evaluator.run()
+    assert evaluator._resolved_class_names == ["p", "q", "r"]
+
+
+def test_evaluator_falls_back_to_integer_indices(tmp_path: Any) -> None:
+    """Every resolution source missing → render uses ``["0", "1", ...]``."""
+    samples = [Sample(input=torch.randn(4), target=i % 3, metadata={"idx": i}) for i in range(3)]
+    evaluator = LightningEvaluator(
+        model=_ClassificationModel(),
+        dataset=Flux(source=samples),
+        loader=Class(DataLoader, batch_size=3),
+        metrics=MetricCollection({"cm": MulticlassConfusionMatrix(num_classes=3)}),
+        lightning=Class(
+            L.Trainer,
+            accelerator="cpu",
+            enable_progress_bar=False,
+            enable_model_summary=False,
+            logger=False,
+            default_root_dir=str(tmp_path),
+        ),
+    )
+    evaluator.run()
+    assert evaluator._resolved_class_names is None  # no source → render falls back at table time
+
+
+def test_evaluator_render_pass_skips_non_square_metrics(tmp_path: Any) -> None:
+    """Scalar accuracy alone produces no rendered table."""
+    from loguru import logger as _loguru_logger
+
+    captured: List[str] = []
+    sink_id = _loguru_logger.add(lambda m: captured.append(str(m)), level="INFO")
+    try:
+        samples = [Sample(input=torch.randn(4), target=i % 3, metadata={"idx": i}) for i in range(3)]
+        evaluator = LightningEvaluator(
+            model=_ClassificationModel(),
+            dataset=Flux(source=samples),
+            loader=Class(DataLoader, batch_size=3),
+            metrics=MetricCollection({"acc": MulticlassAccuracy(num_classes=3)}),
+            lightning=Class(
+                L.Trainer,
+                accelerator="cpu",
+                enable_progress_bar=False,
+                enable_model_summary=False,
+                logger=False,
+                default_root_dir=str(tmp_path),
+            ),
+        )
+        evaluator.run()
+    finally:
+        _loguru_logger.remove(sink_id)
+    assert "pred:" not in "".join(captured)
+
+
+def test_evaluator_sidecar_unchanged_when_confusion_matrix_present(tmp_path: Any) -> None:
+    """The JSON sidecar still receives the 2D-list payload for backwards
+    compatibility with downstream tooling (``read_run_metrics``)."""
+    sidecar = tmp_path / "eval_metrics.json"
+    samples = [Sample(input=torch.randn(4), target=i % 3, metadata={"idx": i}) for i in range(6)]
+    evaluator = LightningEvaluator(
+        model=_ClassificationModel(),
+        dataset=Flux(source=samples),
+        loader=Class(DataLoader, batch_size=3),
+        metrics=MetricCollection(
+            {
+                "acc": MulticlassAccuracy(num_classes=3),
+                "cm": MulticlassConfusionMatrix(num_classes=3),
+            }
+        ),
+        metrics_sidecar_path=str(sidecar),
+        lightning=Class(
+            L.Trainer,
+            accelerator="cpu",
+            enable_progress_bar=False,
+            enable_model_summary=False,
+            logger=False,
+            default_root_dir=str(tmp_path),
+        ),
+    )
+    evaluator.run()
+
+    payload = json.loads(sidecar.read_text())
+    cm = payload["metrics"]["cm"]
+    assert isinstance(cm, list) and len(cm) == 3 and all(len(row) == 3 for row in cm)
