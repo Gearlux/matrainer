@@ -39,16 +39,81 @@ without scraping logger backends.
 
 import json
 from pathlib import Path
-from typing import Any, Dict, Optional
+from typing import Any, Dict, List, Optional, Union
 
 import pytorch_lightning as L
 from confluid import Class, Lazy, configurable, flow
 from logflow import get_logger
 from torch import Tensor
 from torch.utils.data import DataLoader
-from torchmetrics import MetricCollection
+from torchmetrics import Metric, MetricCollection
 
 logger = get_logger(__name__)
+
+
+def _is_square_2d_tensor(value: Any) -> bool:
+    """True when ``value`` is a (N, N) tensor with N >= 1.
+
+    Generic shape check used to detect confusion-matrix-shaped metrics
+    without string-matching on metric names.
+    """
+    return isinstance(value, Tensor) and value.dim() == 2 and value.shape[0] == value.shape[1] and value.shape[0] >= 1
+
+
+def _ensure_class_names(names: Optional[List[str]], n: int) -> List[str]:
+    """Return ``names`` if it has length ``n``, else integer-index fallback."""
+    if names is not None and len(names) == n:
+        return names
+    return [str(i) for i in range(n)]
+
+
+def _render_matrix_as_table(name: str, matrix: Tensor, class_names: List[str]) -> str:
+    """Render a square 2D tensor as a github-flavored markdown table.
+
+    Rows are true labels, columns are predicted labels (the torchmetrics
+    confusion-matrix convention: ``C[i, j]`` = count of ``true=i, pred=j``).
+    """
+    from tabulate import tabulate
+
+    arr = matrix.detach().cpu().tolist()
+    headers = [""] + [f"pred:{c}" for c in class_names]
+    rows = [[f"true:{class_names[i]}", *arr[i]] for i in range(len(arr))]
+    rendered: str = tabulate(rows, headers=headers, tablefmt="github")
+    return f"{name}:\n" + rendered
+
+
+def _log_figure_to_loggers(
+    lightning_trainer: Optional[L.Trainer],
+    name: str,
+    figure: Any,
+) -> None:
+    """Forward a matplotlib Figure to every wired Lightning logger.
+
+    TensorBoard-style loggers expose ``experiment.add_figure(tag, fig, step)``;
+    MLflow-style loggers expose ``experiment.log_figure(run_id, fig, path)``.
+    Loggers without either are silently skipped.
+    """
+    if lightning_trainer is None:
+        return
+    step = getattr(lightning_trainer, "global_step", 0)
+    for lg in getattr(lightning_trainer, "loggers", []) or []:
+        exp = getattr(lg, "experiment", None)
+        if exp is None:
+            continue
+        add_figure = getattr(exp, "add_figure", None)
+        if callable(add_figure):
+            try:
+                add_figure(name, figure, step)
+                continue
+            except Exception as exc:  # pragma: no cover - logger backends are external
+                logger.debug(f"add_figure failed on {type(lg).__name__}: {exc}")
+        log_figure = getattr(exp, "log_figure", None)
+        run_id = getattr(lg, "run_id", None)
+        if callable(log_figure) and run_id:
+            try:
+                log_figure(run_id, figure, f"{name.replace('/', '_')}.png")
+            except Exception as exc:  # pragma: no cover - logger backends are external
+                logger.debug(f"log_figure failed on {type(lg).__name__}: {exc}")
 
 
 def _coerce_metric_value(value: Any) -> Any:
@@ -105,6 +170,16 @@ class LightningEvaluator(L.LightningModule):
             is invoked, so training knobs like ``max_epochs`` are ignored.
         experiment_name / run_name: Metadata for loggers (MLflow, TB, etc.).
         loggers: Optional list of Lightning loggers.
+        metrics_sidecar_path: Optional path; when set, ``metrics.compute()``
+            is also written there as JSON (logger-agnostic).
+        class_names: Optional human-readable class labels for confusion-matrix
+            rendering. Accepts either an explicit ``List[str]`` or a path
+            (``str``) to a JSON file shaped ``{"class_names": [...]}``
+            (the format the :class:`~marainer.trainer.Trainer` writes next
+            to the checkpoint). When ``None``, auto-resolved from
+            ``getattr(dataset, "label_names", None)`` first, then from a
+            ``class_names.json`` co-located with the model's checkpoint,
+            and finally falls back to integer indices.
     """
 
     def __init__(
@@ -118,6 +193,7 @@ class LightningEvaluator(L.LightningModule):
         experiment_name: str = "marainer_eval",
         run_name: str = "evaluate",
         metrics_sidecar_path: Optional[str] = None,
+        class_names: Optional[Union[List[str], str]] = None,
     ) -> None:
         super().__init__()
         self.model = model
@@ -129,6 +205,8 @@ class LightningEvaluator(L.LightningModule):
         self.experiment_name = experiment_name
         self.run_name = run_name
         self.metrics_sidecar_path: Optional[str] = metrics_sidecar_path
+        self.class_names: Optional[Union[List[str], str]] = class_names
+        self._resolved_class_names: Optional[List[str]] = None
 
     def forward(self, x: Any) -> Any:
         return self.model(x)
@@ -139,7 +217,11 @@ class LightningEvaluator(L.LightningModule):
         if self.metrics is not None:
             self.metrics.update(preds, batch.target)
             if isinstance(self.metrics, MetricCollection):
-                self.log_dict(self.metrics, on_step=False, on_epoch=True, batch_size=batch_size)
+                # Filter for scalars to prevent Lightning logging crashes (e.g. for confusion matrices).
+                # Non-scalars are still computed and available in compute() for the sidecar.
+                scalars = {k: v for k, v in self.metrics.items() if isinstance(v, Tensor) and v.numel() == 1}
+                if scalars:
+                    self.log_dict(scalars, on_step=False, on_epoch=True, batch_size=batch_size)
         if self._predictions_sink is not None:
             self._write_predictions(preds, batch)
         return preds
@@ -172,19 +254,98 @@ class LightningEvaluator(L.LightningModule):
             m = per_sample_meta[i] if per_sample_meta and i < len(per_sample_meta) else {}
             self._predictions_sink.write(p, m)
 
-    def _write_metrics_sidecar(self) -> None:
-        """Dump the final metrics.compute() dict to ``metrics_sidecar_path`` as JSON.
+    def _resolve_class_names(self, dataset: Any) -> Optional[List[str]]:
+        """Locate class names from (in order) the explicit param, the dataset,
+        or a ``class_names.json`` next to the model's checkpoint.
 
-        Skipped silently when ``metrics_sidecar_path`` is None or ``self.metrics``
-        is None — the sidecar is opt-in and shouldn't error when the user
-        configured the Evaluator without metrics.
-
-        The sidecar is the **logger-agnostic** read path for downstream tooling
-        (Navigator's ``read_run_metrics``). Users who want full TB / MLflow
-        history still get it via the configured Lightning loggers; the sidecar
-        is the deterministic final-value record.
+        Returns ``None`` only when every source is missing; callers fall back
+        to integer indices at render time.
         """
-        if self.metrics_sidecar_path is None or self.metrics is None:
+        if isinstance(self.class_names, list):
+            return [str(n) for n in self.class_names]
+        if isinstance(self.class_names, str):
+            path = Path(self.class_names).expanduser()
+            try:
+                data = json.loads(path.read_text())
+                names = data.get("class_names")
+                if names:
+                    return [str(n) for n in names]
+            except Exception as exc:
+                logger.warning(f"Could not read class_names from {path}: {exc}")
+
+        names = getattr(dataset, "label_names", None)
+        if names:
+            return [str(n) for n in names]
+
+        ckpt_path = getattr(self.model, "checkpoint_path", None)
+        if ckpt_path:
+            candidate = Path(str(ckpt_path)).expanduser().parent / "class_names.json"
+            if candidate.is_file():
+                try:
+                    data = json.loads(candidate.read_text())
+                    names = data.get("class_names")
+                    if names:
+                        return [str(n) for n in names]
+                except Exception as exc:
+                    logger.debug(f"Could not read {candidate}: {exc}")
+        return None
+
+    def _render_and_log_matrices(self) -> None:
+        """For every (N, N) tensor in ``metrics.items()``: log a tabulate
+        text table and forward the metric's own ``.plot(labels=...)`` figure
+        to every wired Lightning logger.
+
+        Iterates over ``self.metrics.items()`` rather than ``compute()``
+        output so we can call the metric's built-in ``.plot()`` (e.g.
+        :meth:`torchmetrics.classification.MulticlassConfusionMatrix.plot`)
+        with class labels. Metrics that lack ``.plot()`` still get the text
+        table.
+        """
+        if not isinstance(self.metrics, MetricCollection):
+            return
+        for name, metric in self.metrics.items():
+            try:
+                value = metric.compute() if isinstance(metric, Metric) else None
+            except Exception as exc:  # pragma: no cover - defensive log path
+                logger.debug(f"Could not compute {name} for rendering: {exc}")
+                continue
+            if not _is_square_2d_tensor(value):
+                continue
+            n = int(value.shape[0])
+            labels = _ensure_class_names(self._resolved_class_names, n)
+            logger.info("\n" + _render_matrix_as_table(name, value, labels))
+
+            plot = getattr(metric, "plot", None)
+            if not callable(plot):
+                continue
+            try:
+                result = plot(labels=labels)
+            except Exception as exc:
+                logger.debug(f"{type(metric).__name__}.plot failed for {name}: {exc}")
+                continue
+            figure = result[0] if isinstance(result, tuple) else result
+            try:
+                _log_figure_to_loggers(getattr(self, "trainer", None), name, figure)
+            finally:
+                try:
+                    import matplotlib.pyplot as plt
+
+                    plt.close(figure)
+                except Exception:  # pragma: no cover - matplotlib state cleanup
+                    pass
+
+    def _finalize_metrics(self) -> None:
+        """Render non-scalar metrics for humans + optionally write the JSON sidecar.
+
+        Always runs the render pass when metrics are configured (text table +
+        heatmap figure to wired Lightning loggers). The JSON sidecar at
+        ``metrics_sidecar_path`` is the **logger-agnostic** read path for
+        downstream tooling (Navigator's ``read_run_metrics``) and is opt-in.
+        """
+        if self.metrics is None:
+            return
+        self._render_and_log_matrices()
+        if self.metrics_sidecar_path is None:
             return
         try:
             raw = self.metrics.compute()
@@ -221,10 +382,12 @@ class LightningEvaluator(L.LightningModule):
         if self._predictions_sink is not None:
             self._predictions_sink = flow(self._predictions_sink)
 
-        loader = flow(self.loader, dataset=flow(self.dataset))
+        dataset = flow(self.dataset)
+        self._resolved_class_names = self._resolve_class_names(dataset)
+        loader = flow(self.loader, dataset=dataset)
         lightning_trainer = flow(self.lightning)
         lightning_trainer.test(model=self, dataloaders=loader)
         if self._predictions_sink is not None and hasattr(self._predictions_sink, "close"):
             self._predictions_sink.close()
-        self._write_metrics_sidecar()
+        self._finalize_metrics()
         logger.info("Evaluation complete.")

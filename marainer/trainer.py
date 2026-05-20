@@ -1,4 +1,6 @@
-from typing import Any
+import json
+from pathlib import Path
+from typing import Any, List, Optional
 
 import pytorch_lightning as L
 import torch
@@ -9,6 +11,70 @@ from torch.utils.data import DataLoader
 from torchmetrics import MetricCollection
 
 logger = get_logger(__name__)
+
+
+def _resolve_label_names(dataset: Any) -> Optional[List[str]]:
+    """Return the dataset's ``label_names`` as a plain list, or None.
+
+    Informal protocol: any dataset MAY expose ``label_names: Sequence[str]``.
+    HuggingFaceClassificationDataset in sonair does; bespoke datasets may
+    too. Returns None when the attribute is missing or empty so callers
+    can skip the class-name plumbing entirely.
+    """
+    names = getattr(dataset, "label_names", None)
+    if not names:
+        return None
+    try:
+        return [str(n) for n in names]
+    except TypeError:
+        return None
+
+
+def _resolve_checkpoint_dir(lightning_trainer: L.Trainer) -> Optional[Path]:
+    """Locate the directory where ModelCheckpoint is saving .ckpt files.
+
+    Falls back to ``trainer.default_root_dir`` so we always have a
+    deterministic location to drop ``class_names.json`` next to the run.
+    """
+    cb = getattr(lightning_trainer, "checkpoint_callback", None)
+    dirpath = getattr(cb, "dirpath", None) if cb is not None else None
+    if dirpath:
+        return Path(dirpath)
+    root = getattr(lightning_trainer, "default_root_dir", None)
+    return Path(root) if root else None
+
+
+def _write_class_names(lightning_trainer: L.Trainer, label_names: List[str]) -> None:
+    """Persist ``{"class_names": [...], "num_classes": N}`` to disk + MLflow.
+
+    Filesystem: ``<checkpoint_dir>/class_names.json`` so the file travels
+    with the .ckpt artifacts the model loads from.
+
+    MLflow: for every wired :class:`pytorch_lightning.loggers.MLFlowLogger`,
+    log the same payload as a run artifact. Silently skipped when no MLflow
+    logger is wired.
+    """
+    payload = {"class_names": label_names, "num_classes": len(label_names)}
+
+    ckpt_dir = _resolve_checkpoint_dir(lightning_trainer)
+    if ckpt_dir is not None:
+        ckpt_dir.mkdir(parents=True, exist_ok=True)
+        out_path = ckpt_dir / "class_names.json"
+        out_path.write_text(json.dumps(payload, indent=2, sort_keys=True))
+        logger.info(f"Wrote class_names.json to {out_path}")
+    else:
+        logger.debug("No checkpoint dir or default_root_dir; skipping filesystem class_names.json")
+
+    for lg in getattr(lightning_trainer, "loggers", []) or []:
+        run_id = getattr(lg, "run_id", None)
+        exp = getattr(lg, "experiment", None)
+        log_dict = getattr(exp, "log_dict", None) if exp is not None else None
+        if callable(log_dict) and run_id:
+            try:
+                log_dict(run_id, payload, "class_names.json")
+                logger.info(f"Logged class_names.json as MLflow artifact for run {run_id}")
+            except Exception as exc:  # pragma: no cover - logger backends are external
+                logger.debug(f"MLflow log_dict failed on {type(lg).__name__}: {exc}")
 
 
 @configurable
@@ -97,7 +163,9 @@ class LightningTrainer(L.LightningModule):
         self.log("train/loss", loss, on_step=True, on_epoch=True, prog_bar=True, batch_size=batch.input.shape[0])
         if self.train_metrics is not None:
             self.train_metrics(preds, batch.target)
-            self.log_dict(self.train_metrics, on_step=False, on_epoch=True, batch_size=batch.input.shape[0])
+            scalars = {k: v for k, v in self.train_metrics.items() if isinstance(v, torch.Tensor) and v.numel() == 1}
+            if scalars:
+                self.log_dict(scalars, on_step=False, on_epoch=True, batch_size=batch.input.shape[0])
         return loss
 
     def validation_step(self, batch: Any, batch_idx: int) -> torch.Tensor:
@@ -106,7 +174,9 @@ class LightningTrainer(L.LightningModule):
         self.log("val/loss", loss, on_epoch=True, prog_bar=True, batch_size=batch.input.shape[0])
         if self.val_metrics is not None:
             self.val_metrics(preds, batch.target)
-            self.log_dict(self.val_metrics, on_step=False, on_epoch=True, batch_size=batch.input.shape[0])
+            scalars = {k: v for k, v in self.val_metrics.items() if isinstance(v, torch.Tensor) and v.numel() == 1}
+            if scalars:
+                self.log_dict(scalars, on_step=False, on_epoch=True, batch_size=batch.input.shape[0])
         return loss
 
     def test_step(self, batch: Any, batch_idx: int) -> torch.Tensor:
@@ -115,7 +185,9 @@ class LightningTrainer(L.LightningModule):
         self.log("test/loss", loss, on_epoch=True, prog_bar=True, batch_size=batch.input.shape[0])
         if self.test_metrics is not None:
             self.test_metrics(preds, batch.target)
-            self.log_dict(self.test_metrics, on_step=False, on_epoch=True, batch_size=batch.input.shape[0])
+            scalars = {k: v for k, v in self.test_metrics.items() if isinstance(v, torch.Tensor) and v.numel() == 1}
+            if scalars:
+                self.log_dict(scalars, on_step=False, on_epoch=True, batch_size=batch.input.shape[0])
         return loss
 
     def configure_optimizers(self) -> Any:
@@ -155,6 +227,12 @@ class LightningTrainer(L.LightningModule):
         self._marainer_log_hyperparams(lightning_trainer)
         lightning_trainer.fit(model=self, train_dataloaders=t_loader, val_dataloaders=v_loader)
         logger.info("Training complete.")
+
+        label_names = _resolve_label_names(self.train_set)
+        if label_names:
+            _write_class_names(lightning_trainer, label_names)
+        else:
+            logger.debug("train_set exposes no label_names; skipping class_names.json")
 
         if self.test_set is not None:
             logger.info("Evaluating on held-out test set...")

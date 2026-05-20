@@ -1,4 +1,3 @@
-import sys
 from typing import Any
 
 from liquifai import LiquifyApp
@@ -9,10 +8,6 @@ from marainer.plugins import load_plugins
 from marainer.trainer import LightningTrainer
 
 logger = get_logger(__name__)
-
-# Ensure CWD is in path for example/project resolution
-if "." not in sys.path:
-    sys.path.insert(0, ".")
 
 # Main App Instance
 app = LiquifyApp(name="marainer")
