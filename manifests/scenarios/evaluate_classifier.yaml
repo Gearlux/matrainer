@@ -9,7 +9,7 @@ description: |
   `marainer evaluate`. Domain-specific tweaks (custom collates, dataset
   splits, etc.) belong in a domain scenario.
 classes:
-  evaluator: marainer.evaluator.Evaluator
+  evaluator: marainer.evaluator.LightningEvaluator
 slots:
   run_name:
     type: str
@@ -51,7 +51,7 @@ template: |
     num_classes: !ref:num_classes
     checkpoint_path: !ref:checkpoint_path
 
-  evaluator: !class:marainer.evaluator.Evaluator
+  evaluator: !class:marainer.evaluator.LightningEvaluator
     experiment_name: {{ experiment_name }}
     run_name: {{ run_name }}
     model: !ref:model

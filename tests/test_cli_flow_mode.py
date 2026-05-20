@@ -5,7 +5,7 @@ and asserts that liquifai's deep-flow:
 
 * eagerly flowed the non-Lazy attrs (``model``, ``lightning``);
 * left the ``Lazy[Any]`` attrs (``optimizer``, ``train_loader``, ``val_loader``,
-  ``test_loader``) as deferred ``Class`` stubs so ``Trainer.run()`` can flow
+  ``test_loader``) as deferred ``Class`` stubs so ``LightningTrainer.run()`` can flow
   them with runtime kwargs (``params=self.parameters()``, ``dataset=...``).
 """
 
@@ -18,7 +18,7 @@ import pytest
 from liquifai.context import set_context
 
 from marainer.cli import app
-from marainer.trainer import Trainer
+from marainer.trainer import LightningTrainer
 
 
 @pytest.fixture(autouse=True)
@@ -27,10 +27,10 @@ def _reset_context() -> None:
 
 
 def test_train_command_honors_lazy_annotations(tmp_path: Path, monkeypatch: Any) -> None:
-    """The injected Trainer has eager `model` but deferred `optimizer`/`*_loader`."""
+    """The injected LightningTrainer has eager `model` but deferred `optimizer`/`*_loader`."""
     config = tmp_path / "train.yaml"
     config.write_text(
-        "trainer: !class:marainer.trainer.Trainer\n"
+        "trainer: !class:marainer.trainer.LightningTrainer\n"
         "  model: !class:tests.test_cli_flow_mode._TinyModel\n"
         "    input_size: 4\n"
         "  train_set: []\n"
@@ -42,7 +42,7 @@ def test_train_command_honors_lazy_annotations(tmp_path: Path, monkeypatch: Any)
 
     monkeypatch.setattr(sys, "argv", ["marainer", "train", str(config)])
 
-    with patch.object(Trainer, "run") as fake_run:
+    with patch.object(LightningTrainer, "run") as fake_run:
         app.run()
 
     fake_run.assert_called_once()

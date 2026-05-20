@@ -11,7 +11,7 @@ from confluid.loader import load
 from dataflux.sample import Sample
 from pytorch_lightning.loggers import CSVLogger
 
-from marainer.trainer import Trainer
+from marainer.trainer import LightningTrainer
 from marainer.utils import get_git_commit_hash
 
 
@@ -37,7 +37,7 @@ class TestLogHyperparams:
         mock_trainer = MagicMock(spec=L.Trainer)
         mock_trainer.loggers = [mock_logger1, mock_logger2]
 
-        trainer = Trainer(model=TinyModel(), train_set=_make_samples(16))
+        trainer = LightningTrainer(model=TinyModel(), train_set=_make_samples(16))
         trainer._marainer_log_hyperparams(mock_trainer)
 
         mock_logger1.log_hyperparams.assert_called_once()
@@ -68,11 +68,11 @@ lightning: !class:pytorch_lightning.Trainer
         name: csv_test
 """
         data = load(yaml_text, flow=False)
-        trainer = materialize({"_confluid_class_": "Trainer", **data}, context=data)
+        trainer = materialize({"_confluid_class_": "LightningTrainer", **data}, context=data)
 
         # Before flow: the Lightning Trainer stays deferred, but the YAML-declared
         # loggers are already captured in its kwargs (as Instance objects).
-        assert isinstance(trainer, Trainer)
+        assert isinstance(trainer, LightningTrainer)
         assert isinstance(trainer.lightning, Class)
         assert "logger" in trainer.lightning.kwargs
         assert len(trainer.lightning.kwargs["logger"]) == 1

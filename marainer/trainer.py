@@ -12,8 +12,8 @@ logger = get_logger(__name__)
 
 
 @configurable
-class Trainer(L.LightningModule):
-    """Marainer Trainer: configurable Lightning module with integrated training loop.
+class LightningTrainer(L.LightningModule):
+    """Marainer LightningTrainer: configurable Lightning module with integrated training loop.
 
     Supports YAML-configurable metrics via torchmetrics. Train and validation
     ``MetricCollection`` instances are configured directly in YAML using
@@ -81,7 +81,7 @@ class Trainer(L.LightningModule):
         self.lightning = lightning
         self.experiment_name = experiment_name
         self.run_name = run_name
-        self.loss_fn = nn.CrossEntropyLoss()
+        self.loss_fn: nn.Module = nn.CrossEntropyLoss()
         self.train_metrics: MetricCollection | None = None
         self.val_metrics: MetricCollection | None = None
         self.test_metrics: MetricCollection | None = None

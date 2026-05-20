@@ -19,7 +19,7 @@ from torch.utils.data import DataLoader
 from torchmetrics import MetricCollection
 from torchmetrics.classification import MulticlassAccuracy
 
-from marainer.evaluator import Evaluator, _coerce_metric_value
+from marainer.evaluator import LightningEvaluator, _coerce_metric_value
 
 
 class _RecordingSink:
@@ -53,7 +53,7 @@ def test_evaluator_runs_on_classification_task(tmp_path: Any) -> None:
     metrics = MetricCollection({"acc": MulticlassAccuracy(num_classes=3)})
     sink = _RecordingSink()
 
-    evaluator = Evaluator(
+    evaluator = LightningEvaluator(
         model=model,
         dataset=flux,
         loader=Class(DataLoader, batch_size=4),
@@ -84,7 +84,7 @@ def test_evaluator_writes_metrics_sidecar_when_path_set(tmp_path: Any) -> None:
     metrics = MetricCollection({"acc": MulticlassAccuracy(num_classes=3)})
     sidecar = tmp_path / "eval_metrics.json"
 
-    evaluator = Evaluator(
+    evaluator = LightningEvaluator(
         model=model,
         dataset=flux,
         loader=Class(DataLoader, batch_size=4),
@@ -122,7 +122,7 @@ def test_evaluator_skips_sidecar_when_path_none(tmp_path: Any) -> None:
     flux = Flux(source=samples)
     metrics = MetricCollection({"acc": MulticlassAccuracy(num_classes=3)})
 
-    evaluator = Evaluator(
+    evaluator = LightningEvaluator(
         model=model,
         dataset=flux,
         loader=Class(DataLoader, batch_size=4),
@@ -152,7 +152,7 @@ def test_evaluator_skips_sidecar_when_no_metrics(tmp_path: Any) -> None:
     flux = Flux(source=samples)
     sidecar = tmp_path / "eval_metrics.json"
 
-    evaluator = Evaluator(
+    evaluator = LightningEvaluator(
         model=model,
         dataset=flux,
         loader=Class(DataLoader, batch_size=4),
