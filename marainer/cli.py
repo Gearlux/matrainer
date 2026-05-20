@@ -3,9 +3,9 @@ from typing import Any
 from liquifai import LiquifyApp
 from logflow import get_logger
 
-from marainer.evaluator import Evaluator
+from marainer.evaluator import LightningEvaluator
 from marainer.plugins import load_plugins
-from marainer.trainer import Trainer
+from marainer.trainer import LightningTrainer
 
 logger = get_logger(__name__)
 
@@ -14,7 +14,7 @@ app = LiquifyApp(name="marainer")
 
 
 @app.script_command(flow_mode="auto")
-def train(trainer: Trainer) -> None:
+def train(trainer: LightningTrainer) -> None:
     """Orchestrate a training task."""
     from confluid import dump
 
@@ -28,10 +28,10 @@ def train(trainer: Trainer) -> None:
 
 
 @app.script_command(flow_mode="auto")
-def evaluate(evaluator: Evaluator) -> None:
+def evaluate(evaluator: LightningEvaluator) -> None:
     """Evaluate a trained model over a dataset.
 
-    Loads a checkpoint into the injected :class:`~marainer.evaluator.Evaluator`,
+    Loads a checkpoint into the injected :class:`~marainer.evaluator.LightningEvaluator`,
     runs one pass over its dataset, logs metrics, and (if configured) streams
     predictions to a sink.
     """

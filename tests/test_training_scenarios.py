@@ -10,7 +10,7 @@ from dataflux.core import Flux
 from dataflux.sample import Sample
 from torch.utils.data import DataLoader
 
-from marainer.trainer import Trainer
+from marainer.trainer import LightningTrainer
 
 
 @configurable
@@ -40,14 +40,14 @@ class TestMapStyleFlux:
         assert batches[0].input.shape == (8, 4)
 
     def test_training_step(self) -> None:
-        trainer = Trainer(model=TinyModel(), train_set=_make_samples(16))
+        trainer = LightningTrainer(model=TinyModel(), train_set=_make_samples(16))
         flux = Flux(source=_make_samples(16))
         loader: DataLoader = DataLoader(flux, batch_size=8)
         loss = trainer.training_step(next(iter(loader)), 0)
         assert loss.dim() == 0
 
     def test_full_epoch(self) -> None:
-        trainer = Trainer(
+        trainer = LightningTrainer(
             model=TinyModel(),
             train_set=_make_samples(32),
             optimizer=Class(torch.optim.SGD, lr=0.01),
@@ -79,8 +79,8 @@ class TestTestSet:
     """Verify that an optional test_set triggers lightning_trainer.test() after fit()."""
 
     def test_run_invokes_test_when_test_set_provided(self) -> None:
-        """When test_set is set, Trainer.run() should call lightning_trainer.test()."""
-        trainer = Trainer(
+        """When test_set is set, LightningTrainer.run() should call lightning_trainer.test()."""
+        trainer = LightningTrainer(
             model=TinyModel(),
             train_set=Flux(source=_make_samples(16)),
         )
@@ -117,7 +117,7 @@ class TestTestSet:
         assert any(k.startswith("test/") for k in logged), f"expected test/* metrics, got: {list(logged)}"
 
     def test_run_skips_test_when_test_set_absent(self) -> None:
-        trainer = Trainer(
+        trainer = LightningTrainer(
             model=TinyModel(),
             train_set=Flux(source=_make_samples(16)),
         )

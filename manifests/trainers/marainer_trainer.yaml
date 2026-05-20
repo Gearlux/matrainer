@@ -2,7 +2,7 @@ description: "Marainer Trainer: configurable Lightning module driving fit() over
 use_case: "Top-level trainer object for any task. Wraps a model + train/val datasets + optimizer + Lightning Trainer config + (optional) train/val metrics. The CLI binds this under 'trainer:' in your YAML."
 category: "Generic"
 flux_type: "Trainer"
-class_path: "marainer.trainer.Trainer"
+class_path: "marainer.trainer.LightningTrainer"
 params:
   model:
     type: "torch.nn.Module"
