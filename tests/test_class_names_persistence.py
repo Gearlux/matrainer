@@ -12,11 +12,7 @@ from pathlib import Path
 from typing import Any, List
 from unittest.mock import MagicMock
 
-from marainer.trainer import (
-    _resolve_checkpoint_dir,
-    _resolve_label_names,
-    _write_class_names,
-)
+from marainer.trainer import _resolve_checkpoint_dir, _resolve_label_names, _write_class_names
 
 
 class _DatasetWithLabels:

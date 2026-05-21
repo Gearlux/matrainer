@@ -43,16 +43,12 @@ def load_plugins(app: "LiquifyApp") -> None:
         try:
             register = ep.load()
         except Exception as exc:
-            logger.warning(
-                f"Failed to load marainer plugin {ep.name!r} ({ep.value}): {exc}"
-            )
+            logger.warning(f"Failed to load marainer plugin {ep.name!r} ({ep.value}): {exc}")
             continue
         try:
             register(app)
         except Exception as exc:
-            logger.warning(
-                f"Plugin {ep.name!r} ({ep.value}) raised during register(app): {exc}"
-            )
+            logger.warning(f"Plugin {ep.name!r} ({ep.value}) raised during register(app): {exc}")
             continue
         logger.debug(f"Registered marainer plugin: {ep.name} ({ep.value})")
 
