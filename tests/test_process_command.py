@@ -9,8 +9,8 @@ any divergence is caught.
 from typing import Any
 
 import pytest
-
 from confluid import configurable
+
 from marainer.cli import convert, download, process
 
 VERBS = [process, download, convert]
@@ -41,9 +41,7 @@ def test_verb_invokes_run_on_injected_processor(verb: Any) -> None:
 
 
 @pytest.mark.parametrize("verb", VERBS, ids=VERB_IDS)
-def test_verb_handles_object_without_run(
-    verb: Any, caplog: pytest.LogCaptureFixture
-) -> None:
+def test_verb_handles_object_without_run(verb: Any, caplog: pytest.LogCaptureFixture) -> None:
     """If the injected object has no .run(), we log an error and don't crash."""
 
     class NoRun:
@@ -59,9 +57,7 @@ def test_verb_handles_none(verb: Any, caplog: pytest.LogCaptureFixture) -> None:
 
 
 @pytest.mark.parametrize("verb", VERBS, ids=VERB_IDS)
-def test_verb_logs_class_name_when_no_experiment_name(
-    verb: Any, caplog: pytest.LogCaptureFixture
-) -> None:
+def test_verb_logs_class_name_when_no_experiment_name(verb: Any, caplog: pytest.LogCaptureFixture) -> None:
     class Bare:
         def run(self) -> None:
             pass

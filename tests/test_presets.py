@@ -1,10 +1,10 @@
 """Tests for marainer.presets — MetricPreset with !ref:obj.method() integration."""
 
 import pytest
-from torchmetrics import Metric, MetricCollection
-
 from confluid import get_registry, load
 from confluid.loader import _register_constructors
+from torchmetrics import Metric, MetricCollection
+
 from marainer.presets import MetricPreset
 
 
@@ -22,9 +22,7 @@ class TestMetricPresetBasic:
         assert preset.category == "classification"
 
     def test_classification_multiclass_discovery(self) -> None:
-        preset = MetricPreset(
-            category="classification", task="multiclass", num_classes=3
-        )
+        preset = MetricPreset(category="classification", task="multiclass", num_classes=3)
         metrics = preset.to_metrics()
         assert len(metrics) > 0
         for name, m in metrics.items():
@@ -44,9 +42,7 @@ class TestMetricPresetBasic:
         assert len(metrics) > 0
 
     def test_exclude_filters_metrics(self) -> None:
-        preset_all = MetricPreset(
-            category="classification", task="multiclass", num_classes=3
-        )
+        preset_all = MetricPreset(category="classification", task="multiclass", num_classes=3)
         preset_excluded = MetricPreset(
             category="classification",
             task="multiclass",
@@ -59,16 +55,12 @@ class TestMetricPresetBasic:
         assert "MulticlassAccuracy" not in metrics_excluded
 
     def test_nonscalar_metrics_excluded_by_default(self) -> None:
-        preset = MetricPreset(
-            category="classification", task="multiclass", num_classes=3
-        )
+        preset = MetricPreset(category="classification", task="multiclass", num_classes=3)
         metrics = preset.to_metrics()
         assert "MulticlassConfusionMatrix" not in metrics
 
     def test_num_classes_propagated(self) -> None:
-        preset = MetricPreset(
-            category="classification", task="multiclass", num_classes=7
-        )
+        preset = MetricPreset(category="classification", task="multiclass", num_classes=7)
         metrics = preset.to_metrics()
         acc = metrics.get("MulticlassAccuracy")
         assert acc is not None

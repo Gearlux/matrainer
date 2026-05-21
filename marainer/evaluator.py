@@ -42,12 +42,11 @@ from pathlib import Path
 from typing import Any, Dict, List, Optional, Union
 
 import pytorch_lightning as L
+from confluid import Class, Lazy, configurable, flow
+from logflow import get_logger
 from torch import Tensor
 from torch.utils.data import DataLoader
 from torchmetrics import Metric, MetricCollection
-
-from confluid import Class, Lazy, configurable, flow
-from logflow import get_logger
 
 logger = get_logger(__name__)
 
@@ -58,12 +57,7 @@ def _is_square_2d_tensor(value: Any) -> bool:
     Generic shape check used to detect confusion-matrix-shaped metrics
     without string-matching on metric names.
     """
-    return (
-        isinstance(value, Tensor)
-        and value.dim() == 2
-        and value.shape[0] == value.shape[1]
-        and value.shape[0] >= 1
-    )
+    return isinstance(value, Tensor) and value.dim() == 2 and value.shape[0] == value.shape[1] and value.shape[0] >= 1
 
 
 def _ensure_class_names(names: Optional[List[str]], n: int) -> List[str]:
@@ -225,15 +219,9 @@ class LightningEvaluator(L.LightningModule):
             if isinstance(self.metrics, MetricCollection):
                 # Filter for scalars to prevent Lightning logging crashes (e.g. for confusion matrices).
                 # Non-scalars are still computed and available in compute() for the sidecar.
-                scalars = {
-                    k: v
-                    for k, v in self.metrics.items()
-                    if isinstance(v, Tensor) and v.numel() == 1
-                }
+                scalars = {k: v for k, v in self.metrics.items() if isinstance(v, Tensor) and v.numel() == 1}
                 if scalars:
-                    self.log_dict(
-                        scalars, on_step=False, on_epoch=True, batch_size=batch_size
-                    )
+                    self.log_dict(scalars, on_step=False, on_epoch=True, batch_size=batch_size)
         if self._predictions_sink is not None:
             self._write_predictions(preds, batch)
         return preds
@@ -263,11 +251,7 @@ class LightningEvaluator(L.LightningModule):
         n = len(items) if items is not None else 0
         for i in range(n):
             p = items[i]
-            m = (
-                per_sample_meta[i]
-                if per_sample_meta and i < len(per_sample_meta)
-                else {}
-            )
+            m = per_sample_meta[i] if per_sample_meta and i < len(per_sample_meta) else {}
             self._predictions_sink.write(p, m)
 
     def _resolve_class_names(self, dataset: Any) -> Optional[List[str]]:
@@ -403,9 +387,7 @@ class LightningEvaluator(L.LightningModule):
         loader = flow(self.loader, dataset=dataset)
         lightning_trainer = flow(self.lightning)
         lightning_trainer.test(model=self, dataloaders=loader)
-        if self._predictions_sink is not None and hasattr(
-            self._predictions_sink, "close"
-        ):
+        if self._predictions_sink is not None and hasattr(self._predictions_sink, "close"):
             self._predictions_sink.close()
         self._finalize_metrics()
         logger.info("Evaluation complete.")

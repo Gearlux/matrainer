@@ -1,27 +1,23 @@
 """Tests for Trainer with DataLoader-collated Samples."""
 
 import torch
-from torch.utils.data import DataLoader
-
 from dataflux.core import Flux
 from dataflux.sample import Sample
+from torch.utils.data import DataLoader
+
 from marainer.trainer import LightningTrainer
 
 
 def test_training_step_with_collated_sample() -> None:
     trainer = LightningTrainer(model=torch.nn.Linear(4, 2), train_set=[])
-    batch = Sample(
-        input=torch.randn(8, 4), target=torch.randint(0, 2, (8,)), metadata={}
-    )
+    batch = Sample(input=torch.randn(8, 4), target=torch.randint(0, 2, (8,)), metadata={})
     loss = trainer.training_step(batch, 0)
     assert isinstance(loss, torch.Tensor)
     assert loss.dim() == 0
 
 
 def test_flux_as_map_dataset() -> None:
-    samples = [
-        Sample(input=torch.randn(4), target=i % 2, metadata={}) for i in range(16)
-    ]
+    samples = [Sample(input=torch.randn(4), target=i % 2, metadata={}) for i in range(16)]
     flux = Flux(source=samples)
     loader: DataLoader = DataLoader(flux, batch_size=8)
     batch = next(iter(loader))

@@ -15,8 +15,8 @@ from typing import Any
 from unittest.mock import patch
 
 import pytest
-
 from liquifai.context import set_context
+
 from marainer.cli import app
 from marainer.trainer import LightningTrainer
 
@@ -26,9 +26,7 @@ def _reset_context() -> None:
     set_context(None)  # type: ignore[arg-type]
 
 
-def test_train_command_honors_lazy_annotations(
-    tmp_path: Path, monkeypatch: Any
-) -> None:
+def test_train_command_honors_lazy_annotations(tmp_path: Path, monkeypatch: Any) -> None:
     """The injected LightningTrainer has eager `model` but deferred `optimizer`/`*_loader`."""
     config = tmp_path / "train.yaml"
     config.write_text(
@@ -52,6 +50,7 @@ def test_train_command_honors_lazy_annotations(
     # one injected. We can fish it back via the global context's resolved kwargs
     # — easiest way is to re-resolve via liquify().
     from confluid.fluid import Class
+
     from marainer.cli import train
 
     kwargs = app.liquify(train, config_path=config)
@@ -73,7 +72,6 @@ def test_train_command_honors_lazy_annotations(
 # Defined at module level so confluid can resolve `tests.test_cli_flow_mode._TinyModel`.
 import torch  # noqa: E402
 import torch.nn as nn  # noqa: E402
-
 from confluid import configurable  # noqa: E402
 
 

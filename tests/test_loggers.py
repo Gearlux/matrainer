@@ -6,11 +6,11 @@ from unittest.mock import MagicMock, patch
 import pytorch_lightning as L
 import torch
 import torch.nn as nn
-from pytorch_lightning.loggers import CSVLogger
-
 from confluid import Class, configurable, materialize
 from confluid.loader import load
 from dataflux.sample import Sample
+from pytorch_lightning.loggers import CSVLogger
+
 from marainer.trainer import LightningTrainer
 from marainer.utils import get_git_commit_hash
 
@@ -26,10 +26,7 @@ class TinyModel(nn.Module):
 
 
 def _make_samples(n: int = 32, input_size: int = 4) -> list[Sample]:
-    return [
-        Sample(input=torch.randn(input_size), target=i % 2, metadata={})
-        for i in range(n)
-    ]
+    return [Sample(input=torch.randn(input_size), target=i % 2, metadata={}) for i in range(n)]
 
 
 class TestLogHyperparams:
@@ -71,9 +68,7 @@ lightning: !class:pytorch_lightning.Trainer
         name: csv_test
 """
         data = load(yaml_text, flow=False)
-        trainer = materialize(
-            {"_confluid_class_": "LightningTrainer", **data}, context=data
-        )
+        trainer = materialize({"_confluid_class_": "LightningTrainer", **data}, context=data)
 
         # Before flow: the Lightning Trainer stays deferred, but the YAML-declared
         # loggers are already captured in its kwargs (as Instance objects).
@@ -105,7 +100,5 @@ class TestGetGitHash:
 
     def test_returns_none_outside_git(self) -> None:
         """get_git_commit_hash returns None when git is unavailable."""
-        with patch(
-            "marainer.utils.subprocess.check_output", side_effect=FileNotFoundError
-        ):
+        with patch("marainer.utils.subprocess.check_output", side_effect=FileNotFoundError):
             assert get_git_commit_hash() is None

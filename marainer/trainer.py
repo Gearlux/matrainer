@@ -5,11 +5,10 @@ from typing import Any, List, Optional
 import pytorch_lightning as L
 import torch
 import torch.nn as nn
-from torch.utils.data import DataLoader
-from torchmetrics import MetricCollection
-
 from confluid import Class, Lazy, configurable, flow
 from logflow import get_logger
+from torch.utils.data import DataLoader
+from torchmetrics import MetricCollection
 
 logger = get_logger(__name__)
 
@@ -64,9 +63,7 @@ def _write_class_names(lightning_trainer: L.Trainer, label_names: List[str]) -> 
         out_path.write_text(json.dumps(payload, indent=2, sort_keys=True))
         logger.info(f"Wrote class_names.json to {out_path}")
     else:
-        logger.debug(
-            "No checkpoint dir or default_root_dir; skipping filesystem class_names.json"
-        )
+        logger.debug("No checkpoint dir or default_root_dir; skipping filesystem class_names.json")
 
     for lg in getattr(lightning_trainer, "loggers", []) or []:
         run_id = getattr(lg, "run_id", None)
@@ -75,9 +72,7 @@ def _write_class_names(lightning_trainer: L.Trainer, label_names: List[str]) -> 
         if callable(log_dict) and run_id:
             try:
                 log_dict(run_id, payload, "class_names.json")
-                logger.info(
-                    f"Logged class_names.json as MLflow artifact for run {run_id}"
-                )
+                logger.info(f"Logged class_names.json as MLflow artifact for run {run_id}")
             except Exception as exc:  # pragma: no cover - logger backends are external
                 logger.debug(f"MLflow log_dict failed on {type(lg).__name__}: {exc}")
 
@@ -175,11 +170,7 @@ class LightningTrainer(L.LightningModule):
         )
         if self.train_metrics is not None:
             self.train_metrics(preds, batch.target)
-            scalars = {
-                k: v
-                for k, v in self.train_metrics.items()
-                if isinstance(v, torch.Tensor) and v.numel() == 1
-            }
+            scalars = {k: v for k, v in self.train_metrics.items() if isinstance(v, torch.Tensor) and v.numel() == 1}
             if scalars:
                 self.log_dict(
                     scalars,
@@ -201,11 +192,7 @@ class LightningTrainer(L.LightningModule):
         )
         if self.val_metrics is not None:
             self.val_metrics(preds, batch.target)
-            scalars = {
-                k: v
-                for k, v in self.val_metrics.items()
-                if isinstance(v, torch.Tensor) and v.numel() == 1
-            }
+            scalars = {k: v for k, v in self.val_metrics.items() if isinstance(v, torch.Tensor) and v.numel() == 1}
             if scalars:
                 self.log_dict(
                     scalars,
@@ -227,11 +214,7 @@ class LightningTrainer(L.LightningModule):
         )
         if self.test_metrics is not None:
             self.test_metrics(preds, batch.target)
-            scalars = {
-                k: v
-                for k, v in self.test_metrics.items()
-                if isinstance(v, torch.Tensor) and v.numel() == 1
-            }
+            scalars = {k: v for k, v in self.test_metrics.items() if isinstance(v, torch.Tensor) and v.numel() == 1}
             if scalars:
                 self.log_dict(
                     scalars,
@@ -250,9 +233,7 @@ class LightningTrainer(L.LightningModule):
         from liquifai.discovery import get_configurable_paths
 
         params = get_configurable_paths(self)
-        clean_params = {
-            k: v for k, v in params.items() if isinstance(v, (int, float, str, bool))
-        }
+        clean_params = {k: v for k, v in params.items() if isinstance(v, (int, float, str, bool))}
 
         ctx = get_context()
         if ctx and ctx.config_path:
@@ -274,15 +255,11 @@ class LightningTrainer(L.LightningModule):
             self.test_metrics = flow(self.test_metrics)
 
         t_loader = flow(self.train_loader, dataset=flow(self.train_set))
-        v_loader = (
-            flow(self.val_loader, dataset=flow(self.val_set)) if self.val_set else None
-        )
+        v_loader = flow(self.val_loader, dataset=flow(self.val_set)) if self.val_set else None
 
         lightning_trainer = flow(self.lightning)
         self._marainer_log_hyperparams(lightning_trainer)
-        lightning_trainer.fit(
-            model=self, train_dataloaders=t_loader, val_dataloaders=v_loader
-        )
+        lightning_trainer.fit(model=self, train_dataloaders=t_loader, val_dataloaders=v_loader)
         logger.info("Training complete.")
 
         label_names = _resolve_label_names(self.train_set)

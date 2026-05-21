@@ -7,10 +7,9 @@ import importlib
 import inspect
 from typing import Any
 
-from torchmetrics import Metric
-
 from confluid import configurable
 from logflow import get_logger
+from torchmetrics import Metric
 
 logger = get_logger(__name__)
 
@@ -104,9 +103,7 @@ class MetricPreset:
         all_names: list[str] = getattr(module, "__all__", [])
 
         # Filter by task prefix
-        prefix = _TASK_PREFIX.get(
-            self.task, self.task.capitalize() if self.task else ""
-        )
+        prefix = _TASK_PREFIX.get(self.task, self.task.capitalize() if self.task else "")
         if prefix:
             all_names = [n for n in all_names if n.startswith(prefix)]
 
@@ -140,8 +137,7 @@ class MetricPreset:
             explicit_params = {
                 p.name
                 for p in sig.parameters.values()
-                if p.name not in ("self", "cls")
-                and p.kind not in (p.VAR_POSITIONAL, p.VAR_KEYWORD)
+                if p.name not in ("self", "cls") and p.kind not in (p.VAR_POSITIONAL, p.VAR_KEYWORD)
             }
 
             filtered_kwargs: dict[str, Any] = {}
@@ -154,9 +150,7 @@ class MetricPreset:
             except (TypeError, ValueError) as e:
                 logger.warning(f"Skipping metric {name}: {e}")
 
-        logger.info(
-            f"MetricPreset({self.category}, task={self.task!r}) loaded {len(metrics)} metrics"
-        )
+        logger.info(f"MetricPreset({self.category}, task={self.task!r}) loaded {len(metrics)} metrics")
         return metrics
 
     def available_metrics(self) -> list[str]:
@@ -167,9 +161,7 @@ class MetricPreset:
         module = importlib.import_module(f"torchmetrics.{self.category}")
         all_names: list[str] = getattr(module, "__all__", [])
 
-        prefix = _TASK_PREFIX.get(
-            self.task, self.task.capitalize() if self.task else ""
-        )
+        prefix = _TASK_PREFIX.get(self.task, self.task.capitalize() if self.task else "")
         if prefix:
             all_names = [n for n in all_names if n.startswith(prefix)]
 
