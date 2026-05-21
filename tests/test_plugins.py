@@ -4,8 +4,8 @@ from typing import Any
 from unittest.mock import MagicMock
 
 import pytest
-from liquifai import LiquifyApp
 
+from liquifai import LiquifyApp
 from marainer import plugins
 
 
@@ -18,7 +18,9 @@ def _build_fake_entry_point(name: str, register_fn: Any) -> MagicMock:
     return ep
 
 
-def test_load_plugins_invokes_register_with_app(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_load_plugins_invokes_register_with_app(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     app = LiquifyApp(name="marainer")
 
     seen: list[LiquifyApp] = []
@@ -31,7 +33,11 @@ def test_load_plugins_invokes_register_with_app(monkeypatch: pytest.MonkeyPatch)
             return None
 
     ep = _build_fake_entry_point("my-plugin", register)
-    monkeypatch.setattr(plugins, "entry_points", lambda group: [ep] if group == plugins.ENTRY_POINT_GROUP else [])
+    monkeypatch.setattr(
+        plugins,
+        "entry_points",
+        lambda group: [ep] if group == plugins.ENTRY_POINT_GROUP else [],
+    )
 
     plugins.load_plugins(app)
 
@@ -39,7 +45,9 @@ def test_load_plugins_invokes_register_with_app(monkeypatch: pytest.MonkeyPatch)
     assert "my-plugin-command" in app._commands
 
 
-def test_load_plugins_skips_plugin_that_raises_on_load(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_load_plugins_skips_plugin_that_raises_on_load(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     """A broken `ep.load()` must not abort the whole CLI bootstrap."""
     app = LiquifyApp(name="marainer")
 
@@ -62,7 +70,9 @@ def test_load_plugins_skips_plugin_that_raises_on_load(monkeypatch: pytest.Monke
     assert "survives" in app._commands
 
 
-def test_load_plugins_skips_plugin_that_raises_during_register(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_load_plugins_skips_plugin_that_raises_during_register(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     """An exception inside `register(app)` must not abort other plugins."""
     app = LiquifyApp(name="marainer")
 

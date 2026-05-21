@@ -5,11 +5,11 @@ from typing import Any, cast
 import pytorch_lightning as L
 import torch
 import torch.nn as nn
+from torch.utils.data import DataLoader
+
 from confluid import Class, configurable
 from dataflux.core import Flux
 from dataflux.sample import Sample
-from torch.utils.data import DataLoader
-
 from marainer.trainer import LightningTrainer
 
 
@@ -24,7 +24,10 @@ class TinyModel(nn.Module):
 
 
 def _make_samples(n: int = 32, input_size: int = 4) -> list[Sample]:
-    return [Sample(input=torch.randn(input_size), target=i % 2, metadata={}) for i in range(n)]
+    return [
+        Sample(input=torch.randn(input_size), target=i % 2, metadata={})
+        for i in range(n)
+    ]
 
 
 def _negate(x: torch.Tensor) -> torch.Tensor:
@@ -54,7 +57,12 @@ class TestMapStyleFlux:
         )
         flux = Flux(source=_make_samples(32))
         loader: DataLoader = DataLoader(flux, batch_size=16)
-        lt = L.Trainer(max_epochs=1, accelerator="cpu", enable_progress_bar=False, enable_model_summary=False)
+        lt = L.Trainer(
+            max_epochs=1,
+            accelerator="cpu",
+            enable_progress_bar=False,
+            enable_model_summary=False,
+        )
         lt.fit(model=trainer, train_dataloaders=loader)
 
     def test_with_num_workers(self) -> None:
@@ -69,7 +77,9 @@ class TestFluxGetitem:
 
     def test_with_ops(self) -> None:
         samples = [Sample(input=torch.ones(2), target=0, metadata={}) for _ in range(4)]
-        assert torch.allclose(Flux(source=samples).map(_negate)[0].input, -torch.ones(2))
+        assert torch.allclose(
+            Flux(source=samples).map(_negate)[0].input, -torch.ones(2)
+        )
 
     def test_len(self) -> None:
         assert len(Flux(source=_make_samples(10))) == 10
@@ -114,7 +124,9 @@ class TestTestSet:
 
         assert call_counter["count"] == 1
         logged = trainer.trainer.callback_metrics
-        assert any(k.startswith("test/") for k in logged), f"expected test/* metrics, got: {list(logged)}"
+        assert any(
+            k.startswith("test/") for k in logged
+        ), f"expected test/* metrics, got: {list(logged)}"
 
     def test_run_skips_test_when_test_set_absent(self) -> None:
         trainer = LightningTrainer(

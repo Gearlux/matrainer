@@ -4,13 +4,18 @@ import pytest
 import pytorch_lightning as L
 import torch
 import torch.nn as nn
+from torch.utils.data import DataLoader
+from torchmetrics import Metric, MetricCollection
+from torchmetrics.classification import (
+    MulticlassAccuracy,
+    MulticlassF1Score,
+    MulticlassPrecision,
+    MulticlassRecall,
+)
+
 from confluid import configurable
 from dataflux.core import Flux
 from dataflux.sample import Sample
-from torch.utils.data import DataLoader
-from torchmetrics import Metric, MetricCollection
-from torchmetrics.classification import MulticlassAccuracy, MulticlassF1Score, MulticlassPrecision, MulticlassRecall
-
 from marainer.metrics import MetricPreset
 from marainer.trainer import LightningTrainer
 
@@ -26,7 +31,10 @@ class TinyModel(nn.Module):
 
 
 def make_samples(n: int = 32, input_size: int = 4) -> list[Sample]:
-    return [Sample(input=torch.randn(input_size), target=i % 2, metadata={}) for i in range(n)]
+    return [
+        Sample(input=torch.randn(input_size), target=i % 2, metadata={})
+        for i in range(n)
+    ]
 
 
 # ---------------------------------------------------------------------------
@@ -40,7 +48,9 @@ class TestMetricPreset:
         assert preset.category == "classification"
 
     def test_classification_multiclass_discovery(self) -> None:
-        preset = MetricPreset(category="classification", task="multiclass", num_classes=3)
+        preset = MetricPreset(
+            category="classification", task="multiclass", num_classes=3
+        )
         metrics = preset.to_metrics()
         assert len(metrics) > 0
         for name, m in metrics.items():
@@ -67,7 +77,9 @@ class TestMetricPreset:
         assert len(metrics) > 0
 
     def test_exclude_filters_metrics(self) -> None:
-        preset_all = MetricPreset(category="classification", task="multiclass", num_classes=3)
+        preset_all = MetricPreset(
+            category="classification", task="multiclass", num_classes=3
+        )
         preset_excluded = MetricPreset(
             category="classification",
             task="multiclass",
@@ -81,7 +93,9 @@ class TestMetricPreset:
         assert len(metrics_excluded) == len(metrics_all) - 1
 
     def test_nonscalar_metrics_excluded_by_default(self) -> None:
-        preset = MetricPreset(category="classification", task="multiclass", num_classes=3)
+        preset = MetricPreset(
+            category="classification", task="multiclass", num_classes=3
+        )
         metrics = preset.to_metrics()
         assert "MulticlassConfusionMatrix" not in metrics
         assert "MulticlassROC" not in metrics
@@ -89,14 +103,21 @@ class TestMetricPreset:
         assert "MulticlassStatScores" not in metrics
 
     def test_num_classes_propagated(self) -> None:
-        preset = MetricPreset(category="classification", task="multiclass", num_classes=7)
+        preset = MetricPreset(
+            category="classification", task="multiclass", num_classes=7
+        )
         metrics = preset.to_metrics()
         acc = metrics.get("MulticlassAccuracy")
         assert acc is not None
         assert acc.num_classes == 7
 
     def test_average_propagated(self) -> None:
-        preset = MetricPreset(category="classification", task="multiclass", num_classes=3, average="weighted")
+        preset = MetricPreset(
+            category="classification",
+            task="multiclass",
+            num_classes=3,
+            average="weighted",
+        )
         metrics = preset.to_metrics()
         f1 = metrics.get("MulticlassF1Score")
         assert f1 is not None
@@ -170,7 +191,9 @@ class TestTrainerMetricsIntegration:
         assert isinstance(trainer.val_metrics, MetricCollection)
 
     def test_train_metrics_prefixed(self) -> None:
-        train_mc = MetricCollection([MulticlassAccuracy(num_classes=2)], prefix="train/")
+        train_mc = MetricCollection(
+            [MulticlassAccuracy(num_classes=2)], prefix="train/"
+        )
         trainer = self._make_trainer(train_metrics=train_mc)
         assert trainer.train_metrics is not None
         assert any("train/" in str(k) for k in trainer.train_metrics)
@@ -182,7 +205,9 @@ class TestTrainerMetricsIntegration:
         assert any("val/" in str(k) for k in trainer.val_metrics)
 
     def test_training_step_updates_metrics(self) -> None:
-        train_mc = MetricCollection([MulticlassAccuracy(num_classes=2)], prefix="train/")
+        train_mc = MetricCollection(
+            [MulticlassAccuracy(num_classes=2)], prefix="train/"
+        )
         trainer = self._make_trainer(train_metrics=train_mc)
         flux = Flux(source=make_samples(16))
         loader: DataLoader = DataLoader(flux, batch_size=8)
@@ -209,5 +234,10 @@ class TestTrainerMetricsIntegration:
         trainer = self._make_trainer(train_metrics=train_mc)
         flux = Flux(source=make_samples(32))
         loader: DataLoader = DataLoader(flux, batch_size=16)
-        lt = L.Trainer(max_epochs=1, accelerator="cpu", enable_progress_bar=False, enable_model_summary=False)
+        lt = L.Trainer(
+            max_epochs=1,
+            accelerator="cpu",
+            enable_progress_bar=False,
+            enable_model_summary=False,
+        )
         lt.fit(model=trainer, train_dataloaders=loader)

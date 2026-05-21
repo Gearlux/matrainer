@@ -2,7 +2,6 @@ from typing import Any
 
 from liquifai import LiquifyApp
 from logflow import get_logger
-
 from marainer.evaluator import LightningEvaluator
 from marainer.plugins import load_plugins
 from marainer.trainer import LightningTrainer
@@ -36,7 +35,9 @@ def evaluate(evaluator: LightningEvaluator) -> None:
     predictions to a sink.
     """
     if evaluator is None:
-        logger.error("'evaluator' was not bound — provide one under 'evaluator:' in your YAML.")
+        logger.error(
+            "'evaluator' was not bound — provide one under 'evaluator:' in your YAML."
+        )
         return
     logger.info(f"Marainer evaluating: {evaluator.experiment_name}")
     if hasattr(evaluator, "run"):
@@ -53,7 +54,9 @@ def _dispatch_processor(processor: Any, verb_label: str) -> None:
     the log message so the operator can tell which verb was invoked.
     """
     if processor is None:
-        logger.error("'processor' was not bound — provide one under 'processor:' in your YAML.")
+        logger.error(
+            "'processor' was not bound — provide one under 'processor:' in your YAML."
+        )
         return
     from confluid import flow
     from confluid.fluid import Fluid
