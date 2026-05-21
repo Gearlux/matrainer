@@ -12,7 +12,11 @@ from pathlib import Path
 from typing import Any, List
 from unittest.mock import MagicMock
 
-from marainer.trainer import _resolve_checkpoint_dir, _resolve_label_names, _write_class_names
+from marainer.trainer import (
+    _resolve_checkpoint_dir,
+    _resolve_label_names,
+    _write_class_names,
+)
 
 
 class _DatasetWithLabels:
@@ -81,7 +85,9 @@ def test_write_class_names_writes_to_checkpoint_dir(tmp_path: Path) -> None:
     assert payload == {"class_names": ["alpha", "beta", "gamma"], "num_classes": 3}
 
 
-def test_write_class_names_uses_default_root_dir_when_no_callback(tmp_path: Path) -> None:
+def test_write_class_names_uses_default_root_dir_when_no_callback(
+    tmp_path: Path,
+) -> None:
     lt = MagicMock()
     lt.checkpoint_callback = None
     lt.default_root_dir = str(tmp_path)

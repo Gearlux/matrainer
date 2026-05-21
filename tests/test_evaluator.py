@@ -16,16 +16,19 @@ import pytest  # noqa: E402
 import pytorch_lightning as L  # noqa: E402
 import torch  # noqa: E402
 import torch.nn as nn  # noqa: E402
-from confluid import Class  # noqa: E402
-from dataflux.core import Flux  # noqa: E402
-from dataflux.sample import Sample  # noqa: E402
 from torch import Tensor  # noqa: E402
 from torch.utils.data import DataLoader  # noqa: E402
 from torchmetrics import MetricCollection  # noqa: E402
-from torchmetrics.classification import MulticlassAccuracy, MulticlassConfusionMatrix  # noqa: E402
+from torchmetrics.classification import (
+    MulticlassAccuracy,  # noqa: E402
+    MulticlassConfusionMatrix,
+)
 
-from marainer.evaluator import (  # noqa: E402
-    LightningEvaluator,
+from confluid import Class  # noqa: E402
+from dataflux.core import Flux  # noqa: E402
+from dataflux.sample import Sample  # noqa: E402
+from marainer.evaluator import (
+    LightningEvaluator,  # noqa: E402
     _coerce_metric_value,
     _ensure_class_names,
     _is_square_2d_tensor,
@@ -59,7 +62,10 @@ class _ClassificationModel(nn.Module):
 
 def test_evaluator_runs_on_classification_task(tmp_path: Any) -> None:
     model = _ClassificationModel()
-    samples = [Sample(input=torch.randn(4), target=i % 3, metadata={"idx": i}) for i in range(8)]
+    samples = [
+        Sample(input=torch.randn(4), target=i % 3, metadata={"idx": i})
+        for i in range(8)
+    ]
     flux = Flux(source=samples)
 
     metrics = MetricCollection({"acc": MulticlassAccuracy(num_classes=3)})
@@ -91,7 +97,10 @@ def test_evaluator_runs_on_classification_task(tmp_path: Any) -> None:
 def test_evaluator_writes_metrics_sidecar_when_path_set(tmp_path: Any) -> None:
     """When ``metrics_sidecar_path`` is set, the final compute() dict is JSON-dumped."""
     model = _ClassificationModel()
-    samples = [Sample(input=torch.randn(4), target=i % 3, metadata={"idx": i}) for i in range(8)]
+    samples = [
+        Sample(input=torch.randn(4), target=i % 3, metadata={"idx": i})
+        for i in range(8)
+    ]
     flux = Flux(source=samples)
     metrics = MetricCollection({"acc": MulticlassAccuracy(num_classes=3)})
     sidecar = tmp_path / "eval_metrics.json"
@@ -130,7 +139,10 @@ def test_evaluator_writes_metrics_sidecar_when_path_set(tmp_path: Any) -> None:
 def test_evaluator_skips_sidecar_when_path_none(tmp_path: Any) -> None:
     """No sidecar path → no file written, even when metrics is set."""
     model = _ClassificationModel()
-    samples = [Sample(input=torch.randn(4), target=i % 3, metadata={"idx": i}) for i in range(4)]
+    samples = [
+        Sample(input=torch.randn(4), target=i % 3, metadata={"idx": i})
+        for i in range(4)
+    ]
     flux = Flux(source=samples)
     metrics = MetricCollection({"acc": MulticlassAccuracy(num_classes=3)})
 
@@ -160,7 +172,10 @@ def test_evaluator_skips_sidecar_when_path_none(tmp_path: Any) -> None:
 def test_evaluator_skips_sidecar_when_no_metrics(tmp_path: Any) -> None:
     """metrics=None → sidecar path is honored only when there's something to write."""
     model = _ClassificationModel()
-    samples = [Sample(input=torch.randn(4), target=i % 3, metadata={"idx": i}) for i in range(4)]
+    samples = [
+        Sample(input=torch.randn(4), target=i % 3, metadata={"idx": i})
+        for i in range(4)
+    ]
     flux = Flux(source=samples)
     sidecar = tmp_path / "eval_metrics.json"
 
@@ -198,8 +213,13 @@ def test_coerce_metric_value_handles_vector_tensor() -> None:
 
 
 def test_coerce_metric_value_recurses_into_dict_and_list() -> None:
-    out = _coerce_metric_value({"map": torch.tensor(0.5), "per_class": [torch.tensor(0.1), torch.tensor(0.2)]})
-    assert out == {"map": pytest.approx(0.5), "per_class": [pytest.approx(0.1), pytest.approx(0.2)]}
+    out = _coerce_metric_value(
+        {"map": torch.tensor(0.5), "per_class": [torch.tensor(0.1), torch.tensor(0.2)]}
+    )
+    assert out == {
+        "map": pytest.approx(0.5),
+        "per_class": [pytest.approx(0.1), pytest.approx(0.2)],
+    }
 
 
 def test_coerce_metric_value_passthrough_for_native_scalars() -> None:
@@ -280,7 +300,9 @@ def test_log_figure_to_loggers_forwards_to_mlflow_style() -> None:
     fig = matplotlib.figure.Figure()
     _log_figure_to_loggers(lt, "test/cm", fig)
 
-    mlflow_logger.experiment.log_figure.assert_called_once_with("run-xyz", fig, "test_cm.png")
+    mlflow_logger.experiment.log_figure.assert_called_once_with(
+        "run-xyz", fig, "test_cm.png"
+    )
 
 
 def test_log_figure_to_loggers_handles_no_trainer() -> None:
@@ -297,7 +319,10 @@ def test_evaluator_logs_confusion_matrix_text_table(tmp_path: Any) -> None:
     sink_id = _loguru_logger.add(lambda m: captured.append(str(m)), level="INFO")
     try:
         model = _ClassificationModel()
-        samples = [Sample(input=torch.randn(4), target=i % 3, metadata={"idx": i}) for i in range(12)]
+        samples = [
+            Sample(input=torch.randn(4), target=i % 3, metadata={"idx": i})
+            for i in range(12)
+        ]
         flux = Flux(source=samples)
         metrics = MetricCollection(
             {
@@ -336,7 +361,10 @@ def test_evaluator_resolves_class_names_from_dataset(tmp_path: Any) -> None:
     class _Labeled(Flux):
         label_names = ("a", "b", "c")
 
-    samples = [Sample(input=torch.randn(4), target=i % 3, metadata={"idx": i}) for i in range(6)]
+    samples = [
+        Sample(input=torch.randn(4), target=i % 3, metadata={"idx": i})
+        for i in range(6)
+    ]
     flux = _Labeled(source=samples)
 
     evaluator = LightningEvaluator(
@@ -363,7 +391,10 @@ def test_evaluator_resolves_class_names_from_json_file(tmp_path: Any) -> None:
     names_path = tmp_path / "class_names.json"
     names_path.write_text(json.dumps({"class_names": ["x", "y", "z"]}))
 
-    samples = [Sample(input=torch.randn(4), target=i % 3, metadata={"idx": i}) for i in range(6)]
+    samples = [
+        Sample(input=torch.randn(4), target=i % 3, metadata={"idx": i})
+        for i in range(6)
+    ]
     evaluator = LightningEvaluator(
         model=_ClassificationModel(),
         dataset=Flux(source=samples),
@@ -388,14 +419,19 @@ def test_evaluator_resolves_class_names_next_to_checkpoint(tmp_path: Any) -> Non
     for ``class_names.json`` next to ``model.checkpoint_path``."""
     ckpt = tmp_path / "model.ckpt"
     ckpt.write_bytes(b"")
-    (tmp_path / "class_names.json").write_text(json.dumps({"class_names": ["p", "q", "r"]}))
+    (tmp_path / "class_names.json").write_text(
+        json.dumps({"class_names": ["p", "q", "r"]})
+    )
 
     model = _ClassificationModel()
     # Monkey-patch a checkpoint_path attribute the way the real model classes
     # (e.g. raidar.yolo26.YOLO26Model) expose it for self-loading.
     setattr(model, "checkpoint_path", str(ckpt))
 
-    samples = [Sample(input=torch.randn(4), target=i % 3, metadata={"idx": i}) for i in range(3)]
+    samples = [
+        Sample(input=torch.randn(4), target=i % 3, metadata={"idx": i})
+        for i in range(3)
+    ]
     evaluator = LightningEvaluator(
         model=model,
         dataset=Flux(source=samples),
@@ -416,7 +452,10 @@ def test_evaluator_resolves_class_names_next_to_checkpoint(tmp_path: Any) -> Non
 
 def test_evaluator_falls_back_to_integer_indices(tmp_path: Any) -> None:
     """Every resolution source missing → render uses ``["0", "1", ...]``."""
-    samples = [Sample(input=torch.randn(4), target=i % 3, metadata={"idx": i}) for i in range(3)]
+    samples = [
+        Sample(input=torch.randn(4), target=i % 3, metadata={"idx": i})
+        for i in range(3)
+    ]
     evaluator = LightningEvaluator(
         model=_ClassificationModel(),
         dataset=Flux(source=samples),
@@ -432,7 +471,9 @@ def test_evaluator_falls_back_to_integer_indices(tmp_path: Any) -> None:
         ),
     )
     evaluator.run()
-    assert evaluator._resolved_class_names is None  # no source → render falls back at table time
+    assert (
+        evaluator._resolved_class_names is None
+    )  # no source → render falls back at table time
 
 
 def test_evaluator_render_pass_skips_non_square_metrics(tmp_path: Any) -> None:
@@ -442,7 +483,10 @@ def test_evaluator_render_pass_skips_non_square_metrics(tmp_path: Any) -> None:
     captured: List[str] = []
     sink_id = _loguru_logger.add(lambda m: captured.append(str(m)), level="INFO")
     try:
-        samples = [Sample(input=torch.randn(4), target=i % 3, metadata={"idx": i}) for i in range(3)]
+        samples = [
+            Sample(input=torch.randn(4), target=i % 3, metadata={"idx": i})
+            for i in range(3)
+        ]
         evaluator = LightningEvaluator(
             model=_ClassificationModel(),
             dataset=Flux(source=samples),
@@ -463,11 +507,16 @@ def test_evaluator_render_pass_skips_non_square_metrics(tmp_path: Any) -> None:
     assert "pred:" not in "".join(captured)
 
 
-def test_evaluator_sidecar_unchanged_when_confusion_matrix_present(tmp_path: Any) -> None:
+def test_evaluator_sidecar_unchanged_when_confusion_matrix_present(
+    tmp_path: Any,
+) -> None:
     """The JSON sidecar still receives the 2D-list payload for backwards
     compatibility with downstream tooling (``read_run_metrics``)."""
     sidecar = tmp_path / "eval_metrics.json"
-    samples = [Sample(input=torch.randn(4), target=i % 3, metadata={"idx": i}) for i in range(6)]
+    samples = [
+        Sample(input=torch.randn(4), target=i % 3, metadata={"idx": i})
+        for i in range(6)
+    ]
     evaluator = LightningEvaluator(
         model=_ClassificationModel(),
         dataset=Flux(source=samples),
