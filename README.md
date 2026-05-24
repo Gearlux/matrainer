@@ -455,20 +455,25 @@ test_set: !class:dataflux.core.Flux()
 
 ## Logging
 
-Marainer supports multiple logging backends via PyTorch Lightning's logger system. Configure any combination of TensorBoard, CSV, and MLflow loggers in YAML:
+Marainer supports multiple logging backends via PyTorch Lightning's logger system. Configure any combination of TensorBoard, CSV, and MLflow loggers under the `lightning:` block:
 
 ```yaml
-loggers:
-  - !class:pytorch_lightning.loggers.TensorBoardLogger()
-      save_dir: "."
-      name: "tb_logs"
-  - !class:pytorch_lightning.loggers.CSVLogger()
-      save_dir: "."
-      name: "csv_logs"
-  - !class:pytorch_lightning.loggers.MLFlowLogger()
-      experiment_name: !ref:experiment_name
-      run_name: !ref:run_name
+lightning: !class:pytorch_lightning.Trainer
+  max_epochs: 10
+  accelerator: auto
+  logger:
+    - !class:pytorch_lightning.loggers.TensorBoardLogger()
+        save_dir: "."
+        name: "tb_logs"
+    - !class:pytorch_lightning.loggers.CSVLogger()
+        save_dir: "."
+        name: "csv_logs"
+    - !class:pytorch_lightning.loggers.MLFlowLogger()
+        experiment_name: !ref:experiment_name
+        run_name: !ref:run_name
 ```
+
+> **Important:** `logger:` lives **inside** the `lightning:` block — this is the single kwarg that PyTorch Lightning's `Trainer(logger=…)` constructor consumes. A top-level `loggers:` key on the marainer trainer is a no-op (no such kwarg exists; Lightning silently falls back to its default `./lightning_logs/`). The contract is pinned by `tests/test_loggers.py::TestYamlLoggers::test_yaml_loggers_reach_lightning_trainer`.
 
 All configured loggers automatically receive:
 
@@ -477,15 +482,17 @@ All configured loggers automatically receive:
 - **Config script** -- Path to the YAML config file used
 - **Metrics** -- Loss and all configured torchmetrics logged per epoch via `self.log()`
 
-When `loggers` is omitted, Lightning uses its default logger (CSVLogger).
+When `logger:` is omitted, Lightning uses its default logger (TensorBoardLogger writing to `./lightning_logs/version_N/`).
 
 ### TensorBoard
 
 ```yaml
-loggers:
-  - !class:pytorch_lightning.loggers.TensorBoardLogger()
-      save_dir: "."
-      name: "tb_logs"
+lightning: !class:pytorch_lightning.Trainer
+  max_epochs: 10
+  logger:
+    - !class:pytorch_lightning.loggers.TensorBoardLogger()
+        save_dir: "."
+        name: "tb_logs"
 ```
 
 View results: `tensorboard --logdir tb_logs`
@@ -493,13 +500,15 @@ View results: `tensorboard --logdir tb_logs`
 ### CSV
 
 ```yaml
-loggers:
-  - !class:pytorch_lightning.loggers.CSVLogger()
-      save_dir: "."
-      name: "csv_logs"
+lightning: !class:pytorch_lightning.Trainer
+  max_epochs: 10
+  logger:
+    - !class:pytorch_lightning.loggers.CSVLogger()
+        save_dir: "."
+        name: "csv_logs"
 ```
 
-Metrics are written to `csv_logs/version_N/metrics.csv`, hyperparameters to `hparams.yaml`.
+Metrics are written to `csv_logs/<name>/version_N/metrics.csv`, hyperparameters to `hparams.yaml`.
 
 ### MLflow
 
@@ -507,10 +516,12 @@ Metrics are written to `csv_logs/version_N/metrics.csv`, hyperparameters to `hpa
 experiment_name: mnist_experiment
 run_name: baseline_v2
 
-loggers:
-  - !class:pytorch_lightning.loggers.MLFlowLogger()
-      experiment_name: !ref:experiment_name
-      run_name: !ref:run_name
+lightning: !class:pytorch_lightning.Trainer
+  max_epochs: 10
+  logger:
+    - !class:pytorch_lightning.loggers.MLFlowLogger()
+        experiment_name: !ref:experiment_name
+        run_name: !ref:run_name
 ```
 
 Use `!ref:` to reuse root-level `experiment_name` and `run_name` values. View results: `mlflow ui`
