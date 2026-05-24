@@ -95,10 +95,12 @@ class LightningTrainer(L.LightningModule):
         train_loader: DataLoader config for training data.
         val_loader: DataLoader config for validation data.
         test_loader: DataLoader config for test data.
-        lightning: PyTorch Lightning Trainer config.
+        lightning: PyTorch Lightning Trainer config. Lightning loggers
+            (TensorBoard / CSV / MLflow) belong under ``lightning.logger:``
+            in YAML — that's the kwarg Lightning's own ``Trainer.__init__``
+            picks up. There is NO top-level ``loggers:`` argument here.
         experiment_name: MLflow experiment name.
         run_name: MLflow run name.
-        loggers: List of Lightning loggers (deferred via Confluid).
 
     Post-construction attributes (set via ``@configurable``):
         train_metrics: Train ``MetricCollection`` (from YAML).
