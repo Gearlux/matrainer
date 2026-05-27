@@ -36,6 +36,9 @@ torpaido = [
 [project.scripts]
 marainer = "marainer.cli:main"
 
+[project.entry-points."confluid.configurables"]
+marainer = "marainer"
+
 [tool.setuptools.packages.find]
 where = ["."]
 include = ["marainer*"]
