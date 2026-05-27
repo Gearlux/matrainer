@@ -2,7 +2,7 @@
 
 Sibling to :class:`~marainer.trainer.LightningTrainer`. The LightningEvaluator streams a dataset
 through a model (already weight-loaded by the model itself — see e.g.
-:class:`raidar.yolo26.YOLO26Model`'s ``checkpoint_path`` argument),
+:class:`raidar_ultralytics.yolo26.YOLO26Model`'s ``checkpoint_path`` argument),
 accumulates metrics that understand the model's prediction contract (see
 :mod:`marainer.outputs`), and optionally forwards each prediction to a sink
 for persistence.
@@ -146,7 +146,7 @@ class LightningEvaluator(L.LightningModule):
     """Run a model over a dataset, update metrics, and optionally persist predictions.
 
     Checkpoint loading is the model's responsibility — pass ``checkpoint_path``
-    to your model class (e.g. :class:`raidar.yolo26.YOLO26Model`) instead of
+    to your model class (e.g. :class:`raidar_ultralytics.yolo26.YOLO26Model`) instead of
     to the Evaluator.
 
     Args:

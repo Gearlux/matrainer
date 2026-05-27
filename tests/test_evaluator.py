@@ -395,7 +395,7 @@ def test_evaluator_resolves_class_names_next_to_checkpoint(tmp_path: Any) -> Non
 
     model = _ClassificationModel()
     # Monkey-patch a checkpoint_path attribute the way the real model classes
-    # (e.g. raidar.yolo26.YOLO26Model) expose it for self-loading.
+    # (e.g. raidar_ultralytics.yolo26.YOLO26Model) expose it for self-loading.
     setattr(model, "checkpoint_path", str(ckpt))
 
     samples = [Sample(input=torch.randn(4), target=i % 3, metadata={"idx": i}) for i in range(3)]
