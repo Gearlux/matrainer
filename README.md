@@ -480,9 +480,43 @@ All configured loggers automatically receive:
 - **Hyperparameters** -- All configurable parameters from the YAML config
 - **Git hash** -- Current commit hash for reproducibility
 - **Config script** -- Path to the YAML config file used
+- **YAML config files** -- The full include tree (main YAML + every transitively `include:`-d file) is copied/uploaded as `config/<name>.yaml` to every logger so a run is reproducible from its artifacts alone
 - **Metrics** -- Loss and all configured torchmetrics logged per epoch via `self.log()`
 
 When `logger:` is omitted, Lightning uses its default logger (TensorBoardLogger writing to `./lightning_logs/version_N/`).
+
+### Default checkpointing
+
+Marainer auto-injects a `ModelCheckpoint` callback before training starts (so a fresh YAML always produces something to load from):
+
+- `save_last=True` → writes `last.ckpt` after every epoch
+- `save_top_k=1` → keeps the single best checkpoint by the first val metric
+- `monitor` / `mode` resolved in this order:
+    1. First key in `val_metrics.metrics` (its `higher_is_better` attribute decides `mode`)
+    2. `val/loss` (`mode=min`) when no val metrics are wired but a `val_set` is present
+    3. `train/loss` (`mode=min`) when no `val_set` is wired
+
+To opt out, supply your own `ModelCheckpoint` (any `monitor`) under `lightning.callbacks` or set `enable_checkpointing: false` on the Lightning trainer. Either choice is respected; no second callback is added.
+
+### Per-logger archive policy (`log_all_checkpoints`)
+
+Each Lightning logger can independently opt into archiving every checkpoint by using the matching subclass from `marainer.loggers`:
+
+```yaml
+lightning: !class:pytorch_lightning.Trainer
+  max_epochs: 10
+  logger:
+    - !class:marainer.loggers.MarainerMLFlowLogger
+        tracking_uri: file:./mlruns
+        experiment_name: !ref:experiment_name
+        log_all_checkpoints: true     # MLflow stores every epoch's checkpoint
+    - !class:marainer.loggers.MarainerTensorBoardLogger
+        save_dir: "."
+        name: "tb_logs"
+        # log_all_checkpoints omitted → defaults to false (last + best only)
+```
+
+When **any** wired logger has `log_all_checkpoints: true`, marainer escalates the auto-injected `ModelCheckpoint` to `save_top_k=-1` so every checkpoint is persisted to disk. For MLflow specifically, the flag also propagates into Lightning's own `log_model="all"` so checkpoints are uploaded as MLflow model artifacts. Sticking with `!class:pytorch_lightning.loggers.TensorBoardLogger` (no flag) still works — the trainer treats it as `log_all_checkpoints=False`.
 
 ### TensorBoard
 
@@ -525,6 +559,90 @@ lightning: !class:pytorch_lightning.Trainer
 ```
 
 Use `!ref:` to reuse root-level `experiment_name` and `run_name` values. View results: `mlflow ui`
+
+### System metrics
+
+When an `MLFlowLogger` is wired, `LightningTrainer.run()` automatically
+attaches an MLflow `SystemMetricsMonitor` to the Lightning logger's run
+via a callback (`MlflowSystemMetricsCallback`). Without this, the global
+`mlflow.system_metrics.enable_system_metrics_logging()` flag is silently
+ineffective for Lightning runs — `pytorch_lightning.loggers.MLFlowLogger`
+uses `MlflowClient.create_run()` directly and bypasses the fluent
+`mlflow.start_run()` hook the global flag relies on.
+
+The monitor records CPU / RAM / disk usage via `psutil` at the configured
+sampling interval (default 10 s). NVIDIA GPU metrics are picked up
+automatically when `pynvml` is installed.
+
+On Apple-Silicon hosts the trainer additionally attaches an
+`MPSMetricsCallback` that runs a background daemon thread between
+`on_fit_start` and `on_fit_end` (and the matching `test_*` hooks),
+sampling MPS GPU stats every `sample_interval_s` seconds and pushing
+them straight to MLflow via `MlflowClient.log_metric`. The cadence is
+decoupled from training-step pacing so it matches MLflow's built-in
+CPU / RAM / disk monitor.
+
+Three per-process scalars come from `torch.mps`:
+
+- `system/mps_allocated_mb` — current process allocation
+- `system/mps_driver_mb` — driver-side allocation (includes caches)
+- `system/mps_recommended_max_mb` — Apple's soft cap
+
+The other six come from an inline IOKit reader
+(`marainer.system_metrics._read_mps_performance_statistics`) which
+queries the `IOAccelerator` service's `PerformanceStatistics` dict
+via `pyobjc` — the same no-sudo, private-API source used by the
+`stats` macOS menu-bar app and `macmon`:
+
+- `system/mps_device_util_pct` — overall GPU busy %
+- `system/mps_renderer_util_pct` — render-stage busy %
+- `system/mps_tiler_util_pct` — tile-binning-stage busy %
+- `system/mps_in_use_system_memory_mb` — system-level GPU memory in use
+- `system/mps_in_use_system_memory_driver_mb` — driver-side share of the above
+- `system/mps_alloc_system_memory_mb` — total system memory reserved by the GPU driver
+
+**Sampling cadence:** default 10 s. Override workspace-wide via
+`MLFLOW_SYSTEM_METRICS_SAMPLING_INTERVAL` (same env var MLflow's
+built-in monitor honours — so all system metrics tick at the same
+rate) or per-run by instantiating the callback directly with
+`sample_interval_s=...`. `pyobjc-core` + `pyobjc-framework-Cocoa` are
+declared under `sys_platform == "darwin"` so Linux / CUDA environments
+skip the IOKit reader cleanly. If Apple renames keys across macOS
+releases (it has happened — see
+[exelban/stats#2130](https://github.com/exelban/stats/issues/2130))
+any missing key is skipped silently rather than failing the sample.
+
+**Thread lifecycle:** the sampler runs in a **non-daemon** thread and
+also registers an `atexit` hook to signal stop. Together these prevent
+the thread from accessing `torch.mps` / IOKit / `MlflowClient` C state
+during interpreter teardown, which would segfault on macOS.
+
+The same behaviour applies to subclasses (`LightningClassificationTrainer`,
+`LightningSegmentationTrainer`, `LightningDetectionTrainer`).
+`raidar_ultralytics.UltralyticsTrainer` / `UltralyticsEvaluator` use the
+global `enable_system_metrics_logging()` path (ultralytics' MLflow
+integration calls `mlflow.start_run()` so the flag is sufficient there)
+and don't get the per-epoch MPS callback.
+
+Opt-out per trainer:
+
+```yaml
+trainer: !class:marainer.trainer.LightningTrainer
+  log_system_metrics: false   # disable for this run
+  ...
+```
+
+Workspace-wide tuning via `.env`:
+
+```bash
+# Sampling interval in seconds (default: 10)
+MLFLOW_SYSTEM_METRICS_SAMPLING_INTERVAL=30
+# Disable from the environment (overrides the trainer's default-on behaviour)
+MLFLOW_ENABLE_SYSTEM_METRICS_LOGGING=false
+```
+
+NVIDIA GPU metrics are picked up automatically when `pynvml` is installed
+(not a marainer dep — install in the consuming project if you need it).
 
 ---
 

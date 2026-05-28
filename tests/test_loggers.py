@@ -43,6 +43,79 @@ class TestLogHyperparams:
         mock_logger1.log_hyperparams.assert_called_once()
         mock_logger2.log_hyperparams.assert_called_once()
 
+    def test_log_system_metrics_default_true(self) -> None:
+        """The opt-in flag is on by default for every Lightning trainer."""
+        trainer = LightningTrainer(model=TinyModel(), train_set=_make_samples(16))
+        assert trainer.log_system_metrics is True
+
+    def test_log_system_metrics_opt_out_skips_activate(self, tmp_path: object) -> None:
+        """``log_system_metrics=False`` short-circuits the activation in ``run()``."""
+        trainer = LightningTrainer(
+            model=TinyModel(),
+            train_set=_make_samples(16),
+            val_set=_make_samples(4),
+            train_loader=Class(torch.utils.data.DataLoader, batch_size=4),
+            val_loader=Class(torch.utils.data.DataLoader, batch_size=4),
+            lightning=Class(
+                L.Trainer,
+                max_epochs=1,
+                limit_train_batches=1,
+                limit_val_batches=1,
+                enable_checkpointing=False,
+                logger=False,
+                enable_progress_bar=False,
+                enable_model_summary=False,
+                accelerator="cpu",
+                default_root_dir=str(tmp_path),
+            ),
+            log_system_metrics=False,
+        )
+        with patch("marainer.system_metrics.activate_for_lightning") as activate_mock:
+            trainer.run()
+        activate_mock.assert_not_called()
+
+    def test_lightning_module_class_constants_dont_leak(self) -> None:
+        """Inherited ``pytorch_lightning.LightningModule`` / ``torch.nn.Module`` attributes
+        must not surface as user hyperparameters. The discovery walker filters out class
+        annotations (``training: bool``), class constants (``CHECKPOINT_HYPER_PARAMS_KEY``),
+        and ``__init__``-body setattrs (``self.prepare_data_per_node: bool = True``)
+        contributed by non-``@configurable`` ancestors. Paths are also rewritten to their
+        shortest unique suffix so the noisy ``LightningTrainer.`` prefix is dropped."""
+        mock_logger = MagicMock()
+        mock_trainer = MagicMock(spec=L.Trainer)
+        mock_trainer.loggers = [mock_logger]
+
+        trainer = LightningTrainer(
+            model=TinyModel(),
+            train_set=_make_samples(16),
+            experiment_name="test_exp",
+            run_name="test_run",
+        )
+        trainer._marainer_log_hyperparams(mock_trainer)
+
+        ((logged_params,), _) = mock_logger.log_hyperparams.call_args
+        keys = set(logged_params.keys())
+
+        # PyTorch Lightning / nn.Module noise must be absent.
+        leaky_names = {
+            "CHECKPOINT_HYPER_PARAMS_KEY",
+            "CHECKPOINT_HYPER_PARAMS_NAME",
+            "CHECKPOINT_HYPER_PARAMS_TYPE",
+            "training",
+            "dump_patches",
+            "prepare_data_per_node",
+            "allow_zero_length_dataloader_with_multiple_devices",
+            "automatic_optimization",
+        }
+        assert not (keys & leaky_names), f"leaked Lightning/torch attrs: {keys & leaky_names}"
+
+        # User hyperparameters must be present, with the root-class prefix dropped.
+        assert "experiment_name" in keys
+        assert "run_name" in keys
+        assert logged_params["experiment_name"] == "test_exp"
+        assert logged_params["run_name"] == "test_run"
+        assert not any(k.startswith("LightningTrainer.") for k in keys)
+
 
 class TestYamlLoggers:
     def test_yaml_loggers_reach_lightning_trainer(self, tmp_path: object) -> None:
