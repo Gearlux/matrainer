@@ -16,7 +16,16 @@ dependencies = [
     "tensorboard",
     "torchmetrics",
     "tabulate",
-    "matplotlib"
+    "matplotlib",
+    "psutil",
+    # pyobjc subset for the inline IOAccelerator reader (Apple-Silicon GPU
+    # utilisation, no sudo) in marainer.system_metrics. The full ``pyobjc``
+    # meta-package pulls in 100+ frameworks; these two are the minimum
+    # surface our reader uses. ``pyobjc-framework-Cocoa`` ships both the
+    # Foundation module (for ``NSBundle.bundleWithIdentifier_``) and the
+    # CoreFoundation module (for ``CFRelease`` on the props dict).
+    "pyobjc-core; sys_platform == 'darwin'",
+    "pyobjc-framework-Cocoa; sys_platform == 'darwin'",
 ]
 requires-python = ">=3.12"
 

@@ -386,6 +386,9 @@ class LightningEvaluator(L.LightningModule):
         self._resolved_class_names = self._resolve_class_names(dataset)
         loader = flow(self.loader, dataset=dataset)
         lightning_trainer = flow(self.lightning)
+        from marainer.trainer import log_config_artifacts
+
+        log_config_artifacts(lightning_trainer)
         lightning_trainer.test(model=self, dataloaders=loader)
         if self._predictions_sink is not None and hasattr(self._predictions_sink, "close"):
             self._predictions_sink.close()
