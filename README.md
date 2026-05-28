@@ -629,7 +629,7 @@ Opt-out per trainer:
 ```yaml
 trainer: !class:marainer.trainer.LightningTrainer
   log_system_metrics: false   # disable for this run
-  ...
+  # ... (other trainer settings unchanged)
 ```
 
 Workspace-wide tuning via `.env`:
