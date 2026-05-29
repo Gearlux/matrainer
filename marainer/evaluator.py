@@ -48,6 +48,8 @@ from torch import Tensor
 from torch.utils.data import DataLoader
 from torchmetrics import Metric, MetricCollection
 
+from marainer.dimensions import collect_derived_dimensions, flow_node_with_dims, needs_derivation
+
 logger = get_logger(__name__)
 
 
@@ -376,13 +378,22 @@ class LightningEvaluator(L.LightningModule):
         ``checkpoint_path`` to the model class, not to this Evaluator.
         """
         logger.info(f"Marainer evaluating: {self.experiment_name} ({self.run_name})")
-        self.model = flow(self.model)
+
+        # Materialize the dataset first so model / metrics can be lazily flowed
+        # with dataset-derived dimensions (e.g. num_classes) when a config omits
+        # them — the same generic mechanism the trainer uses. Walked only when a
+        # node is deferred-lazy, so the explicit path is unaffected.
+        dataset = flow(self.dataset)
+        dims = collect_derived_dimensions([dataset]) if needs_derivation([self.model, self.metrics]) else {}
+        if dims:
+            logger.info(f"Derived model dimensions from dataset: {dims}")
+
+        self.model = flow_node_with_dims(self.model, dims)
         if self.metrics is not None:
-            self.metrics = flow(self.metrics)
+            self.metrics = flow_node_with_dims(self.metrics, dims)
         if self._predictions_sink is not None:
             self._predictions_sink = flow(self._predictions_sink)
 
-        dataset = flow(self.dataset)
         self._resolved_class_names = self._resolve_class_names(dataset)
         loader = flow(self.loader, dataset=dataset)
         lightning_trainer = flow(self.lightning)
