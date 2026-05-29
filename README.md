@@ -165,6 +165,33 @@ marainer train <config.yaml>
 | `num_workers` | `int` | -- | Broadcast to DataLoaders |
 | `max_epochs` | `int` | -- | Broadcast to Lightning Trainer |
 
+### Dataset-derived model dimensions (`!lazy:`)
+
+The trainer is task-agnostic but supports deriving model dimensions from the
+dataset at run time. Declare the `model` (and/or metrics) as `!lazy:` and omit a
+dimension the dataset can supply; `LightningTrainer.run()` flows the dataset
+first, reads its `derived_dimensions() -> dict` hook (a duck-typed protocol — a
+classification dataset returns `{"num_classes": N}` by walking its targets), and
+injects only the **unset** keys when it constructs those deferred nodes:
+
+```yaml
+model: !lazy:sonair.timm_classifier.TimmClassifierModel   # num_classes omitted
+  model_name: efficientvit_b0
+val_metrics: !lazy:torchmetrics.MetricCollection
+  metrics:
+    top1: !class:torchmetrics.classification.MulticlassAccuracy { top_k: 1 }
+train_set: !class:sonair.hf_dataset.HuggingFaceClassificationDataset  # provides derived_dimensions()
+  repo_id: ylecun/mnist
+  split: train
+```
+
+marainer never names a specific dimension (no hardcoded `num_classes`) — keys
+come entirely from the dataset, and an explicitly-set value always wins over a
+derived one. Datasets that don't implement `derived_dimensions()` (e.g.
+detection/segmentation today) are untouched. This is the optimizer pattern
+(`flow(self.optimizer, params=self.parameters())`) generalised; see
+`marainer.dimensions`.
+
 ### Configurable Loss Function
 
 The loss function defaults to `nn.CrossEntropyLoss()` but can be overridden in YAML via Confluid's post-construction attribute setting:

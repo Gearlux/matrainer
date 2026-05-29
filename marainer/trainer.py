@@ -12,6 +12,8 @@ from pytorch_lightning.callbacks import ModelCheckpoint
 from torch.utils.data import DataLoader
 from torchmetrics import MetricCollection
 
+from marainer.dimensions import collect_derived_dimensions, flow_node_with_dims, needs_derivation
+
 logger = get_logger(__name__)
 
 
@@ -449,16 +451,40 @@ class LightningTrainer(L.LightningModule):
         """Execute the training loop."""
         logger.info(f"Marainer navigating to: {self.experiment_name} ({self.run_name})")
 
-        self.model = flow(self.model)
-        if self.train_metrics is not None:
-            self.train_metrics = flow(self.train_metrics)
-        if self.val_metrics is not None:
-            self.val_metrics = flow(self.val_metrics)
-        if self.test_metrics is not None:
-            self.test_metrics = flow(self.test_metrics)
+        # Materialize datasets ONCE — reused for dimension derivation, the
+        # DataLoaders, and label-name persistence. (Flowing them here also fixes
+        # an older latent issue where the label-name lookup ran against the
+        # still-deferred Fluid and silently skipped class_names.json.)
+        train_ds = flow(self.train_set)
+        val_ds = flow(self.val_set) if self.val_set is not None else None
+        test_ds = flow(self.test_set) if self.test_set is not None else None
 
-        t_loader = flow(self.train_loader, dataset=flow(self.train_set))
-        v_loader = flow(self.val_loader, dataset=flow(self.val_set)) if self.val_set else None
+        # Generic, task-agnostic dimension injection: a config may declare the
+        # model / metrics as `!lazy:` and omit a dimension (e.g. num_classes);
+        # the dataset derives it (sonair walks its targets) and we inject it when
+        # constructing those deferred nodes. We only walk the dataset(s) when a
+        # node is actually deferred-lazy, so the explicit path pays nothing.
+        dims = (
+            collect_derived_dimensions([train_ds, val_ds, test_ds])
+            if needs_derivation([self.model, self.train_metrics, self.val_metrics, self.test_metrics])
+            else {}
+        )
+        if dims:
+            logger.info(f"Derived model dimensions from dataset(s): {dims}")
+
+        self.model = flow_node_with_dims(self.model, dims)
+        if self.train_metrics is not None:
+            self.train_metrics = flow_node_with_dims(self.train_metrics, dims)
+        if self.val_metrics is not None:
+            self.val_metrics = flow_node_with_dims(self.val_metrics, dims)
+        if self.test_metrics is not None:
+            self.test_metrics = flow_node_with_dims(self.test_metrics, dims)
+        # Materialize the loss if a config supplied it as a deferred Fluid
+        # (the loss is a configurable slot now); idempotent on the live default.
+        self.loss_fn = flow(self.loss_fn)
+
+        t_loader = flow(self.train_loader, dataset=train_ds)
+        v_loader = flow(self.val_loader, dataset=val_ds) if val_ds is not None else None
 
         # Must run before `flow(self.lightning)` so the default callback lands in
         # the L.Trainer's own callbacks list at construction time — otherwise
@@ -476,14 +502,14 @@ class LightningTrainer(L.LightningModule):
         lightning_trainer.fit(model=self, train_dataloaders=t_loader, val_dataloaders=v_loader)
         logger.info("Training complete.")
 
-        label_names = _resolve_label_names(self.train_set)
+        label_names = _resolve_label_names(train_ds)
         if label_names:
             _write_class_names(lightning_trainer, label_names)
         else:
             logger.debug("train_set exposes no label_names; skipping class_names.json")
 
-        if self.test_set is not None:
+        if test_ds is not None:
             logger.info("Evaluating on held-out test set...")
-            test_loader = flow(self.test_loader, dataset=flow(self.test_set))
+            test_loader = flow(self.test_loader, dataset=test_ds)
             lightning_trainer.test(model=self, dataloaders=test_loader)
             logger.info("Test evaluation complete.")
