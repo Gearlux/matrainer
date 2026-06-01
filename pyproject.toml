@@ -18,6 +18,8 @@ dependencies = [
     "tabulate",
     "matplotlib",
     "psutil",
+    # rich powers DatasetProcessor's optional progress bar (marainer.processing).
+    "rich",
     # pyobjc subset for the inline IOAccelerator reader (Apple-Silicon GPU
     # utilisation, no sudo) in marainer.system_metrics. The full ``pyobjc``
     # meta-package pulls in 100+ frameworks; these two are the minimum
@@ -47,6 +49,12 @@ marainer = "marainer.cli:main"
 
 [project.entry-points."confluid.configurables"]
 marainer = "marainer"
+# Exposes ClassificationPredictionsSink (modality-neutral Evaluator predictions
+# sink) to confluid/navigaitor/FluxStudio discovery.
+marainer-sinks = "marainer.sinks"
+# Exposes DatasetProcessor (the generic process/download/convert pipeline runner)
+# to confluid/navigaitor discovery. Moved here from waivefront.processing.
+marainer-processing = "marainer.processing"
 
 [tool.setuptools.packages.find]
 where = ["."]

@@ -1,5 +1,7 @@
 """Tests for marainer.presets — MetricPreset with !ref:obj.method() integration."""
 
+from typing import Iterator
+
 import pytest
 from confluid import get_registry, load
 from confluid.loader import _register_constructors
@@ -7,13 +9,37 @@ from torchmetrics import Metric, MetricCollection
 
 from marainer.presets import MetricPreset
 
+# The global confluid registry is process-wide shared state. Clearing it for
+# this module's discovery tests WITHOUT restoring it afterwards wipes every
+# ``@configurable`` class that other test modules rely on (the symptom was
+# DatasetProcessor / Flux / test-local sources failing to round-trip in any
+# test that happened to run after this one). These are the registry's backing
+# index dicts; snapshot them before clearing and restore on teardown.
+_REGISTRY_INDEXES = ("_classes", "_objects", "_by_category", "_by_group", "_by_task", "_by_role")
+
 
 @pytest.fixture(autouse=True)
-def setup_registry() -> None:
-    get_registry().clear()
+def setup_registry() -> Iterator[None]:
+    reg = get_registry()
+    # Shallow-copy each index dict, and copy mutable values (the category/
+    # group/task/role buckets are lists/sets) one level deep so re-registration
+    # can't mutate the snapshot.
+    snapshot = {
+        name: {k: (v.copy() if hasattr(v, "copy") else v) for k, v in getattr(reg, name).items()}
+        for name in _REGISTRY_INDEXES
+    }
+    reg.clear()
     _register_constructors()
     # Re-import to re-register MetricPreset
     import marainer.presets  # noqa: F401
+
+    try:
+        yield
+    finally:
+        for name, value in snapshot.items():
+            index = getattr(reg, name)
+            index.clear()
+            index.update(value)
 
 
 class TestMetricPresetBasic:
