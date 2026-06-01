@@ -42,14 +42,24 @@ class TinyModel(nn.Module):
 
 
 def _make_trainer(**overrides: Any) -> LightningTrainer:
-    """Build a LightningTrainer with placeholder model/train_set; no Lightning trainer flow."""
-    kwargs: dict[str, Any] = dict(
+    """Build a LightningTrainer, applying overrides as post-construction attributes.
+
+    Mirrors the minimal-ctor pattern: only ``model`` / ``train_set`` /
+    ``experiment_name`` / ``run_name`` are constructor params; every other slot
+    (``lightning``, ``val_set``, ``val_metrics``, ``log_system_metrics``, …) is
+    set on the instance after construction.
+    """
+    settings: dict[str, Any] = dict(
         model=TinyModel(),
         train_set=[],
         lightning=Class(L.Trainer, accelerator="cpu"),
     )
-    kwargs.update(overrides)
-    return LightningTrainer(**kwargs)
+    settings.update(overrides)
+    ctor = {k: settings.pop(k) for k in ("model", "train_set", "experiment_name", "run_name") if k in settings}
+    trainer = LightningTrainer(**ctor)
+    for key, value in settings.items():
+        setattr(trainer, key, value)
+    return trainer
 
 
 # ---------------------------------------------------------------------------
@@ -381,3 +391,36 @@ class TestLogConfigArtifacts:
 
         log_config_artifacts(mock_lightning_trainer)
         mock_logger.experiment.log_artifact.assert_not_called()
+
+
+# ---------------------------------------------------------------------------
+# _marainer_warn_eager_runtime_slots: actionable warning for misconfigured slots
+# ---------------------------------------------------------------------------
+
+
+class TestWarnEagerRuntimeSlots:
+    def test_warns_when_lightning_arrived_materialized(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """A live (eagerly-flowed, e.g. !class:) lightning slot triggers an actionable warning."""
+        import marainer.trainer as trainer_mod
+
+        trainer = _make_trainer()
+        trainer.lightning = L.Trainer(accelerator="cpu")  # already-materialized (the !class: footgun)
+
+        warnings: list[str] = []
+        monkeypatch.setattr(trainer_mod.logger, "warning", lambda msg, *a, **k: warnings.append(str(msg)))
+        trainer._marainer_warn_eager_runtime_slots()
+
+        assert any("lightning" in w and "!lazy:" in w for w in warnings)
+
+    def test_silent_when_slots_stay_deferred(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """Default deferred (LazyClass) slots — no warning."""
+        import marainer.trainer as trainer_mod
+
+        trainer = _make_trainer()
+        trainer.lightning = Class(L.Trainer, accelerator="cpu")  # deferred Fluid — fine
+
+        warnings: list[str] = []
+        monkeypatch.setattr(trainer_mod.logger, "warning", lambda msg, *a, **k: warnings.append(str(msg)))
+        trainer._marainer_warn_eager_runtime_slots()
+
+        assert warnings == []

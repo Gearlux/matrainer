@@ -71,19 +71,21 @@ def flow_node_with_dims(node: Any, dims: Dict[str, Any]) -> Any:
     metrics (which accept it) and is filtered out of the collection's own
     constructor.
 
-    If a lazy node is left with nothing to inject it would stay deferred — that
-    means a lazy slot expected a dimension no wired dataset supplied, so we raise
-    a clear error instead of letting it fail cryptically downstream.
+    If a lazy node is left with nothing to inject, a lazy slot expected a
+    dimension no wired dataset supplied — so we raise a clear error instead of
+    letting it fail cryptically downstream. (A deliberate ``flow(lazy)`` now
+    builds even with no runtime kwargs — see confluid AGENTS.md — so this is
+    detected explicitly: a ``Lazy`` node with an empty inject set, rather than
+    by inspecting whether the flowed result is still deferred.)
     """
     if not isinstance(node, Fluid):
         return flow(node)  # already live — flow() is idempotent
     inject = {k: v for k, v in dims.items() if k not in node.kwargs}
-    result = flow(node, **inject)
-    if isinstance(result, Fluid):
+    if isinstance(node, Lazy) and not inject:
         target = getattr(node, "target", "?")
         raise RuntimeError(
             f"{type(node).__name__}(target={target!r}) is declared lazy but no wired dataset supplied "
             f"a value to construct it (derived dimensions available: {sorted(dims)}). Provide the value "
             "explicitly in the config, or wire a dataset that exposes derived_dimensions()."
         )
-    return result
+    return flow(node, **inject)

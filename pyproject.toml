@@ -55,6 +55,10 @@ marainer-sinks = "marainer.sinks"
 # Exposes DatasetProcessor (the generic process/download/convert pipeline runner)
 # to confluid/navigaitor discovery. Moved here from waivefront.processing.
 marainer-processing = "marainer.processing"
+# Registers select lazy runtime member classes (torch optimizers / DataLoader /
+# pl.Trainer) as confluid configurables so FluxStudio generates OBJECT nodes that
+# yield deferred LazyClass-es for a runnable's deferred slots. Import-only.
+marainer-configurables = "marainer.configurables"
 
 [tool.setuptools.packages.find]
 where = ["."]

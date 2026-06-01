@@ -47,11 +47,8 @@ class TestMapStyleFlux:
         assert loss.dim() == 0
 
     def test_full_epoch(self) -> None:
-        trainer = LightningTrainer(
-            model=TinyModel(),
-            train_set=_make_samples(32),
-            optimizer=Class(torch.optim.SGD, lr=0.01),
-        )
+        trainer = LightningTrainer(model=TinyModel(), train_set=_make_samples(32))
+        trainer.optimizer = Class(torch.optim.SGD, lr=0.01)
         flux = Flux(source=_make_samples(32))
         loader: DataLoader = DataLoader(flux, batch_size=16)
         lt = L.Trainer(

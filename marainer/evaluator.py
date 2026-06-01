@@ -42,7 +42,7 @@ from pathlib import Path
 from typing import Any, Dict, List, Optional, Union
 
 import pytorch_lightning as L
-from confluid import Class, Lazy, configurable, flow
+from confluid import LazyClass, configurable, flow
 from logflow import get_logger
 from torch import Tensor
 from torch.utils.data import DataLoader
@@ -151,14 +151,28 @@ class LightningEvaluator(L.LightningModule):
     to your model class (e.g. :class:`raidar_ultralytics.yolo26.YOLO26Model`) instead of
     to the Evaluator.
 
+    Follows confluid's minimal-ctor / post-construction discipline (see the
+    sibling :class:`~marainer.trainer.LightningTrainer`): the constructor takes
+    only ``model`` / ``dataset`` (+ identity ``experiment_name`` / ``run_name``)
+    and does no functional work. The deferred ``loader`` / ``lightning`` body
+    slots default to ``LazyClass(...)`` and are flowed by :meth:`run` (the loader
+    with ``dataset=``); ``to_pydantic`` introspects all body slots, so they stay
+    enumerable by navigaitor / MCP / FluxStudio. A deferred slot wired in YAML
+    MUST use ``!lazy:`` (a bare ``!class:`` post-init attr is eagerly flowed on
+    assignment).
+
     Args:
         model: The neural network (deferred via Confluid). The model is
             expected to arrive ALREADY weight-loaded — instantiate it with
             its own ``checkpoint_path`` argument if you need to start from
             a saved run.
         dataset: Evaluation dataset or Flux pipeline (deferred).
-        loader: DataLoader config (deferred). Supply a matching
-            ``collate_fn`` for task types that need one (e.g.
+        experiment_name: MLflow experiment name.
+        run_name: MLflow run name.
+
+    Post-construction body-attribute slots (set via YAML / broadcasting):
+        loader: Deferred ``DataLoader`` config. Supply a matching ``collate_fn``
+            for task types that need one (e.g.
             :func:`raidar.detection.detection_collate_fn`).
         metrics: Optional :class:`~torchmetrics.MetricCollection` or adapter
             that understands the model's step output. Logged via Lightning's
@@ -166,12 +180,10 @@ class LightningEvaluator(L.LightningModule):
         predictions_sink: Optional duck-typed sink exposing
             ``.write(prediction, metadata)`` and ``.close()``. Called once
             per sample within each batch with the per-sample prediction and
-            its metadata (if the batch carries a ``per_sample`` metadata
-            list, as the standard Marainer collate does).
-        lightning: PyTorch Lightning Trainer config (deferred). Only ``test``
-            is invoked, so training knobs like ``max_epochs`` are ignored.
-        experiment_name / run_name: Metadata for loggers (MLflow, TB, etc.).
-        loggers: Optional list of Lightning loggers.
+            its metadata (from ``batch.metadata``, which is a list of
+            per-sample dicts when using :func:`~marainer.collate.collate_fn_with_metadata`).
+        lightning: Deferred PyTorch Lightning Trainer. Only ``test`` is invoked,
+            so training knobs like ``max_epochs`` are ignored.
         metrics_sidecar_path: Optional path; when set, ``metrics.compute()``
             is also written there as JSON (logger-agnostic).
         class_names: Optional human-readable class labels for confusion-matrix
@@ -188,26 +200,23 @@ class LightningEvaluator(L.LightningModule):
         self,
         model: Any,
         dataset: Any,
-        loader: Lazy[Any] = Class(DataLoader),
-        metrics: Any = None,
-        predictions_sink: Any = None,
-        lightning: Any = Class(L.Trainer),
         experiment_name: str = "marainer_eval",
         run_name: str = "evaluate",
-        metrics_sidecar_path: Optional[str] = None,
-        class_names: Optional[Union[List[str], str]] = None,
     ) -> None:
         super().__init__()
-        self.model = model
-        self.dataset = dataset
-        self.loader = loader
-        self.metrics: Any = metrics
-        self._predictions_sink = predictions_sink
-        self.lightning = lightning
+        # Store config ONLY — no functional work. Deferred slots (loader / lightning)
+        # are LazyClass; run() flows them. Every slot is configurable post-construction
+        # (YAML / broadcasting); a YAML-wired deferred slot must use !lazy:.
+        self.model: Any = model
+        self.dataset: Any = dataset
+        self.loader: Any = LazyClass(DataLoader)
+        self.metrics: Any = None
+        self.predictions_sink: Any = None
+        self.lightning: Any = LazyClass(L.Trainer)
         self.experiment_name = experiment_name
         self.run_name = run_name
-        self.metrics_sidecar_path: Optional[str] = metrics_sidecar_path
-        self.class_names: Optional[Union[List[str], str]] = class_names
+        self.metrics_sidecar_path: Optional[str] = None
+        self.class_names: Optional[Union[List[str], str]] = None
         self._resolved_class_names: Optional[List[str]] = None
 
     def forward(self, x: Any) -> Any:
@@ -224,7 +233,7 @@ class LightningEvaluator(L.LightningModule):
                 scalars = {k: v for k, v in self.metrics.items() if isinstance(v, Tensor) and v.numel() == 1}
                 if scalars:
                     self.log_dict(scalars, on_step=False, on_epoch=True, batch_size=batch_size)
-        if self._predictions_sink is not None:
+        if self.predictions_sink is not None:
             self._write_predictions(preds, batch)
         return preds
 
@@ -239,7 +248,11 @@ class LightningEvaluator(L.LightningModule):
     def _write_predictions(self, preds: Any, batch: Any) -> None:
         per_sample_meta = None
         meta = getattr(batch, "metadata", None)
-        if isinstance(meta, dict):
+        if isinstance(meta, list):
+            # New style: metadata is a list of per-sample dicts
+            per_sample_meta = meta
+        elif isinstance(meta, dict):
+            # Legacy style: metadata is a dict with "per_sample" key
             per_sample_meta = meta.get("per_sample")
 
         # Detection-style: preds is a dict with "predictions": List[DetectionOutput].
@@ -254,7 +267,7 @@ class LightningEvaluator(L.LightningModule):
         for i in range(n):
             p = items[i]
             m = per_sample_meta[i] if per_sample_meta and i < len(per_sample_meta) else {}
-            self._predictions_sink.write(p, m)
+            self.predictions_sink.write(p, m)
 
     def _resolve_class_names(self, dataset: Any) -> Optional[List[str]]:
         """Locate class names from (in order) the explicit param, the dataset,
@@ -391,8 +404,8 @@ class LightningEvaluator(L.LightningModule):
         self.model = flow_node_with_dims(self.model, dims)
         if self.metrics is not None:
             self.metrics = flow_node_with_dims(self.metrics, dims)
-        if self._predictions_sink is not None:
-            self._predictions_sink = flow(self._predictions_sink)
+        if self.predictions_sink is not None:
+            self.predictions_sink = flow(self.predictions_sink)
 
         self._resolved_class_names = self._resolve_class_names(dataset)
         loader = flow(self.loader, dataset=dataset)
@@ -401,7 +414,7 @@ class LightningEvaluator(L.LightningModule):
 
         log_config_artifacts(lightning_trainer)
         lightning_trainer.test(model=self, dataloaders=loader)
-        if self._predictions_sink is not None and hasattr(self._predictions_sink, "close"):
-            self._predictions_sink.close()
+        if self.predictions_sink is not None and hasattr(self.predictions_sink, "close"):
+            self.predictions_sink.close()
         self._finalize_metrics()
         logger.info("Evaluation complete.")

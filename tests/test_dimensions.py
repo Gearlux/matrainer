@@ -143,20 +143,21 @@ def test_trainer_run_derives_num_classes_for_lazy_model(tmp_path: Any) -> None:
     trainer = LightningTrainer(
         model=Lazy(_Model, input_size=4),  # num_classes omitted -> derived
         train_set=_CountingDataset(16, num_classes=n_classes),
-        optimizer=Class(torch.optim.SGD, lr=0.01),
-        train_loader=Class(DataLoader, batch_size=8),
-        lightning=Class(
-            L.Trainer,
-            max_epochs=1,
-            accelerator="cpu",
-            enable_progress_bar=False,
-            enable_model_summary=False,
-            logger=False,
-            limit_train_batches=1,
-            default_root_dir=str(tmp_path),
-        ),
-        log_system_metrics=False,
     )
+    # Minimal-ctor pattern: configure the deferred slots post-construction.
+    trainer.optimizer = Class(torch.optim.SGD, lr=0.01)
+    trainer.train_loader = Class(DataLoader, batch_size=8)
+    trainer.lightning = Class(
+        L.Trainer,
+        max_epochs=1,
+        accelerator="cpu",
+        enable_progress_bar=False,
+        enable_model_summary=False,
+        logger=False,
+        limit_train_batches=1,
+        default_root_dir=str(tmp_path),
+    )
+    trainer.log_system_metrics = False
     trainer.run()
     assert isinstance(trainer.model, _Model)
     assert trainer.model.fc.out_features == n_classes
@@ -167,19 +168,20 @@ def test_trainer_run_leaves_plain_dataset_untouched(tmp_path: Any) -> None:
     trainer = LightningTrainer(
         model=Class(_Model, input_size=4, num_classes=2),
         train_set=_PlainDataset(16),
-        optimizer=Class(torch.optim.SGD, lr=0.01),
-        train_loader=Class(DataLoader, batch_size=8),
-        lightning=Class(
-            L.Trainer,
-            max_epochs=1,
-            accelerator="cpu",
-            enable_progress_bar=False,
-            enable_model_summary=False,
-            logger=False,
-            limit_train_batches=1,
-            default_root_dir=str(tmp_path),
-        ),
-        log_system_metrics=False,
     )
+    # Minimal-ctor pattern: configure the deferred slots post-construction.
+    trainer.optimizer = Class(torch.optim.SGD, lr=0.01)
+    trainer.train_loader = Class(DataLoader, batch_size=8)
+    trainer.lightning = Class(
+        L.Trainer,
+        max_epochs=1,
+        accelerator="cpu",
+        enable_progress_bar=False,
+        enable_model_summary=False,
+        logger=False,
+        limit_train_batches=1,
+        default_root_dir=str(tmp_path),
+    )
+    trainer.log_system_metrics = False
     trainer.run()
     assert trainer.model.fc.out_features == 2
