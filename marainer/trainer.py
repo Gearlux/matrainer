@@ -6,11 +6,10 @@ from typing import Any, List, Optional, Tuple
 import pytorch_lightning as L
 import torch
 import torch.nn as nn
-from confluid import Class, Instance, Lazy, configurable, flow
+from confluid import Class, Instance, LazyClass, configurable, flow
 from logflow import get_logger
 from pytorch_lightning.callbacks import ModelCheckpoint
 from torch.utils.data import DataLoader
-from torchmetrics import MetricCollection
 
 from marainer.dimensions import collect_derived_dimensions, flow_node_with_dims, needs_derivation
 
@@ -53,8 +52,8 @@ def _resolve_label_names(dataset: Any) -> Optional[List[str]]:
     """Return the dataset's ``label_names`` as a plain list, or None.
 
     Informal protocol: any dataset MAY expose ``label_names: Sequence[str]``.
-    HuggingFaceClassificationDataset in sonair does; bespoke datasets may
-    too. Returns None when the attribute is missing or empty so callers
+    Classification datasets may expose this; bespoke datasets too.
+    Returns None when the attribute is missing or empty so callers
     can skip the class-name plumbing entirely.
     """
     names = getattr(dataset, "label_names", None)
@@ -195,76 +194,84 @@ class LightningTrainer(L.LightningModule):
     ``MetricCollection`` instances are configured directly in YAML using
     ``!clone:`` for independent copies (torchmetrics requires separate state).
 
+    Follows confluid's minimal-ctor / post-construction discipline ("Lazy
+    Initialization & Zero-Arg Construction", rule 4): the constructor takes only
+    ``model`` / ``train_set`` (+ identity ``experiment_name`` / ``run_name``) and
+    does **no functional work**. Every other slot is a defaulted **body
+    attribute** configured post-construction (by YAML, Confluid broadcasting, or
+    a subclass). The deferred slots — ``optimizer`` / ``train_loader`` /
+    ``val_loader`` / ``test_loader`` / ``lightning`` — default to ``LazyClass(...)``
+    and are flowed by :meth:`run` (loaders with ``dataset=``, the optimizer with
+    ``params=`` via :meth:`configure_optimizers`, ``lightning`` after the
+    auto-``ModelCheckpoint`` / logger wiring). ``to_pydantic`` introspects these
+    body slots, so navigaitor / MCP / FluxStudio still enumerate them.
+
+    YAML contract: a deferred slot MUST be wired with ``!lazy:`` (NOT ``!class:``)
+    — a bare ``!class:`` post-init attr is eagerly materialized on assignment by
+    confluid, which breaks runtime injection (``optimizer`` / loaders) and skips
+    lightning's pre-flow wiring (:meth:`run` warns when a slot arrives
+    already-materialized, see ``_marainer_warn_eager_runtime_slots``).
+
     Args:
         model: The neural network model (deferred via Confluid).
         train_set: Training dataset or Flux pipeline.
-        val_set: Validation dataset or Flux pipeline (used during ``fit``).
-        test_set: Held-out test dataset or Flux pipeline. When set,
-            ``lightning_trainer.test(...)`` runs after ``fit``.
-        optimizer: Optimizer class/config (deferred, default: Adam lr=1e-3).
-        train_loader: DataLoader config for training data.
-        val_loader: DataLoader config for validation data.
-        test_loader: DataLoader config for test data.
-        lightning: PyTorch Lightning Trainer config. Lightning loggers
-            (TensorBoard / CSV / MLflow) belong under ``lightning.logger:``
-            in YAML — that's the kwarg Lightning's own ``Trainer.__init__``
-            picks up. There is NO top-level ``loggers:`` argument here.
         experiment_name: MLflow experiment name.
         run_name: MLflow run name.
 
-    Post-construction attributes (set via ``@configurable``):
-        train_metrics: Train ``MetricCollection`` (from YAML).
-        val_metrics: Validation ``MetricCollection`` (from YAML).
-        test_metrics: Test ``MetricCollection`` (from YAML), used after ``fit``.
+    Post-construction body-attribute slots (set via YAML / broadcasting):
+        val_set: Validation dataset or Flux pipeline (used during ``fit``).
+        test_set: Held-out test dataset; when set, ``lightning.test(...)`` runs
+            after ``fit``.
+        optimizer: Deferred optimizer (default: ``LazyClass(Adam, lr=1e-3)``).
+        train_loader / val_loader / test_loader: Deferred ``DataLoader`` configs.
+        lightning: Deferred PyTorch Lightning Trainer. Lightning loggers
+            (TensorBoard / CSV / MLflow) belong under ``lightning.logger:`` in
+            YAML — there is NO top-level ``loggers:`` argument here.
+        train_metrics / val_metrics / test_metrics: ``MetricCollection`` per split.
         loss_fn: Loss function (default: ``CrossEntropyLoss``).
+        log_system_metrics: Toggle MLflow system-metric capture (default ``True``).
 
-    Example YAML::
+    Example YAML (note ``!lazy:`` for the deferred lightning slot)::
 
-        metrics:
-          - !class:torchmetrics.classification.MulticlassAccuracy()
-          - !class:torchmetrics.classification.MulticlassF1Score()
-
-        train_metrics: !class:torchmetrics.MetricCollection()
-          metrics: !clone:metrics
-          prefix: "train/"
-
-        val_metrics: !class:torchmetrics.MetricCollection()
-          metrics: !clone:metrics
-          prefix: "val/"
+        trainer: !class:marainer.trainer.LightningTrainer
+          model: !lazy:my.Model
+          train_set: !ref:train_set
+        optimizer: !lazy:torch.optim.Adam
+          lr: 0.001
+        lightning: !lazy:pytorch_lightning.Trainer
+          max_epochs: 10
+          logger:
+            - !class:pytorch_lightning.loggers.TensorBoardLogger()
+              save_dir: ./logs
     """
 
     def __init__(
         self,
         model: Any,
         train_set: Any,
-        val_set: Any = None,
-        test_set: Any = None,
-        optimizer: Lazy[Any] = Class(torch.optim.Adam, lr=1e-3),
-        train_loader: Lazy[Any] = Class(DataLoader),
-        val_loader: Lazy[Any] = Class(DataLoader),
-        test_loader: Lazy[Any] = Class(DataLoader),
-        lightning: Any = Class(L.Trainer),
         experiment_name: str = "marainer_run",
         run_name: str = "train",
-        log_system_metrics: bool = True,
     ) -> None:
         super().__init__()
-        self.model = model
-        self.train_set = train_set
-        self.val_set = val_set
-        self.test_set: Any = test_set
-        self.optimizer = optimizer
-        self.train_loader = train_loader
-        self.val_loader = val_loader
-        self.test_loader = test_loader
-        self.lightning = lightning
+        # Post-construction-configurable slots: each is reconfigured (by YAML /
+        # Confluid broadcasting, or a subclass) to a Fluid / live object, so they
+        # are typed ``Any`` rather than pinned to their deferred-default type.
+        self.model: Any = model
+        self.train_set: Any = train_set
+        self.val_set: Any = None
+        self.test_set: Any = None
+        self.optimizer: Any = LazyClass(torch.optim.Adam, lr=1e-3)
+        self.train_loader: Any = LazyClass(DataLoader)
+        self.val_loader: Any = LazyClass(DataLoader)
+        self.test_loader: Any = LazyClass(DataLoader)
+        self.lightning: Any = LazyClass(L.Trainer)
         self.experiment_name = experiment_name
         self.run_name = run_name
-        self.log_system_metrics = bool(log_system_metrics)
+        self.log_system_metrics: bool = True
         self.loss_fn: nn.Module = nn.CrossEntropyLoss()
-        self.train_metrics: MetricCollection | None = None
-        self.val_metrics: MetricCollection | None = None
-        self.test_metrics: MetricCollection | None = None
+        self.train_metrics: Any = None
+        self.val_metrics: Any = None
+        self.test_metrics: Any = None
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         from typing import cast
@@ -447,9 +454,36 @@ class LightningTrainer(L.LightningModule):
         """Thin instance-side hook over :func:`log_config_artifacts`."""
         log_config_artifacts(lightning_trainer)
 
+    def _marainer_warn_eager_runtime_slots(self) -> None:
+        """Warn when a deferred slot arrived already-materialized (misconfigured YAML).
+
+        ``optimizer`` / ``train_loader`` / ``val_loader`` / ``test_loader`` /
+        ``lightning`` are deferred body slots that :meth:`run` flows itself — the
+        optimizer/loaders with runtime kwargs (``params=`` / ``dataset=``),
+        ``lightning`` after the auto-``ModelCheckpoint`` / logger wiring. A YAML
+        that wires one with ``!class:`` (a bare ``Class``) instead of ``!lazy:``
+        is eagerly materialized by confluid on attribute assignment, so it
+        reaches here already-built: the runtime kwargs can no longer be injected
+        and lightning's pre-flow wiring is silently skipped. The optimizer/loader
+        cases usually fail loudly at construction; ``lightning`` (no required
+        args) fails silently — this surfaces it as an actionable warning.
+        """
+        from confluid.fluid import Fluid
+
+        for name in ("optimizer", "train_loader", "val_loader", "test_loader", "lightning"):
+            value = getattr(self, name, None)
+            if value is not None and not isinstance(value, Fluid):
+                logger.warning(
+                    f"Trainer slot '{name}' arrived already-materialized "
+                    f"({type(value).__name__}); it is a deferred slot the trainer flows itself. "
+                    f"Declare it '!lazy:' (not '!class:') in YAML so runtime injection / pre-flow "
+                    f"wiring (e.g. the default ModelCheckpoint) works."
+                )
+
     def run(self) -> None:
         """Execute the training loop."""
         logger.info(f"Marainer navigating to: {self.experiment_name} ({self.run_name})")
+        self._marainer_warn_eager_runtime_slots()
 
         # Materialize datasets ONCE — reused for dimension derivation, the
         # DataLoaders, and label-name persistence. (Flowing them here also fixes

@@ -64,7 +64,7 @@ num_classes: 10
 model: !class:my_project.model.SimpleCNN()
   input_channels: 1
 
-optimizer: !class:torch.optim.Adam
+optimizer: !lazy:torch.optim.Adam
   lr: 0.001
 
 metrics:
@@ -175,13 +175,13 @@ classification dataset returns `{"num_classes": N}` by walking its targets), and
 injects only the **unset** keys when it constructs those deferred nodes:
 
 ```yaml
-model: !lazy:sonair.timm_classifier.TimmClassifierModel   # num_classes omitted
+model: !lazy:sonair.timm_classifier.TimmModel   # num_classes omitted
   model_name: efficientvit_b0
 val_metrics: !lazy:torchmetrics.MetricCollection
   metrics:
     top1: !class:torchmetrics.classification.MulticlassAccuracy { top_k: 1 }
-train_set: !class:sonair.hf_dataset.HuggingFaceClassificationDataset  # provides derived_dimensions()
-  repo_id: ylecun/mnist
+train_set: !class:dataflux.sources.HuggingFaceSource  # provides derived_dimensions()
+  path: ylecun/mnist
   split: train
 ```
 
@@ -211,22 +211,24 @@ Any `torch.nn` loss module works. No code changes required.
 
 ```yaml
 # SGD with momentum
-optimizer: !class:torch.optim.SGD
+optimizer: !lazy:torch.optim.SGD
   lr: 0.01
   momentum: 0.9
 
 # AdamW
-optimizer: !class:torch.optim.AdamW
+optimizer: !lazy:torch.optim.AdamW
   lr: 0.001
   weight_decay: 0.01
 ```
+
+> **Use `!lazy:` (not `!class:`) for `optimizer`, `train_loader` / `val_loader` / `test_loader`, and `lightning`.** The trainer holds these as deferred body slots and builds them itself at run time — the optimizer with `params=model.parameters()`, the loaders with `dataset=…`, the Lightning Trainer after auto-`ModelCheckpoint` / logger wiring. A bare `!class:` value for one of these is materialized eagerly on assignment (an optimizer built with no `params` would crash); Marainer auto-defers a misconfigured `!class:` here and logs a warning, but wire it `!lazy:` to be explicit.
 
 ### Lightning Trainer Configuration
 
 Pass any `pytorch_lightning.Trainer` argument:
 
 ```yaml
-lightning: !class:pytorch_lightning.Trainer()
+lightning: !lazy:pytorch_lightning.Trainer
   max_epochs: 50
   accelerator: gpu
   devices: 1
@@ -522,7 +524,7 @@ test_set: !class:dataflux.core.Flux()
 Marainer supports multiple logging backends via PyTorch Lightning's logger system. Configure any combination of TensorBoard, CSV, and MLflow loggers under the `lightning:` block:
 
 ```yaml
-lightning: !class:pytorch_lightning.Trainer
+lightning: !lazy:pytorch_lightning.Trainer
   max_epochs: 10
   accelerator: auto
   logger:
@@ -567,7 +569,7 @@ To opt out, supply your own `ModelCheckpoint` (any `monitor`) under `lightning.c
 Each Lightning logger can independently opt into archiving every checkpoint by using the matching subclass from `marainer.loggers`:
 
 ```yaml
-lightning: !class:pytorch_lightning.Trainer
+lightning: !lazy:pytorch_lightning.Trainer
   max_epochs: 10
   logger:
     - !class:marainer.loggers.MarainerMLFlowLogger
@@ -585,7 +587,7 @@ When **any** wired logger has `log_all_checkpoints: true`, marainer escalates th
 ### TensorBoard
 
 ```yaml
-lightning: !class:pytorch_lightning.Trainer
+lightning: !lazy:pytorch_lightning.Trainer
   max_epochs: 10
   logger:
     - !class:pytorch_lightning.loggers.TensorBoardLogger()
@@ -598,7 +600,7 @@ View results: `tensorboard --logdir tb_logs`
 ### CSV
 
 ```yaml
-lightning: !class:pytorch_lightning.Trainer
+lightning: !lazy:pytorch_lightning.Trainer
   max_epochs: 10
   logger:
     - !class:pytorch_lightning.loggers.CSVLogger()
@@ -614,7 +616,7 @@ Metrics are written to `csv_logs/<name>/version_N/metrics.csv`, hyperparameters 
 experiment_name: mnist_experiment
 run_name: baseline_v2
 
-lightning: !class:pytorch_lightning.Trainer
+lightning: !lazy:pytorch_lightning.Trainer
   max_epochs: 10
   logger:
     - !class:pytorch_lightning.loggers.MLFlowLogger()

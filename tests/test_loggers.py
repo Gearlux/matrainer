@@ -50,26 +50,24 @@ class TestLogHyperparams:
 
     def test_log_system_metrics_opt_out_skips_activate(self, tmp_path: object) -> None:
         """``log_system_metrics=False`` short-circuits the activation in ``run()``."""
-        trainer = LightningTrainer(
-            model=TinyModel(),
-            train_set=_make_samples(16),
-            val_set=_make_samples(4),
-            train_loader=Class(torch.utils.data.DataLoader, batch_size=4),
-            val_loader=Class(torch.utils.data.DataLoader, batch_size=4),
-            lightning=Class(
-                L.Trainer,
-                max_epochs=1,
-                limit_train_batches=1,
-                limit_val_batches=1,
-                enable_checkpointing=False,
-                logger=False,
-                enable_progress_bar=False,
-                enable_model_summary=False,
-                accelerator="cpu",
-                default_root_dir=str(tmp_path),
-            ),
-            log_system_metrics=False,
+        trainer = LightningTrainer(model=TinyModel(), train_set=_make_samples(16))
+        # Minimal-ctor pattern: configure the deferred slots post-construction.
+        trainer.val_set = _make_samples(4)
+        trainer.train_loader = Class(torch.utils.data.DataLoader, batch_size=4)
+        trainer.val_loader = Class(torch.utils.data.DataLoader, batch_size=4)
+        trainer.lightning = Class(
+            L.Trainer,
+            max_epochs=1,
+            limit_train_batches=1,
+            limit_val_batches=1,
+            enable_checkpointing=False,
+            logger=False,
+            enable_progress_bar=False,
+            enable_model_summary=False,
+            accelerator="cpu",
+            default_root_dir=str(tmp_path),
         )
+        trainer.log_system_metrics = False
         with patch("marainer.system_metrics.activate_for_lightning") as activate_mock:
             trainer.run()
         activate_mock.assert_not_called()
@@ -122,6 +120,11 @@ class TestYamlLoggers:
         """End-to-end: loggers declared under ``lightning.logger:`` in YAML
         must end up attached to the real ``L.Trainer`` produced by flowing
         ``trainer.lightning``.
+
+        ``lightning`` is a deferred body slot (minimal-ctor pattern), so it is
+        wired ``!lazy:`` — it stays deferred through materialization (a bare
+        ``!class:`` post-init attr would be eagerly flowed on assignment) and is
+        built by an explicit ``flow()``.
         """
         from confluid import flow
 
@@ -130,7 +133,7 @@ model: !class:tests.test_loggers.TinyModel()
 
 train_set: []
 
-lightning: !class:pytorch_lightning.Trainer
+lightning: !lazy:pytorch_lightning.Trainer
   max_epochs: 1
   accelerator: cpu
   enable_progress_bar: false

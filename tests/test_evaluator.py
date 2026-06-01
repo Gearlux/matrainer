@@ -65,7 +65,7 @@ def test_evaluator_runs_on_classification_task(tmp_path: Any) -> None:
     metrics = MetricCollection({"acc": MulticlassAccuracy(num_classes=3)})
     sink = _RecordingSink()
 
-    evaluator = LightningEvaluator(
+    evaluator = _make_evaluator(
         model=model,
         dataset=flux,
         loader=Class(DataLoader, batch_size=4),
@@ -96,7 +96,7 @@ def test_evaluator_writes_metrics_sidecar_when_path_set(tmp_path: Any) -> None:
     metrics = MetricCollection({"acc": MulticlassAccuracy(num_classes=3)})
     sidecar = tmp_path / "eval_metrics.json"
 
-    evaluator = LightningEvaluator(
+    evaluator = _make_evaluator(
         model=model,
         dataset=flux,
         loader=Class(DataLoader, batch_size=4),
@@ -134,7 +134,7 @@ def test_evaluator_skips_sidecar_when_path_none(tmp_path: Any) -> None:
     flux = Flux(source=samples)
     metrics = MetricCollection({"acc": MulticlassAccuracy(num_classes=3)})
 
-    evaluator = LightningEvaluator(
+    evaluator = _make_evaluator(
         model=model,
         dataset=flux,
         loader=Class(DataLoader, batch_size=4),
@@ -164,7 +164,7 @@ def test_evaluator_skips_sidecar_when_no_metrics(tmp_path: Any) -> None:
     flux = Flux(source=samples)
     sidecar = tmp_path / "eval_metrics.json"
 
-    evaluator = LightningEvaluator(
+    evaluator = _make_evaluator(
         model=model,
         dataset=flux,
         loader=Class(DataLoader, batch_size=4),
@@ -308,7 +308,7 @@ def test_evaluator_logs_confusion_matrix_text_table(tmp_path: Any) -> None:
                 "cm": MulticlassConfusionMatrix(num_classes=3),
             }
         )
-        evaluator = LightningEvaluator(
+        evaluator = _make_evaluator(
             model=model,
             dataset=flux,
             loader=Class(DataLoader, batch_size=4),
@@ -342,7 +342,7 @@ def test_evaluator_resolves_class_names_from_dataset(tmp_path: Any) -> None:
     samples = [Sample(input=torch.randn(4), target=i % 3, metadata={"idx": i}) for i in range(6)]
     flux = _Labeled(source=samples)
 
-    evaluator = LightningEvaluator(
+    evaluator = _make_evaluator(
         model=_ClassificationModel(),
         dataset=flux,
         loader=Class(DataLoader, batch_size=3),
@@ -367,7 +367,7 @@ def test_evaluator_resolves_class_names_from_json_file(tmp_path: Any) -> None:
     names_path.write_text(json.dumps({"class_names": ["x", "y", "z"]}))
 
     samples = [Sample(input=torch.randn(4), target=i % 3, metadata={"idx": i}) for i in range(6)]
-    evaluator = LightningEvaluator(
+    evaluator = _make_evaluator(
         model=_ClassificationModel(),
         dataset=Flux(source=samples),
         loader=Class(DataLoader, batch_size=3),
@@ -399,7 +399,7 @@ def test_evaluator_resolves_class_names_next_to_checkpoint(tmp_path: Any) -> Non
     setattr(model, "checkpoint_path", str(ckpt))
 
     samples = [Sample(input=torch.randn(4), target=i % 3, metadata={"idx": i}) for i in range(3)]
-    evaluator = LightningEvaluator(
+    evaluator = _make_evaluator(
         model=model,
         dataset=Flux(source=samples),
         loader=Class(DataLoader, batch_size=3),
@@ -420,7 +420,7 @@ def test_evaluator_resolves_class_names_next_to_checkpoint(tmp_path: Any) -> Non
 def test_evaluator_falls_back_to_integer_indices(tmp_path: Any) -> None:
     """Every resolution source missing → render uses ``["0", "1", ...]``."""
     samples = [Sample(input=torch.randn(4), target=i % 3, metadata={"idx": i}) for i in range(3)]
-    evaluator = LightningEvaluator(
+    evaluator = _make_evaluator(
         model=_ClassificationModel(),
         dataset=Flux(source=samples),
         loader=Class(DataLoader, batch_size=3),
@@ -446,7 +446,7 @@ def test_evaluator_render_pass_skips_non_square_metrics(tmp_path: Any) -> None:
     sink_id = _loguru_logger.add(lambda m: captured.append(str(m)), level="INFO")
     try:
         samples = [Sample(input=torch.randn(4), target=i % 3, metadata={"idx": i}) for i in range(3)]
-        evaluator = LightningEvaluator(
+        evaluator = _make_evaluator(
             model=_ClassificationModel(),
             dataset=Flux(source=samples),
             loader=Class(DataLoader, batch_size=3),
@@ -473,7 +473,7 @@ def test_evaluator_sidecar_unchanged_when_confusion_matrix_present(
     compatibility with downstream tooling (``read_run_metrics``)."""
     sidecar = tmp_path / "eval_metrics.json"
     samples = [Sample(input=torch.randn(4), target=i % 3, metadata={"idx": i}) for i in range(6)]
-    evaluator = LightningEvaluator(
+    evaluator = _make_evaluator(
         model=_ClassificationModel(),
         dataset=Flux(source=samples),
         loader=Class(DataLoader, batch_size=3),
@@ -498,3 +498,24 @@ def test_evaluator_sidecar_unchanged_when_confusion_matrix_present(
     payload = json.loads(sidecar.read_text())
     cm = payload["metrics"]["cm"]
     assert isinstance(cm, list) and len(cm) == 3 and all(len(row) == 3 for row in cm)
+
+
+def _make_evaluator(**overrides: Any) -> LightningEvaluator:
+    """Build a LightningEvaluator, applying overrides as post-construction attributes.
+
+    Mirrors the minimal-ctor pattern: only 'model', 'dataset', 'experiment_name', 'run_name' are
+    constructor params; deferred slots (``loader`` / ``lightning`` / ``metrics`` /
+    ``predictions_sink`` / ``metrics_sidecar_path`` / ``class_names``) are set on
+    the instance after construction.
+    """
+    _ctor_keys = (
+        "model",
+        "dataset",
+        "experiment_name",
+        "run_name",
+    )
+    ctor = {k: overrides.pop(k) for k in _ctor_keys if k in overrides}
+    ev = LightningEvaluator(**ctor)
+    for _k, _v in overrides.items():
+        setattr(ev, _k, _v)
+    return ev

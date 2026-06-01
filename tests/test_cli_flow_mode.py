@@ -1,12 +1,17 @@
-"""End-to-end test for ``flow_mode="auto"`` + ``Lazy[T]`` annotation.
+"""End-to-end test for ``flow_mode="auto"`` + ``!lazy:`` deferred slots.
 
 This test runs the marainer CLI through ``app.run()`` with a real YAML config
 and asserts that liquifai's deep-flow:
 
-* eagerly flowed the non-Lazy attrs (``model``, ``lightning``);
-* left the ``Lazy[Any]`` attrs (``optimizer``, ``train_loader``, ``val_loader``,
-  ``test_loader``) as deferred ``Class`` stubs so ``LightningTrainer.run()`` can flow
-  them with runtime kwargs (``params=self.parameters()``, ``dataset=...``).
+* eagerly flowed the non-Lazy attrs (``model`` — a ``!class:`` value);
+* left the ``!lazy:`` body slots (``optimizer``, ``train_loader``) as deferred
+  ``Lazy`` stubs so ``LightningTrainer.run()`` can flow them with runtime kwargs
+  (``params=self.parameters()``, ``dataset=...``).
+
+Under the minimal-ctor / post-construction pattern these slots are ``__init__``
+body attributes (not ctor params), so a runtime-injected slot MUST be wired
+``!lazy:`` (a bare ``!class:`` post-init attr is eagerly materialized on
+assignment and would crash — ``SGD()`` with no ``params``).
 """
 
 import sys
@@ -34,9 +39,9 @@ def test_train_command_honors_lazy_annotations(tmp_path: Path, monkeypatch: Any)
         "  model: !class:tests.test_cli_flow_mode._TinyModel\n"
         "    input_size: 4\n"
         "  train_set: []\n"
-        "  optimizer: !class:torch.optim.SGD\n"
+        "  optimizer: !lazy:torch.optim.SGD\n"
         "    lr: 0.01\n"
-        "  train_loader: !class:torch.utils.data.DataLoader\n"
+        "  train_loader: !lazy:torch.utils.data.DataLoader\n"
         "    batch_size: 8\n"
     )
 
