@@ -244,6 +244,43 @@ num_workers: 8       # broadcast into DataLoaders
 
 ---
 
+## The `process` / `download` / `convert` Commands — `DatasetProcessor`
+
+For non-training workflows — converting datasets, windowing signals, running a
+pure DataFlux pipeline from a source to a sink — Marainer ships
+`marainer.processing.DatasetProcessor`. It's the generic `processor:` object the
+`process`, `download`, and `convert` verbs dispatch via `.run()` (the three
+verbs are semantic aliases; they all bind the object under the top-level
+`processor:` key).
+
+```yaml
+# convert.yaml — run with: marainer convert convert.yaml
+import:
+  - dataflux.core
+  - dataflux.storage.hdf5
+
+processor: !class:marainer.processing.DatasetProcessor
+  show_progress: true            # optional rich.progress bar
+  flux: !class:Flux
+    source: !class:SomeSource { ... }
+    ops: [ ... ]
+  sink: !class:HDF5Sink
+    path: ./out.h5
+```
+
+| Field | Type | Default | Description |
+|-------|------|---------|-------------|
+| `flux` | `dataflux.core.Flux` | — | The pipeline (source + ops) to execute. |
+| `sink` | sink \| `None` | `None` | Terminal sink; when absent, samples are materialized to an in-memory list. |
+| `show_progress` | `bool` | `False` | Wrap iteration in a `rich.progress` bar (total from `len(flux.source)` when available). |
+| `progress_desc` | `str` | `"DatasetProcessor"` | Progress-bar label. |
+
+> `DatasetProcessor` lives in Marainer (not a domain package) because it is the
+> workspace's generic data-pipeline runner and depends only on DataFlux +
+> Confluid. It was moved here from `waivefront.processing`.
+
+---
+
 ## Metrics System
 
 Marainer integrates with [torchmetrics](https://torchmetrics.readthedocs.io/) to provide flexible, YAML-configurable metrics. Metrics are automatically:
