@@ -9,7 +9,7 @@ from marainer.trainer import LightningTrainer
 
 
 def test_training_step_with_collated_sample() -> None:
-    trainer = LightningTrainer(model=torch.nn.Linear(4, 2), train_set=[])
+    trainer = LightningTrainer(model=torch.nn.Linear(4, 2), train_set=Flux(source=[]))
     batch = Sample(input=torch.randn(8, 4), target=torch.randint(0, 2, (8,)), metadata={})
     loss = trainer.training_step(batch, 0)
     assert isinstance(loss, torch.Tensor)

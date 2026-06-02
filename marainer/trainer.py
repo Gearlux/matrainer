@@ -1,14 +1,13 @@
 import json
 import shutil
 from pathlib import Path
-from typing import Any, Iterable, List, Optional, Tuple, Union
+from typing import Any, Iterable, List, Optional, Union
 
 import pytorch_lightning as L
 import torch
 import torch.nn as nn
-from confluid import Class, Instance, LazyClass, configurable, flow
+from confluid import Fluid, LazyClass, configurable, flow
 from logflow import get_logger
-from pytorch_lightning.callbacks import ModelCheckpoint
 from pytorch_lightning.loggers import Logger
 from torch.utils.data import DataLoader, Dataset
 from torchmetrics import MetricCollection
@@ -265,8 +264,8 @@ class LightningTrainer(TorchRunner, L.LightningModule):
 
     def __init__(
         self,
-        model: Any,
-        train_set: Any,
+        model: Union[nn.Module, Fluid],
+        train_set: Union[Dataset[Any], Fluid],
         experiment_name: str = "marainer_run",
         run_name: Optional[str] = None,
         max_epochs: int = 10,
@@ -275,11 +274,11 @@ class LightningTrainer(TorchRunner, L.LightningModule):
         super().__init__()
         # Post-construction-configurable slots: each is reconfigured (by YAML /
         # Confluid broadcasting, or a subclass) to a Fluid / live object, so they
-        # are typed ``Any`` rather than pinned to their deferred-default type.
-        self.model: Any = model
-        self.train_set: Any = train_set
-        self.val_set: Any = None
-        self.test_set: Any = None
+        # are typed Union[..., Fluid] rather than pinned to Any.
+        self.model: Union[nn.Module, Fluid] = model
+        self.train_set: Union[Dataset[Any], Fluid] = train_set
+        self.val_set: Union[Dataset[Any], Fluid, None] = None
+        self.test_set: Union[Dataset[Any], Fluid, None] = None
         self.optimizer: Any = LazyClass(torch.optim.Adam, lr=1e-3)
         self.train_loader: Any = LazyClass(DataLoader)
         self.val_loader: Any = LazyClass(DataLoader)
@@ -305,7 +304,8 @@ class LightningTrainer(TorchRunner, L.LightningModule):
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         from typing import cast
 
-        return cast(torch.Tensor, self.model(x))
+        model = cast(nn.Module, self.model)
+        return cast(torch.Tensor, model(x))
 
     def training_step(self, batch: Any, batch_idx: int) -> torch.Tensor:
         preds = self(batch.input)
