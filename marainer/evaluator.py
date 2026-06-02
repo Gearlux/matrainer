@@ -42,10 +42,12 @@ from pathlib import Path
 from typing import Any, Dict, List, Optional, Union
 
 import pytorch_lightning as L
-from confluid import LazyClass, configurable, flow
+import torch
+import torch.nn as nn
+from confluid import Fluid, LazyClass, configurable, flow
 from logflow import get_logger
 from torch import Tensor
-from torch.utils.data import DataLoader
+from torch.utils.data import DataLoader, Dataset
 from torchmetrics import Metric, MetricCollection
 
 from marainer.loggers import _render_matrix_as_table, log_figure_to_loggers
@@ -151,8 +153,8 @@ class LightningEvaluator(L.LightningModule):
 
     def __init__(
         self,
-        model: Any,
-        dataset: Any,
+        model: Union[nn.Module, Fluid],
+        dataset: Union[Dataset[Any], Fluid],
         experiment_name: str = "marainer_eval",
         run_name: Optional[str] = None,
     ) -> None:
@@ -160,8 +162,8 @@ class LightningEvaluator(L.LightningModule):
         # Store config ONLY — no functional work. Deferred slots (loader / lightning)
         # are LazyClass; run() flows them. Every slot is configurable post-construction
         # (YAML / broadcasting); a YAML-wired deferred slot must use !lazy:.
-        self.model: Any = model
-        self.dataset: Any = dataset
+        self.model: Union[nn.Module, Fluid] = model
+        self.dataset: Union[Dataset[Any], Fluid] = dataset
         self.loader: Any = LazyClass(DataLoader)
         self.metrics: Any = None
         self.predictions_sink: Any = None
@@ -173,8 +175,11 @@ class LightningEvaluator(L.LightningModule):
         self.class_names: Optional[Union[List[str], str]] = None
         self._resolved_class_names: Optional[List[str]] = None
 
-    def forward(self, x: Any) -> Any:
-        return self.model(x)
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        from typing import cast
+
+        model = cast(nn.Module, self.model)
+        return cast(torch.Tensor, model(x))
 
     def test_step(self, batch: Any, batch_idx: int) -> Any:
         preds = self(batch.input)

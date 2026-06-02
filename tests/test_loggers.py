@@ -8,6 +8,7 @@ import torch
 import torch.nn as nn
 from confluid import Class, configurable, materialize
 from confluid.loader import load
+from dataflux.core import Flux
 from dataflux.sample import Sample
 from pytorch_lightning.loggers import CSVLogger
 
@@ -25,8 +26,8 @@ class TinyModel(nn.Module):
         return cast(torch.Tensor, self.fc(x))
 
 
-def _make_samples(n: int = 32, input_size: int = 4) -> list[Sample]:
-    return [Sample(input=torch.randn(input_size), target=i % 2, metadata={}) for i in range(n)]
+def _make_samples(n: int = 32, input_size: int = 4) -> Flux:
+    return Flux(source=[Sample(input=torch.randn(input_size), target=i % 2, metadata={}) for i in range(n)])
 
 
 class TestLogHyperparams:
@@ -131,7 +132,8 @@ class TestYamlLoggers:
         yaml_text = f"""
 model: !class:tests.test_loggers.TinyModel()
 
-train_set: []
+train_set: !class:dataflux.core.Flux
+  source: []
 
 lightning: !lazy:pytorch_lightning.Trainer
   max_epochs: 1

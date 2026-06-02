@@ -25,8 +25,8 @@ class TinyModel(nn.Module):
         return self.fc(x)  # type: ignore[no-any-return]
 
 
-def make_samples(n: int = 32, input_size: int = 4) -> list[Sample]:
-    return [Sample(input=torch.randn(input_size), target=i % 2, metadata={}) for i in range(n)]
+def make_samples(n: int = 32, input_size: int = 4) -> Flux:
+    return Flux(source=[Sample(input=torch.randn(input_size), target=i % 2, metadata={}) for i in range(n)])
 
 
 # ---------------------------------------------------------------------------
