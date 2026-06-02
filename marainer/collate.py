@@ -55,8 +55,7 @@ def collate_fn_with_metadata(batch: List[Sample]) -> Sample:
     for s in batch:
         if not isinstance(s.input, Tensor):
             raise TypeError(
-                f"collate_fn_with_metadata expects sample.input to be a torch.Tensor; "
-                f"got {type(s.input).__name__}."
+                f"collate_fn_with_metadata expects sample.input to be a torch.Tensor; " f"got {type(s.input).__name__}."
             )
         if not isinstance(s.target, Tensor):
             raise TypeError(

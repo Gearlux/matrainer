@@ -408,7 +408,7 @@ class TestWarnEagerRuntimeSlots:
 
         warnings: list[str] = []
         monkeypatch.setattr(trainer_mod.logger, "warning", lambda msg, *a, **k: warnings.append(str(msg)))
-        trainer._marainer_warn_eager_runtime_slots()
+        trainer._warn_eager_runtime_slots()
 
         assert any("lightning" in w and "!lazy:" in w for w in warnings)
 
@@ -421,6 +421,6 @@ class TestWarnEagerRuntimeSlots:
 
         warnings: list[str] = []
         monkeypatch.setattr(trainer_mod.logger, "warning", lambda msg, *a, **k: warnings.append(str(msg)))
-        trainer._marainer_warn_eager_runtime_slots()
+        trainer._warn_eager_runtime_slots()
 
         assert warnings == []

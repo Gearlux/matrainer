@@ -29,9 +29,8 @@ from marainer.evaluator import (  # noqa: E402
     _coerce_metric_value,
     _ensure_class_names,
     _is_square_2d_tensor,
-    _log_figure_to_loggers,
-    _render_matrix_as_table,
 )
+from marainer.loggers import _render_matrix_as_table, log_figure_to_loggers  # noqa: E402
 
 
 class _RecordingSink:
@@ -263,7 +262,7 @@ def test_log_figure_to_loggers_forwards_to_tensorboard_style() -> None:
     lt.global_step = 42
 
     fig = matplotlib.figure.Figure()
-    _log_figure_to_loggers(lt, "cm", fig)
+    log_figure_to_loggers(lt, "cm", fig)
 
     tb_logger.experiment.add_figure.assert_called_once_with("cm", fig, 42)
 
@@ -281,14 +280,14 @@ def test_log_figure_to_loggers_forwards_to_mlflow_style() -> None:
     lt.global_step = 0
 
     fig = matplotlib.figure.Figure()
-    _log_figure_to_loggers(lt, "test/cm", fig)
+    log_figure_to_loggers(lt, "test/cm", fig)
 
     mlflow_logger.experiment.log_figure.assert_called_once_with("run-xyz", fig, "test_cm.png")
 
 
 def test_log_figure_to_loggers_handles_no_trainer() -> None:
     """``trainer=None`` (called outside a Lightning run) must not raise."""
-    _log_figure_to_loggers(None, "cm", matplotlib.figure.Figure())  # must not raise
+    log_figure_to_loggers(None, "cm", matplotlib.figure.Figure())  # must not raise
 
 
 def test_evaluator_logs_confusion_matrix_text_table(tmp_path: Any) -> None:

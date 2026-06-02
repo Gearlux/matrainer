@@ -146,7 +146,7 @@ marainer train <config.yaml>
 | Parameter | Type | Default | Description |
 |---|---|---|---|
 | `experiment_name` | `str` | `"marainer_run"` | MLflow experiment name |
-| `run_name` | `str` | `"train"` | MLflow run name |
+| `run_name` | `str` | *random* | MLflow run name. Omit it (or pass `null`) to auto-generate a friendly random slug like `train_funny_rabbit` (`marainer.run_names.generate_run_name`, `coolname`-backed); set it explicitly to pin one. |
 | `model` | `!class:` | *required* | Neural network model |
 | `optimizer` | `!class:` | `Adam(lr=1e-3)` | Optimizer |
 | `loss_fn` | `!class:` | `CrossEntropyLoss()` | Loss function (post-construction) |
