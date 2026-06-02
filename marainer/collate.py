@@ -64,7 +64,7 @@ def collate_fn_with_metadata(batch: List[Sample]) -> Sample:
             )
         inputs.append(s.input)
         targets.append(s.target)
-        metas.append(s.metadata)
+        metas.append(s.meta)  # per-sample dict (the batched output below carries the list)
 
     return Sample(
         input=torch.stack(inputs),
