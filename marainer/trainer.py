@@ -65,38 +65,6 @@ def ensure_sample_dataset(source: Any) -> Dataset[Any]:
     return Flux(source=source)
 
 
-def _is_model_checkpoint_target(cb: Any) -> bool:
-    """True when ``cb`` is, or defers to, a ``ModelCheckpoint``.
-
-    Accepts: a live ``ModelCheckpoint`` instance, a confluid ``Class`` /
-    ``Instance`` whose target resolves to ``ModelCheckpoint`` (subclass-aware
-    when target is a real class object; string targets are matched by name
-    so YAML that uses the dotted form ``pytorch_lightning.callbacks.ModelCheckpoint``
-    is still recognised).
-    """
-    if isinstance(cb, ModelCheckpoint):
-        return True
-    if isinstance(cb, (Class, Instance)):
-        target = cb.target
-        if isinstance(target, type) and issubclass(target, ModelCheckpoint):
-            return True
-        if isinstance(target, str):
-            return target.endswith("ModelCheckpoint")
-    return False
-
-
-def _logger_wants_all_checkpoints(lg: Any) -> bool:
-    """True when a logger (Fluid or instantiated) opts into archiving every checkpoint.
-
-    The flag lives on the instance for already-flowed loggers and inside
-    ``Fluid.kwargs`` for deferred ones. See :mod:`marainer.loggers` for the
-    canonical opt-in subclasses (``MarainerMLFlowLogger`` and friends).
-    """
-    if isinstance(lg, (Class, Instance)):
-        return bool(lg.kwargs.get("log_all_checkpoints", False))
-    return bool(getattr(lg, "log_all_checkpoints", False))
-
-
 def _resolve_label_names(dataset: Any) -> Optional[List[str]]:
     """Return the dataset's ``label_names`` as a plain list, or None.
 
@@ -352,15 +320,15 @@ class LightningTrainer(TorchRunner, L.LightningModule):
         )
         if self.train_metrics is not None:
             self.train_metrics(preds, batch.target)
-            scalars = {k: v for k, v in self.train_metrics.items() if isinstance(v, torch.Tensor) and v.numel() == 1}
-            if scalars:
-                self.log_dict(
-                    scalars,
-                    on_step=False,
-                    on_epoch=True,
-                    batch_size=batch.input.shape[0],
-                )
+            if isinstance(self.train_metrics, MetricCollection):
+                self.log_dict(self.train_metrics, on_step=True, on_epoch=False)
+            else:
+                self.log("train/metric", self.train_metrics, on_step=True, on_epoch=False)
         return loss
+
+    def on_train_epoch_end(self) -> None:
+        if self.train_metrics is not None:
+            self.train_metrics.reset()
 
     def validation_step(self, batch: Any, batch_idx: int) -> torch.Tensor:
         preds = self(batch.input)
@@ -373,16 +341,16 @@ class LightningTrainer(TorchRunner, L.LightningModule):
             batch_size=batch.input.shape[0],
         )
         if self.val_metrics is not None:
-            self.val_metrics(preds, batch.target)
-            scalars = {k: v for k, v in self.val_metrics.items() if isinstance(v, torch.Tensor) and v.numel() == 1}
-            if scalars:
-                self.log_dict(
-                    scalars,
-                    on_step=False,
-                    on_epoch=True,
-                    batch_size=batch.input.shape[0],
-                )
+            self.val_metrics.update(preds, batch.target)
         return loss
+
+    def on_val_epoch_end(self) -> None:
+        if self.val_metrics is not None:
+            if isinstance(self.val_metrics, MetricCollection):
+                self.log_dict(self.val_metrics, on_step=True, on_epoch=False)
+            else:
+                self.log("val/metric", self.val_metrics, on_step=True, on_epoch=False)
+            self.val_metrics.reset()
 
     def test_step(self, batch: Any, batch_idx: int) -> torch.Tensor:
         preds = self(batch.input)
@@ -395,16 +363,16 @@ class LightningTrainer(TorchRunner, L.LightningModule):
             batch_size=batch.input.shape[0],
         )
         if self.test_metrics is not None:
-            self.test_metrics(preds, batch.target)
-            scalars = {k: v for k, v in self.test_metrics.items() if isinstance(v, torch.Tensor) and v.numel() == 1}
-            if scalars:
-                self.log_dict(
-                    scalars,
-                    on_step=False,
-                    on_epoch=True,
-                    batch_size=batch.input.shape[0],
-                )
+            self.test_metrics.update(preds, batch.target)
         return loss
+
+    def on_test_epoch_end(self) -> None:
+        if self.test_metrics is not None:
+            if isinstance(self.test_metrics, MetricCollection):
+                self.log_dict(self.test_metrics, on_step=True, on_epoch=False)
+            else:
+                self.log("test/metric", self.test_metrics, on_step=True, on_epoch=False)
+            self.test_metrics.reset()
 
     def configure_optimizers(self) -> Any:
         return flow(self.optimizer, params=self.parameters())
@@ -423,93 +391,6 @@ class LightningTrainer(TorchRunner, L.LightningModule):
 
         for lg in lightning_trainer.loggers:
             lg.log_hyperparams(clean_params)
-
-    def _resolve_default_checkpoint_monitor(self) -> Tuple[str, str]:
-        """Pick ``(monitor, mode)`` for the auto-injected ``ModelCheckpoint``.
-
-        Resolution order:
-
-        1. First key in ``self.val_metrics`` when configured AND a validation
-           set is wired — keys produced by
-           :class:`torchmetrics.MetricCollection.items` already carry the
-           collection's prefix (``"val/top1"``), matching what
-           :meth:`validation_step` logs. ``mode`` comes from the metric's
-           :attr:`higher_is_better` class attribute (``True`` → max,
-           ``False`` → min, missing → max).
-        2. ``("val/loss", "min")`` when a val set is wired but no metrics.
-        3. ``("train/loss", "min")`` when no val set is wired —
-           :meth:`training_step` always logs that scalar, so the monitor
-           cannot dangle.
-        """
-        if self.val_set is not None:
-            if self.val_metrics is not None:
-                try:
-                    items = list(self.val_metrics.items())
-                except Exception:  # pragma: no cover - torchmetrics raised; treat as no metrics
-                    items = []
-                if items:
-                    raw_key, first_metric = items[0]
-                    prefix = getattr(self.val_metrics, "prefix", "") or ""
-                    monitor = raw_key if raw_key.startswith(prefix) else f"{prefix}{raw_key}"
-                    higher = getattr(first_metric, "higher_is_better", None)
-                    mode = "min" if higher is False else "max"
-                    return monitor, mode
-            return "val/loss", "min"
-        return "train/loss", "min"
-
-    def _marainer_ensure_default_checkpoint(self) -> None:
-        """Inject a default ``ModelCheckpoint`` into ``self.lightning.kwargs`` when missing.
-
-        Runs BEFORE ``flow(self.lightning)`` so the callback lands in the
-        Lightning Trainer's own ``callbacks`` argument at construction time —
-        Lightning then knows checkpoint handling is already wired and does
-        not silently auto-inject its own ``monitor=None`` default. When the
-        user has already declared any ``ModelCheckpoint`` (Fluid or
-        instance) under ``lightning.callbacks``, this is a no-op.
-
-        Defaults:
-            * ``save_last=True``  — always keep ``last.ckpt``
-            * ``save_top_k=1``    — keep the single best checkpoint by
-              the first val metric (escalates to ``-1`` when any wired
-              logger has ``log_all_checkpoints=True``)
-            * ``monitor`` / ``mode`` — see
-              :meth:`_resolve_default_checkpoint_monitor`
-        """
-        if not hasattr(self.lightning, "kwargs"):
-            return  # Already flowed or exotic type — leave alone.
-
-        # ``enable_checkpointing=False`` is the user's explicit opt-out — Lightning
-        # would also reject a ModelCheckpoint in callbacks alongside the flag
-        # (``MisconfigurationException``), so skip injection rather than fight it.
-        if self.lightning.kwargs.get("enable_checkpointing") is False:
-            logger.debug("enable_checkpointing=False; skipping default ModelCheckpoint injection")
-            return
-
-        existing_callbacks = self.lightning.kwargs.get("callbacks") or []
-        if not isinstance(existing_callbacks, list):
-            existing_callbacks = [existing_callbacks]
-        if any(_is_model_checkpoint_target(cb) for cb in existing_callbacks):
-            logger.debug("User-supplied ModelCheckpoint detected; skipping default injection")
-            return
-
-        existing_loggers = self.lightning.kwargs.get("logger") or []
-        if not isinstance(existing_loggers, list):
-            existing_loggers = [existing_loggers]
-        save_top_k = -1 if any(_logger_wants_all_checkpoints(lg) for lg in existing_loggers) else 1
-
-        monitor, mode = self._resolve_default_checkpoint_monitor()
-        default_cb = ModelCheckpoint(
-            monitor=monitor,
-            mode=mode,
-            save_top_k=save_top_k,
-            save_last=True,
-            filename="best-{epoch:02d}-{step}",
-        )
-        self.lightning.kwargs["callbacks"] = [*existing_callbacks, default_cb]
-        logger.info(
-            f"Auto-injected default ModelCheckpoint: monitor={monitor!r}, "
-            f"mode={mode!r}, save_top_k={save_top_k}, save_last=True"
-        )
 
     def _marainer_log_config_artifacts(self, lightning_trainer: L.Trainer) -> None:
         """Thin instance-side hook over :func:`log_config_artifacts`."""
@@ -573,12 +454,6 @@ class LightningTrainer(TorchRunner, L.LightningModule):
 
         t_loader = flow(self.train_loader, dataset=train_ds)
         v_loader = flow(self.val_loader, dataset=val_ds) if val_ds is not None else None
-
-        # Must run before `flow(self.lightning)` so the default callback lands in
-        # the L.Trainer's own callbacks list at construction time — otherwise
-        # Lightning silently auto-injects a monitor=None default that we'd have
-        # to surgically remove afterwards.
-        self._marainer_ensure_default_checkpoint()
 
         lightning_trainer = flow(self.lightning)
         if self.log_system_metrics:
