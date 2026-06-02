@@ -1,7 +1,7 @@
 import json
 import shutil
 from pathlib import Path
-from typing import Any, List, Optional, Tuple
+from typing import Any, Iterable, List, Optional, Tuple, Union
 
 import pytorch_lightning as L
 import torch
@@ -9,11 +9,59 @@ import torch.nn as nn
 from confluid import Class, Instance, LazyClass, configurable, flow
 from logflow import get_logger
 from pytorch_lightning.callbacks import ModelCheckpoint
-from torch.utils.data import DataLoader
+from pytorch_lightning.loggers import Logger
+from torch.utils.data import DataLoader, Dataset
+from torchmetrics import MetricCollection
 
-from marainer.dimensions import collect_derived_dimensions, flow_node_with_dims, needs_derivation
+from marainer.run_names import generate_run_name
 
 logger = get_logger(__name__)
+
+
+def build_metric_collection(metrics: Any, **flow_dims: Any) -> MetricCollection:
+    """Build a ``MetricCollection`` from a dict of single-metric templates OR a ready-made collection.
+
+    Task subclasses configure their ``metrics`` slot as a dict ``{name: LazyClass(Metric, ...)}`` of
+    single-metric templates (so a dimension like ``num_classes`` can be injected late) OR as a
+    fully-built ``MetricCollection``. This normalizes both into one ``MetricCollection`` the caller
+    then clones per split (``train/`` · ``val/`` · ``test/``):
+
+    * **dict** — each value is flowed with ``flow_dims`` (a confluid ``LazyClass`` / ``Fluid`` template
+      builds with the dims, e.g. ``num_classes``; an already-live ``Metric`` passes through ``flow``
+      unchanged) and the results are wrapped in a ``MetricCollection``.
+    * **MetricCollection** — returned as-is (re-wrapping its live metrics, or "flowing" already-built
+      ones, would be wrong).
+
+    Shared by the classification trainer and evaluator (and available to any task trainer) so the
+    dict-vs-collection handling lives in ONE place.
+    """
+    if isinstance(metrics, MetricCollection):
+        return metrics
+    flowed = {k: flow(v, **flow_dims) for k, v in metrics.items()}
+    return MetricCollection(flowed)
+
+
+def ensure_sample_dataset(source: Any) -> Dataset[Any]:
+    """Normalize any wired source into a map-style ``Dataset`` that is GUARANTEED to yield ``Sample``s.
+
+    A wired ``train_set`` / ``val_set`` / ``test_set`` may be a `dataflux.Flux`, another `torch`
+    `Dataset`, a `dataflux` source like `HuggingFaceSource` (only `__getitem__`/`__len__`/`__iter__`),
+    or a plain list — and its items may be `Sample`s or raw rows (dicts, tuples, …). A `dataflux.Flux`
+    already coerces every item to a `Sample` (`Sample.from_any` in `__getitem__`/`__iter__`), so:
+
+    * a `Flux` is returned as-is (already a `Dataset[Sample]`; this preserves a subclass's own wrap —
+      e.g. sonair's label-encoding Flux with its `label_names`), and
+    * anything else is wrapped in a `Flux`, which makes it both a map-style `Dataset` AND a
+      `Sample`-yielding one.
+
+    Calling this once up front lets the rest of the pipeline (target detection, label fitting/encoding,
+    collate, metrics) assume `Sample` items unconditionally — no per-call "is this a Sample?" checks.
+    """
+    from dataflux import Flux
+
+    if isinstance(source, Flux):
+        return source
+    return Flux(source=source)
 
 
 def _is_model_checkpoint_target(cb: Any) -> bool:
@@ -216,7 +264,8 @@ class LightningTrainer(L.LightningModule):
         model: The neural network model (deferred via Confluid).
         train_set: Training dataset or Flux pipeline.
         experiment_name: MLflow experiment name.
-        run_name: MLflow run name.
+        run_name: MLflow run name. ``None`` (default) auto-generates a random, human-friendly slug
+            like ``train_funny_rabbit`` (see :func:`marainer.run_names.generate_run_name`).
 
     Post-construction body-attribute slots (set via YAML / broadcasting):
         val_set: Validation dataset or Flux pipeline (used during ``fit``).
@@ -250,7 +299,9 @@ class LightningTrainer(L.LightningModule):
         model: Any,
         train_set: Any,
         experiment_name: str = "marainer_run",
-        run_name: str = "train",
+        run_name: Optional[str] = None,
+        max_epochs: int = 10,
+        logger: Optional[Union[Logger, Iterable[Logger], bool]] = None,
     ) -> None:
         super().__init__()
         # Post-construction-configurable slots: each is reconfigured (by YAML /
@@ -264,14 +315,23 @@ class LightningTrainer(L.LightningModule):
         self.train_loader: Any = LazyClass(DataLoader)
         self.val_loader: Any = LazyClass(DataLoader)
         self.test_loader: Any = LazyClass(DataLoader)
-        self.lightning: Any = LazyClass(L.Trainer)
+        self.lightning: Any = LazyClass(L.Trainer, logger=logger, max_epochs=max_epochs)
         self.experiment_name = experiment_name
-        self.run_name = run_name
+        # A None run_name gets a random, human-friendly slug (e.g. ``train_funny_rabbit``) so every
+        # run is distinguishable in logs / MLflow without the caller having to invent one.
+        self.run_name = run_name if run_name is not None else generate_run_name(prefix="train")
         self.log_system_metrics: bool = True
         self.loss_fn: nn.Module = nn.CrossEntropyLoss()
         self.train_metrics: Any = None
         self.val_metrics: Any = None
         self.test_metrics: Any = None
+
+        # The trainer flows these deferred slots itself at runtime, so they must be
+        # declared here as non-deferred defaults (``LazyClass(...)``) to satisfy
+        # the type system and navigaitor's form-spec / FluxStudio pickers.
+        # Overwite this list with the slot names if you add more deferred slots that require runtime or
+        # change the flow with pre-flow wiring (e.g. the default ModelCheckpoint).
+        self.runtime_slots = ["optimizer", "train_loader", "val_loader", "test_loader", "lightning"]
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         from typing import cast
@@ -454,7 +514,7 @@ class LightningTrainer(L.LightningModule):
         """Thin instance-side hook over :func:`log_config_artifacts`."""
         log_config_artifacts(lightning_trainer)
 
-    def _marainer_warn_eager_runtime_slots(self) -> None:
+    def _warn_eager_runtime_slots(self) -> None:
         """Warn when a deferred slot arrived already-materialized (misconfigured YAML).
 
         ``optimizer`` / ``train_loader`` / ``val_loader`` / ``test_loader`` /
@@ -470,7 +530,7 @@ class LightningTrainer(L.LightningModule):
         """
         from confluid.fluid import Fluid
 
-        for name in ("optimizer", "train_loader", "val_loader", "test_loader", "lightning"):
+        for name in self.runtime_slots:
             value = getattr(self, name, None)
             if value is not None and not isinstance(value, Fluid):
                 logger.warning(
@@ -483,36 +543,29 @@ class LightningTrainer(L.LightningModule):
     def run(self) -> None:
         """Execute the training loop."""
         logger.info(f"Marainer navigating to: {self.experiment_name} ({self.run_name})")
-        self._marainer_warn_eager_runtime_slots()
+        self._warn_eager_runtime_slots()
 
         # Materialize datasets ONCE — reused for dimension derivation, the
         # DataLoaders, and label-name persistence. (Flowing them here also fixes
         # an older latent issue where the label-name lookup ran against the
         # still-deferred Fluid and silently skipped class_names.json.)
-        train_ds = flow(self.train_set)
-        val_ds = flow(self.val_set) if self.val_set is not None else None
-        test_ds = flow(self.test_set) if self.test_set is not None else None
+        train_ds = ensure_sample_dataset(flow(self.train_set))
+        val_ds = ensure_sample_dataset(flow(self.val_set)) if self.val_set is not None else None
+        test_ds = ensure_sample_dataset(flow(self.test_set)) if self.test_set is not None else None
 
-        # Generic, task-agnostic dimension injection: a config may declare the
-        # model / metrics as `!lazy:` and omit a dimension (e.g. num_classes);
-        # the dataset derives it (sonair walks its targets) and we inject it when
-        # constructing those deferred nodes. We only walk the dataset(s) when a
-        # node is actually deferred-lazy, so the explicit path pays nothing.
-        dims = (
-            collect_derived_dimensions([train_ds, val_ds, test_ds])
-            if needs_derivation([self.model, self.train_metrics, self.val_metrics, self.test_metrics])
-            else {}
-        )
-        if dims:
-            logger.info(f"Derived model dimensions from dataset(s): {dims}")
-
-        self.model = flow_node_with_dims(self.model, dims)
+        # Flow the model + metrics into live instances. The base stays
+        # task-agnostic: it materializes whatever is wired (an explicit config, or a
+        # node a task subclass already flowed with its dimensions). Task-specific
+        # dimension injection — e.g. a classification trainer flowing the model +
+        # metrics with num_classes — is owned by the subclass's initialize() at the
+        # top of run(); flow() here is idempotent on the already-live instance.
+        self.model = flow(self.model)
         if self.train_metrics is not None:
-            self.train_metrics = flow_node_with_dims(self.train_metrics, dims)
+            self.train_metrics = flow(self.train_metrics)
         if self.val_metrics is not None:
-            self.val_metrics = flow_node_with_dims(self.val_metrics, dims)
+            self.val_metrics = flow(self.val_metrics)
         if self.test_metrics is not None:
-            self.test_metrics = flow_node_with_dims(self.test_metrics, dims)
+            self.test_metrics = flow(self.test_metrics)
         # Materialize the loss if a config supplied it as a deferred Fluid
         # (the loss is a configurable slot now); idempotent on the live default.
         self.loss_fn = flow(self.loss_fn)

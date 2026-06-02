@@ -48,7 +48,8 @@ from torch import Tensor
 from torch.utils.data import DataLoader
 from torchmetrics import Metric, MetricCollection
 
-from marainer.dimensions import collect_derived_dimensions, flow_node_with_dims, needs_derivation
+from marainer.loggers import _render_matrix_as_table, log_figure_to_loggers
+from marainer.run_names import generate_run_name
 
 logger = get_logger(__name__)
 
@@ -67,55 +68,6 @@ def _ensure_class_names(names: Optional[List[str]], n: int) -> List[str]:
     if names is not None and len(names) == n:
         return names
     return [str(i) for i in range(n)]
-
-
-def _render_matrix_as_table(name: str, matrix: Tensor, class_names: List[str]) -> str:
-    """Render a square 2D tensor as a github-flavored markdown table.
-
-    Rows are true labels, columns are predicted labels (the torchmetrics
-    confusion-matrix convention: ``C[i, j]`` = count of ``true=i, pred=j``).
-    """
-    from tabulate import tabulate
-
-    arr = matrix.detach().cpu().tolist()
-    headers = [""] + [f"pred:{c}" for c in class_names]
-    rows = [[f"true:{class_names[i]}", *arr[i]] for i in range(len(arr))]
-    rendered: str = tabulate(rows, headers=headers, tablefmt="github")
-    return f"{name}:\n" + rendered
-
-
-def _log_figure_to_loggers(
-    lightning_trainer: Optional[L.Trainer],
-    name: str,
-    figure: Any,
-) -> None:
-    """Forward a matplotlib Figure to every wired Lightning logger.
-
-    TensorBoard-style loggers expose ``experiment.add_figure(tag, fig, step)``;
-    MLflow-style loggers expose ``experiment.log_figure(run_id, fig, path)``.
-    Loggers without either are silently skipped.
-    """
-    if lightning_trainer is None:
-        return
-    step = getattr(lightning_trainer, "global_step", 0)
-    for lg in getattr(lightning_trainer, "loggers", []) or []:
-        exp = getattr(lg, "experiment", None)
-        if exp is None:
-            continue
-        add_figure = getattr(exp, "add_figure", None)
-        if callable(add_figure):
-            try:
-                add_figure(name, figure, step)
-                continue
-            except Exception as exc:  # pragma: no cover - logger backends are external
-                logger.debug(f"add_figure failed on {type(lg).__name__}: {exc}")
-        log_figure = getattr(exp, "log_figure", None)
-        run_id = getattr(lg, "run_id", None)
-        if callable(log_figure) and run_id:
-            try:
-                log_figure(run_id, figure, f"{name.replace('/', '_')}.png")
-            except Exception as exc:  # pragma: no cover - logger backends are external
-                logger.debug(f"log_figure failed on {type(lg).__name__}: {exc}")
 
 
 def _coerce_metric_value(value: Any) -> Any:
@@ -168,7 +120,8 @@ class LightningEvaluator(L.LightningModule):
             a saved run.
         dataset: Evaluation dataset or Flux pipeline (deferred).
         experiment_name: MLflow experiment name.
-        run_name: MLflow run name.
+        run_name: MLflow run name. ``None`` (default) auto-generates a random slug like
+            ``evaluate_funny_rabbit`` (see :func:`marainer.run_names.generate_run_name`).
 
     Post-construction body-attribute slots (set via YAML / broadcasting):
         loader: Deferred ``DataLoader`` config. Supply a matching ``collate_fn``
@@ -201,7 +154,7 @@ class LightningEvaluator(L.LightningModule):
         model: Any,
         dataset: Any,
         experiment_name: str = "marainer_eval",
-        run_name: str = "evaluate",
+        run_name: Optional[str] = None,
     ) -> None:
         super().__init__()
         # Store config ONLY — no functional work. Deferred slots (loader / lightning)
@@ -214,7 +167,8 @@ class LightningEvaluator(L.LightningModule):
         self.predictions_sink: Any = None
         self.lightning: Any = LazyClass(L.Trainer)
         self.experiment_name = experiment_name
-        self.run_name = run_name
+        # A None run_name gets a random, human-friendly slug (e.g. ``evaluate_funny_rabbit``).
+        self.run_name = run_name if run_name is not None else generate_run_name(prefix="evaluate")
         self.metrics_sidecar_path: Optional[str] = None
         self.class_names: Optional[Union[List[str], str]] = None
         self._resolved_class_names: Optional[List[str]] = None
@@ -340,7 +294,7 @@ class LightningEvaluator(L.LightningModule):
                 continue
             figure = result[0] if isinstance(result, tuple) else result
             try:
-                _log_figure_to_loggers(getattr(self, "trainer", None), name, figure)
+                log_figure_to_loggers(getattr(self, "trainer", None), name, figure)
             finally:
                 try:
                     import matplotlib.pyplot as plt
@@ -392,18 +346,14 @@ class LightningEvaluator(L.LightningModule):
         """
         logger.info(f"Marainer evaluating: {self.experiment_name} ({self.run_name})")
 
-        # Materialize the dataset first so model / metrics can be lazily flowed
-        # with dataset-derived dimensions (e.g. num_classes) when a config omits
-        # them — the same generic mechanism the trainer uses. Walked only when a
-        # node is deferred-lazy, so the explicit path is unaffected.
+        # Materialize the dataset, model, and metrics into live instances. The
+        # evaluator stays task-agnostic: a task subclass (e.g. the classification
+        # evaluator) flows the model + metrics with its dimensions in initialize()
+        # at the top of run(); flow() here is idempotent on an already-live instance.
         dataset = flow(self.dataset)
-        dims = collect_derived_dimensions([dataset]) if needs_derivation([self.model, self.metrics]) else {}
-        if dims:
-            logger.info(f"Derived model dimensions from dataset: {dims}")
-
-        self.model = flow_node_with_dims(self.model, dims)
+        self.model = flow(self.model)
         if self.metrics is not None:
-            self.metrics = flow_node_with_dims(self.metrics, dims)
+            self.metrics = flow(self.metrics)
         if self.predictions_sink is not None:
             self.predictions_sink = flow(self.predictions_sink)
 

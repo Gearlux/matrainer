@@ -20,6 +20,9 @@ dependencies = [
     "psutil",
     # rich powers DatasetProcessor's optional progress bar (marainer.processing).
     "rich",
+    # coolname generates the default random run names (e.g. ``train_funny_rabbit``) in
+    # marainer.run_names — offline adjective_noun slugs, no network.
+    "coolname",
     # pyobjc subset for the inline IOAccelerator reader (Apple-Silicon GPU
     # utilisation, no sudo) in marainer.system_metrics. The full ``pyobjc``
     # meta-package pulls in 100+ frameworks; these two are the minimum

@@ -1,7 +1,5 @@
 """Tests for :func:`marainer.collate.collate_fn_with_metadata`."""
 
-from typing import Any, Dict
-
 import pytest
 import torch
 from dataflux.sample import Sample
