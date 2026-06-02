@@ -14,6 +14,7 @@ from torch.utils.data import DataLoader, Dataset
 from torchmetrics import MetricCollection
 
 from marainer.run_names import generate_run_name
+from marainer.runner import TorchRunner
 
 logger = get_logger(__name__)
 
@@ -235,7 +236,7 @@ def _write_class_names(lightning_trainer: L.Trainer, label_names: List[str]) -> 
 
 
 @configurable
-class LightningTrainer(L.LightningModule):
+class LightningTrainer(TorchRunner, L.LightningModule):
     """Marainer LightningTrainer: configurable Lightning module with integrated training loop.
 
     Supports YAML-configurable metrics via torchmetrics. Train and validation

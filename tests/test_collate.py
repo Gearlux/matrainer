@@ -15,7 +15,7 @@ def test_stacks_image_inputs_and_targets() -> None:
     result = collate_fn_with_metadata(batch)
     assert result.input.shape == (2, 3, 224, 224)
     assert result.target.shape == (2,)
-    assert result.metadata == [{"id": "a"}, {"id": "b"}]
+    assert result.batch_meta == [{"id": "a"}, {"id": "b"}]
 
 
 def test_preserves_metadata_as_list() -> None:
@@ -33,10 +33,10 @@ def test_preserves_metadata_as_list() -> None:
         ),
     ]
     result = collate_fn_with_metadata(batch)
-    assert isinstance(result.metadata, list)
-    assert len(result.metadata) == 2
-    assert result.metadata[0] == {"filename": "img1.png", "pack_id": "pack_001"}
-    assert result.metadata[1] == {"filename": "img2.png", "pack_id": "pack_001"}
+    assert isinstance(result.batch_meta, list)
+    assert len(result.batch_meta) == 2
+    assert result.batch_meta[0] == {"filename": "img1.png", "pack_id": "pack_001"}
+    assert result.batch_meta[1] == {"filename": "img2.png", "pack_id": "pack_001"}
 
 
 def test_coerces_integer_targets_to_int64() -> None:
@@ -76,8 +76,8 @@ def test_preserves_nested_metadata() -> None:
         ),
     ]
     result = collate_fn_with_metadata(batch)
-    assert result.metadata[0]["extra"]["nested"] == "value"
-    assert result.metadata[1]["tags"] == ["tag3"]
+    assert result.batch_meta[0]["extra"]["nested"] == "value"
+    assert result.batch_meta[1]["tags"] == ["tag3"]
 
 
 def test_rejects_empty_batch() -> None:
@@ -120,4 +120,4 @@ def test_handles_multidimensional_targets() -> None:
     result = collate_fn_with_metadata(batch)
     assert result.input.shape == (2, 3, 64, 64)
     assert result.target.shape == (2, 64, 64)
-    assert result.metadata == [{"id": "mask1"}, {"id": "mask2"}]
+    assert result.batch_meta == [{"id": "mask1"}, {"id": "mask2"}]
