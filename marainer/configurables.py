@@ -25,7 +25,6 @@ from torch.optim import SGD, Adam, AdamW
 from torch.utils.data import DataLoader
 
 from marainer.evaluator import LightningEvaluator
-from marainer.loggers import MarainerCSVLogger, MarainerMLFlowLogger, MarainerTensorBoardLogger
 from marainer.trainer import LightningTrainer
 
 # NOTE: these are marked ``lazy`` but deliberately carry NO ``category`` — only a presentation-only
@@ -55,15 +54,12 @@ register(Trainer, group="lightning", lazy=True)
 # instead of being skipped as a runtime-injected slot, and the live ``instance`` output is a usable
 # logger. They must stay ``!class:`` (eager) in YAML — the Lightning Trainer materializes the nested
 # logger Fluids in its ``logger`` list when it flows; a deferred ``!lazy:`` logger would never build.
-# The stock PyTorch-Lightning loggers AND marainer's ``log_all_checkpoints`` drop-ins are both
-# offered. No ``category`` (only the presentation ``group``) — same rationale as the runtime members.
+# The stock PyTorch-Lightning loggers are offered directly. No ``category`` (only the presentation
+# ``group``) — same rationale as the runtime members.
 for _logger_cls in (
     TensorBoardLogger,
     CSVLogger,
     MLFlowLogger,
-    MarainerTensorBoardLogger,
-    MarainerCSVLogger,
-    MarainerMLFlowLogger,
 ):
     register(_logger_cls, role="logger", group="logger")
 
@@ -85,9 +81,6 @@ __all__ = [
     "TensorBoardLogger",
     "CSVLogger",
     "MLFlowLogger",
-    "MarainerTensorBoardLogger",
-    "MarainerCSVLogger",
-    "MarainerMLFlowLogger",
     "LightningTrainer",
     "LightningEvaluator",
 ]

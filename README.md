@@ -564,26 +564,6 @@ Marainer auto-injects a `ModelCheckpoint` callback before training starts (so a 
 
 To opt out, supply your own `ModelCheckpoint` (any `monitor`) under `lightning.callbacks` or set `enable_checkpointing: false` on the Lightning trainer. Either choice is respected; no second callback is added.
 
-### Per-logger archive policy (`log_all_checkpoints`)
-
-Each Lightning logger can independently opt into archiving every checkpoint by using the matching subclass from `marainer.loggers`:
-
-```yaml
-lightning: !lazy:pytorch_lightning.Trainer
-  max_epochs: 10
-  logger:
-    - !class:marainer.loggers.MarainerMLFlowLogger
-        tracking_uri: file:./mlruns
-        experiment_name: !ref:experiment_name
-        log_all_checkpoints: true     # MLflow stores every epoch's checkpoint
-    - !class:marainer.loggers.MarainerTensorBoardLogger
-        save_dir: "."
-        name: "tb_logs"
-        # log_all_checkpoints omitted → defaults to false (last + best only)
-```
-
-When **any** wired logger has `log_all_checkpoints: true`, marainer escalates the auto-injected `ModelCheckpoint` to `save_top_k=-1` so every checkpoint is persisted to disk. For MLflow specifically, the flag also propagates into Lightning's own `log_model="all"` so checkpoints are uploaded as MLflow model artifacts. Sticking with `!class:pytorch_lightning.loggers.TensorBoardLogger` (no flag) still works — the trainer treats it as `log_all_checkpoints=False`.
-
 ### TensorBoard
 
 ```yaml
