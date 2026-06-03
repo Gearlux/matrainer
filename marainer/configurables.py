@@ -20,8 +20,13 @@ entry point so FluxStudio / navigaitor eagerly import it.
 
 from confluid import register
 from pytorch_lightning import Trainer
+from pytorch_lightning.loggers import CSVLogger, MLFlowLogger, TensorBoardLogger
 from torch.optim import SGD, Adam, AdamW
 from torch.utils.data import DataLoader
+
+from marainer.evaluator import LightningEvaluator
+from marainer.loggers import MarainerCSVLogger, MarainerMLFlowLogger, MarainerTensorBoardLogger
+from marainer.trainer import LightningTrainer
 
 # NOTE: these are marked ``lazy`` but deliberately carry NO ``category`` — only a presentation-only
 # ``group`` (FluxStudio nests them as ``Taidal/Marainer/Object/<group>``). FluxStudio detects them as
@@ -44,5 +49,45 @@ register(DataLoader, group="loader", lazy=True)
 # eager Trainer in a body slot would skip that pre-flow wiring).
 register(Trainer, group="lightning", lazy=True)
 
+# Lightning loggers — fed into the ``pytorch_lightning.Trainer.logger`` slot. Registered with
+# ``role="logger"`` (NOT ``lazy``) so FluxStudio builds them as EAGER OBJECT nodes (``role="logger"``
+# is in the bridge ``_MEMBER_ROLES``): a logger's required ``save_dir`` stays a configurable widget
+# instead of being skipped as a runtime-injected slot, and the live ``instance`` output is a usable
+# logger. They must stay ``!class:`` (eager) in YAML — the Lightning Trainer materializes the nested
+# logger Fluids in its ``logger`` list when it flows; a deferred ``!lazy:`` logger would never build.
+# The stock PyTorch-Lightning loggers AND marainer's ``log_all_checkpoints`` drop-ins are both
+# offered. No ``category`` (only the presentation ``group``) — same rationale as the runtime members.
+for _logger_cls in (
+    TensorBoardLogger,
+    CSVLogger,
+    MLFlowLogger,
+    MarainerTensorBoardLogger,
+    MarainerCSVLogger,
+    MarainerMLFlowLogger,
+):
+    register(_logger_cls, role="logger", group="logger")
+
+# Base runnables surfaced for the canvas. ``LightningTrainer`` / ``LightningEvaluator`` are first-party
+# (already ``@configurable``) — they need no ``register`` call; they are re-exported here purely so
+# FluxStudio's ``__all__``-gated discovery pass surfaces them as RUNNABLE nodes (``_is_runnable``),
+# the same way the task trainers (sonair / deltaid / raidar) are. This makes a config rooted on the
+# generic base trainer (e.g. ``waivefront-rfuav/config/train_efficientvit_b0.yaml``) importable into
+# the canvas. Re-exported HERE (an import-only discovery module that already pulls Lightning) rather
+# than in ``marainer.__init__`` so a plain ``import marainer`` stays free of the Lightning import cost.
+
 # Re-exported names FluxStudio discovery surfaces (the second, ``__all__``-gated pass).
-__all__ = ["Adam", "AdamW", "SGD", "DataLoader", "Trainer"]
+__all__ = [
+    "Adam",
+    "AdamW",
+    "SGD",
+    "DataLoader",
+    "Trainer",
+    "TensorBoardLogger",
+    "CSVLogger",
+    "MLFlowLogger",
+    "MarainerTensorBoardLogger",
+    "MarainerCSVLogger",
+    "MarainerMLFlowLogger",
+    "LightningTrainer",
+    "LightningEvaluator",
+]
