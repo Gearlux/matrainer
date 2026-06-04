@@ -427,6 +427,31 @@ Epoch 2: 100%|####| 63/63 [00:05] train/loss=0.234 val/loss=0.312
 
 ---
 
+## Outputs (the `@output` I/O contract)
+
+`LightningTrainer` and `LightningEvaluator` declare confluid `@output` properties — the read-only,
+post-run side of the I/O contract that tools (FluxStudio's results panel, navigaitor's form-spec)
+read via `confluid.output_specs`. They are **only valid after `run()`** (they raise a clear
+`RuntimeError` before — they are run artifacts, not config knobs, and never appear in `to_pydantic`):
+
+| Output | Type | Source |
+| --- | --- | --- |
+| `computed_metrics` | `Dict[str, float]` | Trainer: Lightning's `self.trainer.callback_metrics` (final logged scalars; the per-split `MetricCollection`s are reset each epoch). Evaluator: `self.metrics.compute()` (the `test/`-prefixed collection, not reset). **Scalars only** — non-scalar metrics (e.g. a confusion matrix) are logged as figures, not tabulated. |
+| `label_names` | `List[str]` | Resolved class names for the run (`[]` when the dataset exposes none). |
+
+```python
+trainer.run()
+print(trainer.computed_metrics)  # {"train/loss": 0.21, "test/acc": 0.93, ...}
+print(trainer.label_names)       # ["drone_a", "drone_b", ...]
+```
+
+Task subclasses (sonair / deltaid / raidar) inherit both outputs for free. In FluxStudio these
+populate the **Run node's results panel** after a run (see the FluxStudio README); the underlying
+JSON-safe coercion is `marainer.trainer._coerce_metric_value` (shared with the evaluator's metrics
+sidecar). `trained_model` (sonair) stays a wireable object output, distinct from these display values.
+
+---
+
 ## Confluid Integration
 
 Marainer leverages [Confluid](https://github.com/Gearlux/confluid) for all configuration and dependency injection.
@@ -563,6 +588,18 @@ Marainer auto-injects a `ModelCheckpoint` callback before training starts (so a 
     3. `train/loss` (`mode=min`) when no `val_set` is wired
 
 To opt out, supply your own `ModelCheckpoint` (any `monitor`) under `lightning.callbacks` or set `enable_checkpointing: false` on the Lightning trainer. Either choice is respected; no second callback is added.
+
+### Loading checkpoints
+
+`marainer.checkpoint.load_lightning_checkpoint(model, path, strict=False)` is the loading counterpart — model classes call it from their `__init__` (typically gated on a `checkpoint_path` constructor arg) to load their own weights without dragging Marainer's Lightning wrapper into the picture. It lives in Marainer because it loads weights saved by Marainer's Lightning wrapper, so it's the natural home for the common upstream of every task package (sonair / deltaid / raidar / raidar-ultralytics), which import it across the dependency boundary.
+
+One helper tolerates three on-disk shapes:
+
+- **Lightning `.ckpt`** — top-level `state_dict` key whose entries carry the `model.` prefix Lightning's wrapper adds; the prefix is stripped on load.
+- **Ultralytics `.pt`** — top-level `model` key holding a *live* `nn.Module` (e.g. ultralytics' `DetectionModel`); its `state_dict()` is pulled and the `model.<n>...` namespace prefix is **kept** (it's a real layer level, not Lightning's wrapper). Detected by an `isinstance` check, so no `ultralytics` import is incurred.
+- **Plain state-dict** — `torch.save(model.state_dict(), path)`; the loaded object is the state dict.
+
+`strict` defaults to `False` so e.g. a re-trained head with a different `num_classes` doesn't reject the whole load. When the source keys don't match `model`'s own `state_dict` but do match one of its `named_children()`, the load is auto-retargeted to that child (e.g. `YOLO26Model(checkpoint_path=<best.pt>)` routes an Ultralytics checkpoint into `self.detector` without hand-prefixing). A missing `path` raises `FileNotFoundError`.
 
 ### TensorBoard
 

@@ -518,3 +518,78 @@ def _make_evaluator(**overrides: Any) -> LightningEvaluator:
     for _k, _v in overrides.items():
         setattr(ev, _k, _v)
     return ev
+
+
+# --- @output I/O contract (computed_metrics / label_names) ----------------
+
+
+def test_coerce_metric_value_is_reexported_from_trainer() -> None:
+    """``_coerce_metric_value`` was relocated to ``marainer.trainer``; the evaluator re-exports it
+    (so this module's existing import + any other consumer keeps working)."""
+    import marainer.trainer as trainer_mod
+
+    assert _coerce_metric_value is trainer_mod._coerce_metric_value
+
+
+def test_evaluator_declares_computed_metrics_and_label_names_outputs() -> None:
+    from confluid import output_specs
+
+    names = {s["name"] for s in output_specs(LightningEvaluator)}
+    assert {"computed_metrics", "label_names"} <= names
+    for name in ("computed_metrics", "label_names"):
+        fget = getattr(LightningEvaluator, name).fget
+        assert getattr(fget, "__confluid_output__", False) is True
+
+
+def test_evaluator_computed_metrics_raises_before_run() -> None:
+    evaluator = _make_evaluator(
+        model=_ClassificationModel(),
+        dataset=Flux(source=[Sample(input=torch.randn(4), target=0, metadata={})]),
+    )
+    with pytest.raises(RuntimeError, match="only available after run"):
+        _ = evaluator.computed_metrics
+
+
+def test_evaluator_computed_metrics_after_run(tmp_path: Any) -> None:
+    samples = [Sample(input=torch.randn(4), target=i % 3, metadata={"idx": i}) for i in range(8)]
+    evaluator = _make_evaluator(
+        model=_ClassificationModel(),
+        dataset=Flux(source=samples),
+        loader=Class(DataLoader, batch_size=4),
+        metrics=MetricCollection({"acc": MulticlassAccuracy(num_classes=3)}),
+        lightning=Class(
+            L.Trainer,
+            accelerator="cpu",
+            enable_progress_bar=False,
+            enable_model_summary=False,
+            logger=False,
+            default_root_dir=str(tmp_path),
+        ),
+    )
+    evaluator.run()
+    metrics = evaluator.computed_metrics
+    assert "acc" in metrics
+    assert isinstance(metrics["acc"], float)
+
+
+def test_evaluator_label_names_after_run(tmp_path: Any) -> None:
+    class _Labeled(Flux):
+        label_names = ("a", "b", "c")
+
+    samples = [Sample(input=torch.randn(4), target=i % 3, metadata={"idx": i}) for i in range(6)]
+    evaluator = _make_evaluator(
+        model=_ClassificationModel(),
+        dataset=_Labeled(source=samples),
+        loader=Class(DataLoader, batch_size=3),
+        metrics=MetricCollection({"acc": MulticlassAccuracy(num_classes=3)}),
+        lightning=Class(
+            L.Trainer,
+            accelerator="cpu",
+            enable_progress_bar=False,
+            enable_model_summary=False,
+            logger=False,
+            default_root_dir=str(tmp_path),
+        ),
+    )
+    evaluator.run()
+    assert evaluator.label_names == ["a", "b", "c"]
