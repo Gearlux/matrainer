@@ -2,10 +2,11 @@
 
 from typing import Any, cast
 
+import pytest
 import pytorch_lightning as L
 import torch
 import torch.nn as nn
-from confluid import Class, configurable
+from confluid import Class, configurable, output_specs
 from dataflux.core import Flux
 from dataflux.sample import Sample
 from torch.utils.data import DataLoader
@@ -147,3 +148,63 @@ class TestTestSet:
             L.Trainer.test = original_test  # type: ignore[method-assign]
 
         assert call_counter["count"] == 0
+
+
+class _LabeledFlux(Flux):
+    """A Flux exposing the informal ``label_names`` protocol the trainer surfaces."""
+
+    label_names = ("neg", "pos")
+
+
+def _make_runnable_trainer(train_set: Flux) -> LightningTrainer:
+    trainer = LightningTrainer(model=TinyModel(), train_set=train_set)
+    trainer.lightning = Class(
+        L.Trainer,
+        max_epochs=1,
+        accelerator="cpu",
+        enable_progress_bar=False,
+        enable_model_summary=False,
+        logger=False,
+    )
+    trainer.train_loader = Class(DataLoader, batch_size=8)
+    return trainer
+
+
+class TestRunOutputs:
+    """The post-run ``@output`` I/O contract surfaced by FluxStudio / navigaitor."""
+
+    def test_declares_computed_metrics_and_label_names_outputs(self) -> None:
+        names = {s["name"] for s in output_specs(LightningTrainer)}
+        assert {"computed_metrics", "label_names"} <= names
+        # @output marks the underlying getter, not the property object.
+        for name in ("computed_metrics", "label_names"):
+            fget = getattr(LightningTrainer, name).fget
+            assert getattr(fget, "__confluid_output__", False) is True
+
+    def test_computed_metrics_raises_before_run(self) -> None:
+        trainer = LightningTrainer(model=TinyModel(), train_set=Flux(source=_make_samples(8)))
+        with pytest.raises(RuntimeError, match="only available after run"):
+            _ = trainer.computed_metrics
+
+    def test_label_names_raises_before_run(self) -> None:
+        trainer = LightningTrainer(model=TinyModel(), train_set=Flux(source=_make_samples(8)))
+        with pytest.raises(RuntimeError, match="only available after run"):
+            _ = trainer.label_names
+
+    def test_computed_metrics_after_run_returns_scalar_floats(self) -> None:
+        trainer = _make_runnable_trainer(Flux(source=_make_samples(16)))
+        trainer.run()
+        metrics = trainer.computed_metrics
+        assert isinstance(metrics, dict) and metrics, "expected non-empty scalar metrics"
+        assert "train/loss" in metrics  # the base logs train/loss every run
+        assert all(isinstance(v, float) for v in metrics.values()), metrics
+
+    def test_label_names_after_run_from_dataset(self) -> None:
+        trainer = _make_runnable_trainer(_LabeledFlux(source=_make_samples(16)))
+        trainer.run()
+        assert trainer.label_names == ["neg", "pos"]
+
+    def test_label_names_after_run_empty_when_absent(self) -> None:
+        trainer = _make_runnable_trainer(Flux(source=_make_samples(16)))  # no label_names
+        trainer.run()
+        assert trainer.label_names == []

@@ -1,14 +1,15 @@
 import json
 import shutil
 from pathlib import Path
-from typing import Any, Iterable, List, Optional, Union
+from typing import Any, Dict, Iterable, List, Optional, Union
 
 import pytorch_lightning as L
 import torch
 import torch.nn as nn
-from confluid import Fluid, LazyClass, configurable, flow
+from confluid import Fluid, LazyClass, configurable, flow, output
 from logflow import get_logger
 from pytorch_lightning.loggers import Logger
+from torch import Tensor
 from torch.utils.data import DataLoader, Dataset
 from torchmetrics import MetricCollection
 
@@ -62,6 +63,51 @@ def ensure_sample_dataset(source: Any) -> Dataset[Any]:
     if isinstance(source, Flux):
         return source
     return Flux(source=source)
+
+
+def _coerce_metric_value(value: Any) -> Any:
+    """Convert a torchmetrics compute() value into a JSON-safe Python scalar.
+
+    Tensors become floats (or ints for integer-typed scalars); nested dicts /
+    lists / tuples recurse. Anything already JSON-safe (str / bool / None /
+    int / float) passes through. Shared by the evaluator's metrics sidecar
+    (:meth:`LightningEvaluator._write_metrics_sidecar`, which re-imports this)
+    and the ``computed_metrics`` ``@output`` on both the trainer and evaluator —
+    it lives here (the foundational module) so the evaluator imports it without
+    a backwards ``evaluator -> trainer`` dependency.
+    """
+    if isinstance(value, Tensor):
+        if value.numel() == 1:
+            try:
+                return value.item()
+            except RuntimeError:
+                # Non-numeric (rare) — fall through to string repr.
+                return str(value)
+        return [_coerce_metric_value(v) for v in value.detach().cpu().tolist()]
+    if isinstance(value, dict):
+        return {k: _coerce_metric_value(v) for k, v in value.items()}
+    if isinstance(value, (list, tuple)):
+        return [_coerce_metric_value(v) for v in value]
+    if isinstance(value, (int, float, str, bool)) or value is None:
+        return value
+    return str(value)
+
+
+def _scalar_metrics(raw: Any) -> Dict[str, float]:
+    """Coerce a torchmetrics ``compute()`` result to a flat ``{name: float}`` of SCALARS only.
+
+    Non-scalar metrics (e.g. an ``N×N`` confusion matrix, which ``_coerce_metric_value`` turns into
+    a nested list) are dropped — they are rendered as figures to the loggers, not tabulated here.
+    ``bool`` is excluded (it is not a metric value). Used by the ``computed_metrics`` ``@output`` of
+    both the trainer and the evaluator so the FluxStudio results panel shows a clean scalar table.
+    """
+    payload = _coerce_metric_value(raw if isinstance(raw, dict) else {"value": raw})
+    out: Dict[str, float] = {}
+    if isinstance(payload, dict):
+        for key, val in payload.items():
+            if isinstance(val, (int, float)) and not isinstance(val, bool):
+                out[str(key)] = float(val)
+    return out
 
 
 def _resolve_label_names(dataset: Any) -> Optional[List[str]]:
@@ -293,6 +339,9 @@ class LightningTrainer(TorchRunner, L.LightningModule):
         self.train_metrics: Any = None
         self.val_metrics: Any = None
         self.test_metrics: Any = None
+        # Resolved class/label names for the run, stashed by run() (None pre-run); surfaced by the
+        # ``label_names`` @output. Underscore-prefixed so confluid never treats it as a config knob.
+        self._label_names: Optional[List[str]] = None
 
         # The trainer flows these deferred slots itself at runtime, so they must be
         # declared here as non-deferred defaults (``LazyClass(...)``) to satisfy
@@ -466,6 +515,7 @@ class LightningTrainer(TorchRunner, L.LightningModule):
         logger.info("Training complete.")
 
         label_names = _resolve_label_names(train_ds)
+        self._label_names = label_names  # stashed for the label_names @output (None when absent)
         if label_names:
             _write_class_names(lightning_trainer, label_names)
         else:
@@ -476,3 +526,44 @@ class LightningTrainer(TorchRunner, L.LightningModule):
             test_loader = flow(self.test_loader, dataset=test_ds)
             lightning_trainer.test(model=self, dataloaders=test_loader)
             logger.info("Test evaluation complete.")
+
+    @property
+    @output
+    def computed_metrics(self) -> Dict[str, float]:
+        """Final SCALAR metrics logged this run (post-run ``@output`` — the FluxStudio results panel).
+
+        Reads Lightning's ``self.trainer.callback_metrics`` (the final logged scalars). The per-split
+        ``MetricCollection``s are reset each epoch, so ``.compute()`` on them post-run is wrong —
+        ``callback_metrics`` is the authoritative source. Only scalar values are kept (non-scalar
+        metrics like a confusion matrix are logged as figures, not tabulated here). **Raises before
+        ``run()``** because the Lightning trainer back-reference is not yet attached — like
+        :attr:`trained_model`, this is a run OUTPUT, not a config knob (read-only ⇒ never a config
+        field; surfaced by :func:`confluid.output_specs`).
+        """
+        try:
+            callback_metrics = self.trainer.callback_metrics  # LightningModule back-ref; raises pre-fit
+        except RuntimeError as exc:
+            raise RuntimeError(
+                "LightningTrainer.computed_metrics is only available after run(): no Lightning trainer "
+                "is attached yet. Wire this output downstream of a Run node."
+            ) from exc
+        return _scalar_metrics(dict(callback_metrics))
+
+    @property
+    @output
+    def label_names(self) -> List[str]:
+        """Resolved class/label names for this run (post-run ``@output``), or ``[]`` when none.
+
+        Names come from the train set's informal ``label_names`` protocol (see
+        :func:`_resolve_label_names`), stashed by :meth:`run`. Guarded on the same Lightning
+        back-reference as :attr:`computed_metrics` so it **raises before ``run()``** (a completed run
+        with no class names returns ``[]``, not an error).
+        """
+        try:
+            _ = self.trainer  # LightningModule back-ref; raises pre-fit (the pre-run guard)
+        except RuntimeError as exc:
+            raise RuntimeError(
+                "LightningTrainer.label_names is only available after run(). "
+                "Wire this output downstream of a Run node."
+            ) from exc
+        return list(self._label_names or [])

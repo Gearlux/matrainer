@@ -12,19 +12,15 @@ classification, detection, or segmentation — it only requires that the
 model's eval-mode ``forward`` produces something the configured ``metrics``
 and ``predictions_sink`` expect.
 
-YAML example (detection)::
+YAML example (detection — via raidar's specialised subclass, which overrides the
+test step to drive a torchvision-native model + raw torchmetrics directly)::
 
-    evaluator: !class:marainer.evaluator.LightningEvaluator
-      model: !class:raidar.faster_rcnn.FasterRCNNModel
+    evaluator: !class:raidar.evaluator.LightningDetectionEvaluator
+      num_classes: 2
+      model: !class:raidar.rfdetr.RFDETRModel
         num_classes: 2
         checkpoint_path: ./checkpoints/best.ckpt   # the model loads itself
       dataset: !ref:eval_set
-      loader: !class:torch.utils.data.DataLoader
-        batch_size: 4
-        collate_fn: !ref:raidar.detection.detection_collate_fn
-      metrics: !class:raidar.detection.DetectionMetricAdapter
-        inner: !class:torchmetrics.detection.MeanAveragePrecision
-          iou_type: bbox
       metrics_sidecar_path: ./eval_metrics.json   # optional — see below
 
     cli:  marainer evaluate config.yaml
@@ -44,7 +40,7 @@ from typing import Any, Dict, List, Optional, Union
 import pytorch_lightning as L
 import torch
 import torch.nn as nn
-from confluid import Fluid, LazyClass, configurable, flow
+from confluid import Fluid, LazyClass, configurable, flow, output
 from logflow import get_logger
 from torch import Tensor
 from torch.utils.data import DataLoader, Dataset
@@ -52,6 +48,7 @@ from torchmetrics import Metric, MetricCollection
 
 from marainer.loggers import _render_matrix_as_table, log_figure_to_loggers
 from marainer.run_names import generate_run_name
+from marainer.trainer import _coerce_metric_value, _scalar_metrics
 
 logger = get_logger(__name__)
 
@@ -70,31 +67,6 @@ def _ensure_class_names(names: Optional[List[str]], n: int) -> List[str]:
     if names is not None and len(names) == n:
         return names
     return [str(i) for i in range(n)]
-
-
-def _coerce_metric_value(value: Any) -> Any:
-    """Convert a torchmetrics compute() value into a JSON-safe Python scalar.
-
-    Tensors become floats (or ints for integer-typed scalars); nested dicts /
-    lists / tuples recurse. Anything already JSON-safe (str / bool / None /
-    int / float) passes through. Used by :meth:`Evaluator._write_metrics_sidecar`
-    so the sidecar is human-readable and ``json.load``-able from any tool.
-    """
-    if isinstance(value, Tensor):
-        if value.numel() == 1:
-            try:
-                return value.item()
-            except RuntimeError:
-                # Non-numeric (rare) — fall through to string repr.
-                return str(value)
-        return [_coerce_metric_value(v) for v in value.detach().cpu().tolist()]
-    if isinstance(value, dict):
-        return {k: _coerce_metric_value(v) for k, v in value.items()}
-    if isinstance(value, (list, tuple)):
-        return [_coerce_metric_value(v) for v in value]
-    if isinstance(value, (int, float, str, bool)) or value is None:
-        return value
-    return str(value)
 
 
 @configurable
@@ -373,3 +345,39 @@ class LightningEvaluator(L.LightningModule):
             self.predictions_sink.close()
         self._finalize_metrics()
         logger.info("Evaluation complete.")
+
+    @property
+    @output
+    def computed_metrics(self) -> Dict[str, float]:
+        """Final SCALAR evaluation metrics (post-run ``@output`` — the FluxStudio results panel).
+
+        Reads ``self.metrics.compute()`` — the ``test/``-prefixed ``MetricCollection`` is NOT reset
+        (unlike the trainer's per-split collections), so this is the same payload the optional metrics
+        sidecar dumps. Only scalar values are kept (a confusion matrix is rendered as a figure, not
+        tabulated here). **Raises before ``run()``** while ``self.metrics`` is still a dict of templates
+        / ``None`` rather than a live ``MetricCollection`` — it is a run OUTPUT, not a config knob
+        (surfaced by :func:`confluid.output_specs`).
+        """
+        if not isinstance(self.metrics, MetricCollection):
+            raise RuntimeError(
+                "LightningEvaluator.computed_metrics is only available after run(): metrics are not a "
+                "live MetricCollection yet. Wire this output downstream of a Run node."
+            )
+        return _scalar_metrics(self.metrics.compute())
+
+    @property
+    @output
+    def label_names(self) -> List[str]:
+        """Resolved class/label names for this run (post-run ``@output``), or ``[]`` when none.
+
+        Names are resolved in :meth:`run` (:meth:`_resolve_class_names` — explicit ``class_names``, the
+        dataset's ``label_names``, or a checkpoint-adjacent ``class_names.json``) into
+        ``self._resolved_class_names``. **Raises before ``run()``** (when neither the names nor a live
+        metric collection exist yet).
+        """
+        if self._resolved_class_names is None and not isinstance(self.metrics, MetricCollection):
+            raise RuntimeError(
+                "LightningEvaluator.label_names is only available after run(). "
+                "Wire this output downstream of a Run node."
+            )
+        return list(self._resolved_class_names or [])
