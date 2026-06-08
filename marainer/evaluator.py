@@ -16,9 +16,8 @@ YAML example (detection — via raidar's specialised subclass, which overrides t
 test step to drive a torchvision-native model + raw torchmetrics directly)::
 
     evaluator: !class:raidar.evaluator.LightningDetectionEvaluator
-      num_classes: 2
       model: !class:raidar.rfdetr.RFDETRModel
-        num_classes: 2
+        num_classes: 2                             # the model carries the count
         checkpoint_path: ./checkpoints/best.ckpt   # the model loads itself
       dataset: !ref:eval_set
       metrics_sidecar_path: ./eval_metrics.json   # optional — see below
