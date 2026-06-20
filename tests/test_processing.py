@@ -131,5 +131,42 @@ def test_yaml_roundtrip_default_is_off() -> None:
     assert restored.progress_desc is None
 
 
+def test_progress_callback_fires_per_sample_without_console_bar() -> None:
+    """The executor's (FluxStudio) progress callback fires per sample even when show_progress is OFF.
+
+    The native ComfyUI bar is independent of the rich console bar — set_progress_callback drives it
+    regardless of ``show_progress``.
+    """
+    flux = Flux(source=_SizedSource(3))
+    sink = _RecordingSink()
+    reports: List[tuple] = []
+    proc = DatasetProcessor(flux=flux, sink=sink)  # show_progress defaults to False
+    proc.set_progress_callback(lambda value, total, desc: reports.append((value, total, desc)))
+    proc.run()
+    # One report per emitted sample, with a monotonically increasing value and the sized total.
+    assert [v for v, _, _ in reports] == [1.0, 2.0, 3.0]
+    assert all(total == 3.0 for _, total, _ in reports)
+    assert all(desc == "DatasetProcessor" for *_, desc in reports)
+
+
+def test_progress_callback_uses_progress_desc() -> None:
+    flux = Flux(source=_SizedSource(1))
+    reports: List[tuple] = []
+    proc = DatasetProcessor(flux=flux, progress_desc="my-run")  # sinkless path
+    proc.set_progress_callback(lambda value, total, desc: reports.append((value, total, desc)))
+    proc.run()
+    assert reports == [(1.0, 1.0, "my-run")]
+
+
+def test_progress_callback_noop_for_unsized_source() -> None:
+    """An unsized source has no total — the executor bar stays indeterminate (callback never fires)."""
+    flux = Flux(source=_UnsizedSource(4))
+    reports: List[tuple] = []
+    proc = DatasetProcessor(flux=flux)
+    proc.set_progress_callback(lambda value, total, desc: reports.append((value, total, desc)))
+    proc.run()
+    assert reports == []
+
+
 if __name__ == "__main__":
     pytest.main([__file__, "-v"])

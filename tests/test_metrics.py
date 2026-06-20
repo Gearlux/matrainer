@@ -221,3 +221,69 @@ class TestTrainerMetricsIntegration:
             enable_model_summary=False,
         )
         lt.fit(model=trainer, train_dataloaders=loader)
+
+
+# ---------------------------------------------------------------------------
+# build_metric_collection — normalizes any metrics spec into a MetricCollection.
+# A single metric (incl. a deferred LazyClass from a FluxStudio metric node's
+# `class` output) must work, not just a dict / ready-made collection.
+# ---------------------------------------------------------------------------
+
+
+class TestBuildMetricCollection:
+    def test_single_lazy_template_wraps_and_flows_with_dims(self) -> None:
+        # The reported crash: a single LazyClass (a metric node's `class` output) had no `.items()`.
+        from confluid import LazyClass
+        from torchmetrics.classification import MulticlassConfusionMatrix
+
+        from marainer.trainer import build_metric_collection
+
+        mc = build_metric_collection(LazyClass(MulticlassConfusionMatrix), num_classes=10)
+        assert isinstance(mc, MetricCollection)
+        assert list(mc.keys()) == ["MulticlassConfusionMatrix"]
+        # The deferred class sized itself off the run-time num_classes (NOT the 0-valued widget).
+        assert mc["MulticlassConfusionMatrix"].num_classes == 10
+
+    def test_single_live_metric_wraps(self) -> None:
+        from marainer.trainer import build_metric_collection
+
+        mc = build_metric_collection(MulticlassAccuracy(num_classes=3), num_classes=3)
+        assert list(mc.keys()) == ["MulticlassAccuracy"]
+
+    def test_list_of_templates_wraps_each(self) -> None:
+        from confluid import LazyClass
+        from torchmetrics.classification import MulticlassConfusionMatrix
+
+        from marainer.trainer import build_metric_collection
+
+        mc = build_metric_collection(
+            [LazyClass(MulticlassAccuracy), LazyClass(MulticlassConfusionMatrix)], num_classes=4
+        )
+        assert set(mc.keys()) == {"MulticlassAccuracy", "MulticlassConfusionMatrix"}
+
+    def test_dict_of_templates_still_flows(self) -> None:
+        from confluid import LazyClass
+
+        from marainer.trainer import build_metric_collection
+
+        mc = build_metric_collection(
+            {"acc": LazyClass(MulticlassAccuracy), "f1": LazyClass(MulticlassF1Score, average="macro")},
+            num_classes=2,
+        )
+        assert set(mc.keys()) == {"acc", "f1"}
+
+    def test_ready_made_collection_passes_through_unchanged(self) -> None:
+        from marainer.trainer import build_metric_collection
+
+        ready = MetricCollection({"acc": MulticlassAccuracy(num_classes=2)})
+        assert build_metric_collection(ready, num_classes=2) is ready
+
+    def test_single_metric_result_clones_per_split(self) -> None:
+        # The caller clones with a `test/` prefix; that must work on the single-metric result.
+        from confluid import LazyClass
+        from torchmetrics.classification import MulticlassConfusionMatrix
+
+        from marainer.trainer import build_metric_collection
+
+        mc = build_metric_collection(LazyClass(MulticlassConfusionMatrix), num_classes=5).clone(prefix="test/")
+        assert list(mc.keys()) == ["test/MulticlassConfusionMatrix"]

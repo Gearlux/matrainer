@@ -66,6 +66,44 @@ class TestMapStyleFlux:
         assert len(list(loader)) == 2
 
 
+class TestProgressCallback:
+    """The comfy-free progress callback fires through a REAL Lightning fit (not a faked trainer).
+
+    Verifies the whole marainer-side wiring end-to-end: ``run()`` attaches the
+    ``LightningProgressCallback`` after ``flow(self.lightning)``, Lightning's real per-batch hook
+    drives it, and the executor's sink receives a monotonic ``global_step`` against the constant
+    ``estimated_stepping_batches`` total — the whole-run bar mapping.
+    """
+
+    def test_progress_callback_fires_during_real_fit(self) -> None:
+        from confluid import LazyClass
+
+        reports: list = []
+        trainer = LightningTrainer(model=TinyModel(), train_set=_make_samples(16))
+        trainer.optimizer = Class(torch.optim.SGD, lr=0.01)
+        trainer.train_loader = LazyClass(DataLoader, batch_size=8)  # 16 / 8 = 2 batches/epoch
+        trainer.lightning = LazyClass(
+            L.Trainer,
+            max_epochs=2,  # 2 batches/epoch * 2 epochs = 4 optimizer steps total
+            accelerator="cpu",
+            enable_progress_bar=False,
+            enable_model_summary=False,
+            enable_checkpointing=False,
+            logger=False,
+        )
+        trainer.set_progress_callback(lambda value, total, desc: reports.append((value, total, desc)))
+        trainer.run()
+
+        assert reports, "no progress was reported during a real fit"
+        assert {desc for *_, desc in reports} == {"Training"}
+        # estimated_stepping_batches is constant across the whole run (4 steps); global_step is the
+        # monotonic value, reaching the total on the final batch.
+        assert {total for _, total, _ in reports} == {4.0}
+        values = [value for value, _, _ in reports]
+        assert values == sorted(values)
+        assert max(values) == 4.0
+
+
 class TestFluxGetitem:
     def test_returns_sample(self) -> None:
         assert isinstance(Flux(source=_make_samples(4))[0], Sample)

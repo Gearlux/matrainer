@@ -18,11 +18,21 @@ from dataflux.storage.base import Storage
 from logflow import get_logger
 from rich.progress import BarColumn, MofNCompleteColumn, Progress, TextColumn, TimeRemainingColumn
 
+from marainer.progress import ProgressReporting
+
 logger = get_logger(__name__)
 
 
+def _flux_total(flux: Flux) -> Optional[int]:
+    """``len(flux.source)`` when the source is sized, else ``None`` (a glob-based / streaming source)."""
+    try:
+        return len(flux.source)  # type: ignore[arg-type]
+    except (TypeError, AttributeError):
+        return None
+
+
 @configurable
-class DatasetProcessor:
+class DatasetProcessor(ProgressReporting):
     """Orchestrate a DataFlux pipeline from source to sink.
 
     Args:
@@ -64,6 +74,10 @@ class DatasetProcessor:
         sink = flow(self.sink) if isinstance(self.sink, Fluid) else self.sink
 
         iterator = self._wrap_progress(flux)
+        # Drive the executor's progress bar (FluxStudio / ComfyUI) per sample — independent of the
+        # console ``show_progress`` rich bar; a no-op when no progress callback was injected.
+        total = _flux_total(flux)
+        desc = self.progress_desc or "DatasetProcessor"
 
         if sink:
             logger.info(f"Streaming data to sink: {sink.__class__.__name__}")
@@ -75,11 +89,15 @@ class DatasetProcessor:
                 for sample in iterator:
                     sink.write(sample)
                     count += 1
+                    self._report_progress(count, total, desc)
                 sink.flush()
             logger.info(f"Streamed {count} sample(s) to sink.")
         else:
             logger.info("No sink provided. Materializing data in-memory.")
-            results = list(iterator)
+            results = []
+            for count, sample in enumerate(iterator, start=1):
+                results.append(sample)
+                self._report_progress(count, total, desc)
             logger.info(f"Processed {len(results)} samples.")
 
         logger.info("Processing complete.")
@@ -93,13 +111,8 @@ class DatasetProcessor:
         """
         if not self.show_progress:
             return flux
-        total: Optional[int]
-        try:
-            total = len(flux.source)  # type: ignore[arg-type]
-        except (TypeError, AttributeError):
-            total = None
         desc = self.progress_desc or "DatasetProcessor"
-        return _ProgressIter(flux, total=total, desc=desc)
+        return _ProgressIter(flux, total=_flux_total(flux), desc=desc)
 
 
 class _ProgressIter:
