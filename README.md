@@ -281,6 +281,43 @@ processor: !class:marainer.processing.DatasetProcessor
 > workspace's generic data-pipeline runner and depends only on DataFlux +
 > Confluid. It was moved here from `waivefront.processing`.
 
+> `show_progress` controls the **console** `rich` bar only. A GUI executor
+> (FluxStudio, driving ComfyUI's native per-node progress bar) gets progress via
+> a separate, comfy-free channel — see *Reporting progress to a GUI* below — which
+> fires per sample regardless of `show_progress`.
+
+---
+
+## Reporting progress to a GUI (the `marainer.progress` protocol)
+
+Every long-running runnable — `LightningTrainer` (and its task subclasses),
+`LightningEvaluator`, and `DatasetProcessor` — can report progress to a GUI
+executor **without marainer importing any GUI/ComfyUI code**, mirroring the
+`TorchRunner` autograd split. The executor injects a plain callback; the runnable
+drains it from its loop:
+
+```python
+from marainer.progress import ProgressReporting   # the mixin every runnable inherits
+
+trainer.set_progress_callback(lambda value, total, desc: ...)  # (value, total, desc) -> None
+trainer.run()                                                  # callback fires as the run proceeds
+```
+
+- **No callback injected** (a plain `marainer train` / `evaluate` / `process` CLI
+  run, or any non-GUI caller) ⇒ every report is a silent no-op; behaviour is
+  unchanged.
+- **Lightning runnables** get whole-run progress for free via
+  `marainer.progress.LightningProgressCallback`: training reports one bar over the
+  *whole run* (`trainer.global_step` out of `trainer.estimated_stepping_batches`,
+  so it advances across all epochs without resetting); standalone test / predict
+  report the per-stage batch count.
+- **`DatasetProcessor`** reports per sample (`len(flux.source)` total).
+
+FluxStudio is the reference consumer — it implements `set_progress_callback` to
+drive ComfyUI's native green progress bar. The protocol lives in
+`marainer.progress` (it is intentionally **not** re-exported from `marainer`'s
+package root, which stays free of the PyTorch-Lightning import cost).
+
 ---
 
 ## Metrics System
@@ -438,6 +475,7 @@ read via `confluid.output_specs`. They are **only valid after `run()`** (they ra
 | --- | --- | --- |
 | `computed_metrics` | `Dict[str, float]` | Trainer: Lightning's `self.trainer.callback_metrics` (final logged scalars; the per-split `MetricCollection`s are reset each epoch). Evaluator: `self.metrics.compute()` (the `test/`-prefixed collection, not reset). **Scalars only** — non-scalar metrics (e.g. a confusion matrix) are logged as figures, not tabulated. |
 | `label_names` | `List[str]` | Resolved class names for the run (`[]` when the dataset exposes none). |
+| `all_metrics` (evaluator only) | `Dict[str, Any]` | The FULL `self.metrics.compute()` — *every* metric by name, scalars AND non-scalars (a confusion matrix becomes a nested list), JSON-safe. Since `computed_metrics` is scalars-only, this generic output is how non-scalar metrics are surfaced: a consumer (FluxStudio's *Confusion Matrix* viewer) extracts every confusion matrix from it. The evaluator carries no "which metric is the confusion matrix" knowledge. |
 
 ```python
 trainer.run()

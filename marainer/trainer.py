@@ -1,5 +1,6 @@
 import json
 import shutil
+from collections.abc import Mapping
 from pathlib import Path
 from typing import Any, Dict, Iterable, List, Optional, Union
 
@@ -13,6 +14,7 @@ from torch import Tensor
 from torch.utils.data import DataLoader, Dataset
 from torchmetrics import MetricCollection
 
+from marainer.progress import ProgressReporting, attach_lightning_progress
 from marainer.run_names import generate_run_name
 from marainer.runner import TorchRunner
 
@@ -20,26 +22,36 @@ logger = get_logger(__name__)
 
 
 def build_metric_collection(metrics: Any, **flow_dims: Any) -> MetricCollection:
-    """Build a ``MetricCollection`` from a dict of single-metric templates OR a ready-made collection.
+    """Normalize any metrics spec into a ``MetricCollection`` the caller clones per split.
 
-    Task subclasses configure their ``metrics`` slot as a dict ``{name: LazyClass(Metric, ...)}`` of
-    single-metric templates (so a dimension like ``num_classes`` can be injected late) OR as a
-    fully-built ``MetricCollection``. This normalizes both into one ``MetricCollection`` the caller
-    then clones per split (``train/`` · ``val/`` · ``test/``):
+    Task subclasses configure their ``metrics`` slot in several shapes, and a GUI (FluxStudio) may
+    wire a single metric node into it — so this accepts ALL of them and always returns one
+    ``MetricCollection`` (then cloned per split ``train/`` · ``val/`` · ``test/``):
 
-    * **dict** — each value is flowed with ``flow_dims`` (a confluid ``LazyClass`` / ``Fluid`` template
-      builds with the dims, e.g. ``num_classes``; an already-live ``Metric`` passes through ``flow``
-      unchanged) and the results are wrapped in a ``MetricCollection``.
     * **MetricCollection** — returned as-is (re-wrapping its live metrics, or "flowing" already-built
       ones, would be wrong).
+    * **Mapping** (``{name: LazyClass(Metric, ...)}``) — each value is flowed with ``flow_dims`` (a
+      confluid ``LazyClass`` / ``Fluid`` template builds with the dims, e.g. ``num_classes``; an
+      already-live ``Metric`` passes through ``flow`` unchanged), keyed by the given names.
+    * **a single metric OR a list/tuple of them** — each a live ``Metric``, a confluid ``Fluid`` /
+      ``LazyClass`` template, or a metric class; flowed with ``flow_dims`` and wrapped in a
+      ``MetricCollection`` (auto-named by class). This is what lets a SINGLE metric node wire into
+      the slot from FluxStudio — INCLUDING its deferred ``class`` (``Lazy``) output, which
+      ``flow`` builds with the run-time ``num_classes`` (so a confusion matrix sizes itself off the
+      model head instead of crashing on the ``num_classes=0`` widget the eager ``instance`` output
+      builds from). A bare metric used to crash here (``'Lazy' object has no attribute 'items'``).
 
     Shared by the classification trainer and evaluator (and available to any task trainer) so the
-    dict-vs-collection handling lives in ONE place.
+    metrics-shape normalization lives in ONE place — rebuilt fresh on every run (FluxStudio
+    reconstructs the runnable per execute, so re-wiring the slot is always honored).
     """
     if isinstance(metrics, MetricCollection):
         return metrics
-    flowed = {k: flow(v, **flow_dims) for k, v in metrics.items()}
-    return MetricCollection(flowed)
+    if isinstance(metrics, Mapping):
+        return MetricCollection({k: flow(v, **flow_dims) for k, v in metrics.items()})
+    # A single metric or a list/tuple of them — wrap into a MetricCollection (auto-named by class).
+    seq = metrics if isinstance(metrics, (list, tuple)) else [metrics]
+    return MetricCollection([flow(v, **flow_dims) for v in seq])
 
 
 def ensure_sample_dataset(source: Any) -> Dataset[Any]:
@@ -249,7 +261,7 @@ def _write_class_names(lightning_trainer: L.Trainer, label_names: List[str]) -> 
 
 
 @configurable
-class LightningTrainer(TorchRunner, L.LightningModule):
+class LightningTrainer(TorchRunner, ProgressReporting, L.LightningModule):
     """Marainer LightningTrainer: configurable Lightning module with integrated training loop.
 
     Supports YAML-configurable metrics via torchmetrics. Train and validation
@@ -505,6 +517,10 @@ class LightningTrainer(TorchRunner, L.LightningModule):
         v_loader = flow(self.val_loader, dataset=val_ds) if val_ds is not None else None
 
         lightning_trainer = flow(self.lightning)
+        # Bridge Lightning's per-batch progress to the executor's bar (a no-op outside a GUI run,
+        # where no progress callback was injected). Appended post-flow like the system-metrics
+        # callbacks below — Lightning iterates trainer.callbacks at hook-call time.
+        attach_lightning_progress(lightning_trainer, self)
         if self.log_system_metrics:
             from marainer.system_metrics import activate_for_lightning
 

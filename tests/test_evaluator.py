@@ -550,6 +550,63 @@ def test_evaluator_computed_metrics_raises_before_run() -> None:
         _ = evaluator.computed_metrics
 
 
+# --- all_metrics @output (the FULL, generic metric results FluxStudio's viewer extracts CMs from) ---
+
+
+def test_evaluator_declares_all_metrics_output() -> None:
+    from confluid import output_specs
+
+    names = {s["name"] for s in output_specs(LightningEvaluator)}
+    assert "all_metrics" in names
+    fget = getattr(LightningEvaluator, "all_metrics").fget
+    assert getattr(fget, "__confluid_output__", False) is True
+
+
+def _evaluator_with_live_metrics(metrics: MetricCollection) -> LightningEvaluator:
+    ev = _make_evaluator(
+        model=_ClassificationModel(),
+        dataset=Flux(source=[Sample(input=torch.randn(4), target=0, metadata={})]),
+    )
+    ev.metrics = metrics  # a live, post-run MetricCollection (skip a full run)
+    return ev
+
+
+def test_evaluator_all_metrics_includes_scalars_and_matrices() -> None:
+    # all_metrics returns EVERY metric (no "which is the confusion matrix" knowledge in the evaluator):
+    # a scalar stays a float, an N×N confusion matrix becomes a nested list.
+    cm = MulticlassConfusionMatrix(num_classes=3)
+    cm.update(torch.tensor([0, 1, 2, 1]), torch.tensor([0, 1, 2, 0]))
+    acc = MulticlassAccuracy(num_classes=3)
+    acc.update(torch.tensor([0, 1, 2, 1]), torch.tensor([0, 1, 2, 0]))
+    coll = MetricCollection({"acc": acc, "cm": cm}).clone(prefix="test/")
+    out = _evaluator_with_live_metrics(coll).all_metrics
+    assert isinstance(out["test/acc"], float)
+    assert isinstance(out["test/cm"], list) and len(out["test/cm"]) == 3
+    assert json.dumps(out)  # JSON-safe (rides a STRING socket in FluxStudio)
+
+
+def test_evaluator_all_metrics_extracts_to_confusion_matrices_via_dataflux() -> None:
+    # End-to-end with the viewer's extractor: all_metrics -> confusion_matrices_payload finds the CM.
+    from dataflux.ops.image import confusion_matrices_payload
+
+    cm = MulticlassConfusionMatrix(num_classes=2)
+    cm.update(torch.tensor([0, 1, 1, 0]), torch.tensor([0, 1, 0, 0]))
+    coll = MetricCollection({"acc": MulticlassAccuracy(num_classes=2), "cm": cm}).clone(prefix="test/")
+    out = _evaluator_with_live_metrics(coll).all_metrics
+    payloads = confusion_matrices_payload(out, class_names=["a", "b"])
+    assert [p["name"] for p in payloads] == ["test/cm"]
+    assert payloads[0]["n_classes"] == 2
+
+
+def test_evaluator_all_metrics_raises_before_run() -> None:
+    evaluator = _make_evaluator(
+        model=_ClassificationModel(),
+        dataset=Flux(source=[Sample(input=torch.randn(4), target=0, metadata={})]),
+    )
+    with pytest.raises(RuntimeError, match="only available after run"):
+        _ = evaluator.all_metrics
+
+
 def test_evaluator_computed_metrics_after_run(tmp_path: Any) -> None:
     samples = [Sample(input=torch.randn(4), target=i % 3, metadata={"idx": i}) for i in range(8)]
     evaluator = _make_evaluator(

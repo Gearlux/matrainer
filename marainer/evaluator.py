@@ -46,6 +46,7 @@ from torch.utils.data import DataLoader, Dataset
 from torchmetrics import Metric, MetricCollection
 
 from marainer.loggers import _render_matrix_as_table, log_figure_to_loggers
+from marainer.progress import ProgressReporting, attach_lightning_progress
 from marainer.run_names import generate_run_name
 from marainer.trainer import _coerce_metric_value, _scalar_metrics
 
@@ -69,7 +70,7 @@ def _ensure_class_names(names: Optional[List[str]], n: int) -> List[str]:
 
 
 @configurable
-class LightningEvaluator(L.LightningModule):
+class LightningEvaluator(ProgressReporting, L.LightningModule):
     """Run a model over a dataset, update metrics, and optionally persist predictions.
 
     Checkpoint loading is the model's responsibility — pass ``checkpoint_path``
@@ -336,6 +337,8 @@ class LightningEvaluator(L.LightningModule):
         self._resolved_class_names = self._resolve_class_names(dataset)
         loader = flow(self.loader, dataset=dataset)
         lightning_trainer = flow(self.lightning)
+        # Bridge per-batch test progress to the executor's bar (no-op outside a GUI run).
+        attach_lightning_progress(lightning_trainer, self)
         from marainer.trainer import log_config_artifacts
 
         log_config_artifacts(lightning_trainer)
@@ -380,3 +383,26 @@ class LightningEvaluator(L.LightningModule):
                 "Wire this output downstream of a Run node."
             )
         return list(self._resolved_class_names or [])
+
+    @property
+    @output
+    def all_metrics(self) -> Dict[str, Any]:
+        """The FULL post-run metric results — EVERY metric, scalars AND non-scalars — JSON-safe.
+
+        Unlike :meth:`computed_metrics` (scalars only, the clean results table), this returns the
+        complete ``self.metrics.compute()`` coerced to JSON-safe Python by :func:`_coerce_metric_value`
+        (scalars → ``float``, an ``N×N`` confusion matrix → a nested list). It carries **no
+        classifier-specific knowledge** — it just dumps every metric by name; a consumer extracts what
+        it needs. FluxStudio's *Confusion Matrix* viewer wires this in and renders EVERY confusion
+        matrix it finds (the square-2D entries — there can be several), keeping the evaluator output
+        generic instead of baking a "which metric is the confusion matrix" heuristic into it.
+        **Raises before ``run()``** (metrics not yet a live ``MetricCollection``), like the others.
+        """
+        if not isinstance(self.metrics, MetricCollection):
+            raise RuntimeError(
+                "LightningEvaluator.all_metrics is only available after run(): metrics are not a "
+                "live MetricCollection yet. Wire this output downstream of a Run node."
+            )
+        raw = self.metrics.compute()
+        coerced = _coerce_metric_value(raw)
+        return coerced if isinstance(coerced, dict) else {"value": coerced}
