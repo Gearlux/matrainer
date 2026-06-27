@@ -288,6 +288,67 @@ processor: !class:marainer.processing.DatasetProcessor
 
 ---
 
+## Workflows — composing runnables (`marainer.workflow`)
+
+A *workflow* is several runnables (trainers / evaluators / `DatasetProcessor`s)
+orchestrated together. `marainer.workflow` provides Confluid-`@configurable`
+**higher-order runnables** — the runnable-level analogue of DataFlux's
+higher-order ops (`Parallel` / `Tee` / `Enable`) — so a whole workflow is ONE
+Confluid document, run with the generic `process` verb:
+
+```bash
+marainer process workflow.yaml
+```
+
+| Class | Role |
+|-------|------|
+| `Sequence` | Run a list of runnables in order — the workflow itself. |
+| `Conditional` | Run one of two runnables (`if_true` / `if_false`) depending on a `condition`. |
+| `Switch` | Run one of several runnables keyed by a `selector` value (`cases` + `default`). |
+| `PathExists` | Predicate (no-arg `__call__ -> bool`): `True` iff a path exists — the canonical cache check. |
+| `Not` / `AllOf` / `AnyOf` | Predicate combinators (NOT / AND / OR) to build a condition. |
+
+`condition` accepts any predicate (a no-arg `__call__ -> bool`), a zero-arg
+callable, or a plain `bool`. Branches are held as **instances** and only
+`run()` when selected — wire them `!lazy:` so an unchosen branch is never even
+built (no model / dataset materialised).
+
+```yaml
+# workflow.yaml — train only on a cache miss, then always evaluate.
+processor: !class:marainer.workflow.Sequence
+  steps:
+    - !class:marainer.workflow.Conditional
+      # condition true (checkpoint already on disk) -> skip training
+      condition: !class:marainer.workflow.PathExists
+        path: ${MODEL_ROOT}/model.ckpt
+      if_false: !lazy:TrainModel        # cache miss -> train
+      if_true:  null                    # cache hit  -> do nothing, fall through
+    - !lazy:EvaluateModel               # always runs — Sequence continues regardless
+```
+
+**The guarantee:** only the *selected* branch's `run()` is ever called. This is
+the *memoise-and-continue* answer to "don't recompute, move on" — the next
+`steps:` entry runs because `Sequence` drives them in order; there is no
+execution-blocking and no dead branches. A workflow compiles 1:1 to the Python
+you'd write by hand:
+
+```python
+if not Path(f"{MODEL_ROOT}/model.ckpt").exists():
+    TrainModel().run()
+EvaluateModel().run()
+```
+
+> Because the combinators are plain `@configurable` runnables, they surface in
+> navigaitor (MCP) and FluxStudio with no bespoke glue — a workflow is dispatched
+> by the same `process` verb that runs any `.run()` object. On the FluxStudio
+> canvas a `Conditional` / `Sequence` / `Switch` node exposes `DATAFLUX_RUNNABLE`
+> input sockets, and a trainer / evaluator wired into one is built as an **instance**
+> (not run) so the combinator runs the selected branch. The combinators inherit
+> `TorchRunner` (autograd is restored for an inner trainer) and `ProgressReporting`
+> (the progress bar follows the running step).
+
+---
+
 ## Reporting progress to a GUI (the `marainer.progress` protocol)
 
 Every long-running runnable — `LightningTrainer` (and its task subclasses),
