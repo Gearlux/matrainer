@@ -62,6 +62,10 @@ marainer-processing = "marainer.processing"
 # pl.Trainer) as confluid configurables so FluxStudio generates OBJECT nodes that
 # yield deferred LazyClass-es for a runnable's deferred slots. Import-only.
 marainer-configurables = "marainer.configurables"
+# Exposes the higher-order runnable combinators (Sequence / Conditional / Switch +
+# the PathExists / Not / AllOf / AnyOf predicates) — a workflow is one Confluid
+# document of these, run via `marainer process workflow.yaml`.
+marainer-workflow = "marainer.workflow"
 
 [tool.setuptools.packages.find]
 where = ["."]
