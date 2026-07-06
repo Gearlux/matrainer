@@ -43,7 +43,7 @@ from typing import Any, Mapping
 
 import torch
 import torch.nn as nn
-from logflow import get_logger
+from loggair import get_logger
 
 logger = get_logger(__name__)
 

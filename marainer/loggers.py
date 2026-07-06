@@ -16,7 +16,7 @@ Configs wire the stock ``pytorch_lightning.loggers.*`` classes directly.
 from typing import Any, List, Optional
 
 import pytorch_lightning as L
-from logflow import get_logger
+from loggair import get_logger
 from torch import Tensor
 
 logger = get_logger(__name__)

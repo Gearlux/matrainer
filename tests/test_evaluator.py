@@ -292,7 +292,7 @@ def test_log_figure_to_loggers_handles_no_trainer() -> None:
 
 def test_evaluator_logs_confusion_matrix_text_table(tmp_path: Any) -> None:
     """End-to-end: a confusion-matrix metric in the collection triggers a rendered
-    table emitted via logflow's loguru sink."""
+    table emitted via loggair's loguru sink."""
     from loguru import logger as _loguru_logger
 
     captured: List[str] = []

@@ -8,7 +8,7 @@ import inspect
 from typing import Any
 
 from confluid import configurable
-from logflow import get_logger
+from loggair import get_logger
 from torchmetrics import Metric
 
 logger = get_logger(__name__)

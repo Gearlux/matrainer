@@ -20,7 +20,7 @@ and skipped — one broken plugin must never take down the whole CLI.
 from importlib.metadata import entry_points
 from typing import TYPE_CHECKING
 
-from logflow import get_logger
+from loggair import get_logger
 
 if TYPE_CHECKING:
     from liquifai import LiquifyApp
