@@ -15,7 +15,7 @@ from confluid import configurable
 from dataflux.core import Flux
 from dataflux.sample import Sample
 from dataflux.storage.base import Storage
-from logflow import get_logger
+from loggair import get_logger
 from rich.progress import BarColumn, MofNCompleteColumn, Progress, TextColumn, TimeRemainingColumn
 
 from marainer.progress import ProgressReporting

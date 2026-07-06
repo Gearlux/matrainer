@@ -60,7 +60,7 @@ from typing import Any, Dict, List, Optional
 
 from confluid import configurable, flow
 from confluid.fluid import Fluid
-from logflow import get_logger
+from loggair import get_logger
 
 from marainer.progress import ProgressReporting
 from marainer.runner import TorchRunner

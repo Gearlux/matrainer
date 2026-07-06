@@ -1,7 +1,7 @@
 from typing import Any
 
 from liquifai import LiquifyApp
-from logflow import get_logger
+from loggair import get_logger
 
 from marainer.evaluator import LightningEvaluator
 from marainer.plugins import load_plugins
