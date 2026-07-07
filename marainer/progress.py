@@ -26,7 +26,7 @@ import math
 from typing import Any, Callable, Optional
 
 import pytorch_lightning as L
-from logflow import get_logger
+from loggair import get_logger
 
 logger = get_logger(__name__)
 
