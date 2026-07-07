@@ -27,7 +27,7 @@ from typing import Any, Dict, List, Optional
 import numpy as np
 from confluid import configurable
 from dataflux.sample import Sample
-from logflow import get_logger
+from loggair import get_logger
 
 logger = get_logger(__name__)
 

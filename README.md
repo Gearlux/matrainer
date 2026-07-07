@@ -879,6 +879,6 @@ tests/
 | `confluid` | YAML configuration and dependency injection |
 | `liquifai` | CLI framework with automatic DI |
 | `dataflux` | Data pipeline abstraction |
-| `logflow` | Structured logging |
+| `loggair` | Structured logging |
 | `mlflow` | Experiment tracking |
 | `tensorboard` | TensorBoard logging backend |

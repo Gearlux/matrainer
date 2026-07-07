@@ -46,7 +46,7 @@ from typing import Any, Dict, List, Optional
 
 import pytorch_lightning as L
 import torch
-from logflow import get_logger
+from loggair import get_logger
 
 logger = get_logger(__name__)
 
