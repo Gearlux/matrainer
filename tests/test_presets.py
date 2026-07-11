@@ -4,7 +4,6 @@ from typing import Iterator
 
 import pytest
 from confluid import get_registry, load
-from confluid.loader import _register_constructors
 from torchmetrics import Metric, MetricCollection
 
 from marainer.presets import MetricPreset
@@ -29,7 +28,6 @@ def setup_registry() -> Iterator[None]:
         for name in _REGISTRY_INDEXES
     }
     reg.clear()
-    _register_constructors()
     # Re-import to re-register MetricPreset
     import marainer.presets  # noqa: F401
 

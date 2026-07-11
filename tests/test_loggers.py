@@ -6,7 +6,7 @@ from unittest.mock import MagicMock, patch
 import pytorch_lightning as L
 import torch
 import torch.nn as nn
-from confluid import Class, configurable, materialize
+from confluid import Class, Instance, configurable, materialize
 from confluid.loader import load
 from dataflux.core import Flux
 from dataflux.sample import Sample
@@ -146,7 +146,9 @@ lightning: !lazy:pytorch_lightning.Trainer
         name: csv_test
 """
         data = load(yaml_text, flow=False)
-        trainer = materialize({"_confluid_class_": "LightningTrainer", **data}, context=data)
+        instance = Instance("LightningTrainer")
+        instance.kwargs.update(data)
+        trainer = materialize(instance, context=data)
 
         # Before flow: the Lightning Trainer stays deferred, but the YAML-declared
         # loggers are already captured in its kwargs (as Instance objects).
