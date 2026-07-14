@@ -50,6 +50,13 @@ torpaido = [
 [project.scripts]
 marainer = "marainer.cli:main"
 
+# Liquifai app registration: lets `liquifai-install-completions` discover this
+# CLI via an instant entry-point metadata read instead of executing the binary
+# (subprocess probe, 15 s timeout each). Name = the app/binary name; value =
+# the LiquifyApp instance. Entry-point changes need an editable reinstall.
+[project.entry-points."liquifai.apps"]
+marainer = "marainer.cli:app"
+
 [project.entry-points."confluid.configurables"]
 marainer = "marainer"
 # Exposes ClassificationPredictionsSink (modality-neutral Evaluator predictions
