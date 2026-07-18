@@ -5,7 +5,7 @@ convention: :class:`~marainer.trainer.LightningTrainer` /
 :class:`~marainer.evaluator.LightningEvaluator` /
 :class:`~marainer.processing.DatasetProcessor`). This module adds
 Confluid-``@configurable`` *combinators* that HOLD other runnables and
-orchestrate them — the runnable-level analogue of DataFlux's higher-order ops
+orchestrate them — the runnable-level analogue of SampleFlux's higher-order ops
 (``Parallel`` / ``Tee`` / ``Enable``):
 
 * :class:`Sequence` — run a list of runnables in order (the workflow itself).

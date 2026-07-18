@@ -1,10 +1,10 @@
-"""Generic DataFlux pipeline runner for the ``marainer process/download/convert`` verbs.
+"""Generic SampleFlux pipeline runner for the ``marainer process/download/convert`` verbs.
 
-``DatasetProcessor`` orchestrates a :class:`dataflux.core.Flux` from source to
+``DatasetProcessor`` orchestrates a :class:`sampleflux.core.Flux` from source to
 sink — the canonical ``processor:`` object the marainer CLI's ``process`` /
 ``download`` / ``convert`` verbs dispatch via ``.run()``. It lives here (not in
 a domain package) because it is the workspace's generic data-pipeline runner and
-depends only on dataflux + confluid; it was moved out of ``waivefront.processing``
+depends only on sampleflux + confluid; it was moved out of ``waivefront.processing``
 to keep waivefront free of this orchestration concern.
 """
 
@@ -12,11 +12,11 @@ from contextlib import nullcontext
 from typing import Any, Iterable, Iterator, Optional
 
 from confluid import configurable
-from dataflux.core import Flux
-from dataflux.sample import Sample
-from dataflux.storage.base import Storage
 from loggair import get_logger
 from rich.progress import BarColumn, MofNCompleteColumn, Progress, TextColumn, TimeRemainingColumn
+from sampleflux.core import Flux
+from sampleflux.sample import Sample
+from sampleflux.storage.base import Storage
 
 from marainer.progress import ProgressReporting
 
@@ -33,10 +33,10 @@ def _flux_total(flux: Flux) -> Optional[int]:
 
 @configurable
 class DatasetProcessor(ProgressReporting):
-    """Orchestrate a DataFlux pipeline from source to sink.
+    """Orchestrate a SampleFlux pipeline from source to sink.
 
     Args:
-        flux: The :class:`~dataflux.core.Flux` to execute.
+        flux: The :class:`~sampleflux.core.Flux` to execute.
         sink: Optional sink; when absent, samples are materialized to a list.
         show_progress: If ``True``, wrap iteration with a ``rich.progress`` bar.
             The total is derived from ``len(flux.source)`` when available; an
@@ -81,7 +81,7 @@ class DatasetProcessor(ProgressReporting):
 
         if sink:
             logger.info(f"Streaming data to sink: {sink.__class__.__name__}")
-            # Replicates dataflux.core.Flux.to_sink so we can iterate through
+            # Replicates sampleflux.core.Flux.to_sink so we can iterate through
             # our progress wrapper while preserving the Storage context + flush.
             sink_ctx: Any = sink if isinstance(sink, Storage) else nullcontext()
             count = 0

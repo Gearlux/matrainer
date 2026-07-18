@@ -3,7 +3,7 @@
 The evaluator drives a Lightning predict/test loop and calls
 ``predictions_sink.write(prediction, metadata)`` once per sample, then
 ``predictions_sink.close()`` at end-of-run. This module hosts the sinks that
-bridge that contract to DataFlux ``Sample``-ops *without* any domain coupling:
+bridge that contract to SampleFlux ``Sample``-ops *without* any domain coupling:
 
 * :class:`ClassificationPredictionsSink` — reads each per-sample
   :class:`~marainer.outputs.ClassificationOutput` (``probs`` / ``class_idx``),
@@ -26,8 +26,8 @@ from typing import Any, Dict, List, Optional
 
 import numpy as np
 from confluid import configurable
-from dataflux.sample import Sample
 from loggair import get_logger
+from sampleflux.sample import Sample
 
 logger = get_logger(__name__)
 
@@ -38,7 +38,7 @@ class ClassificationPredictionsSink:
 
     Bridges the :class:`marainer.evaluator.LightningEvaluator` ``predictions_sink``
     contract — ``write(prediction, metadata)`` per sample — to the Sample-based
-    ops in waivefront / dataflux, mirroring
+    ops in waivefront / sampleflux, mirroring
     :class:`waivefront.sinks.DetectionPredictionsSink` so the
     train→eval→predict triad has a uniform shape across detection,
     segmentation, and classification.

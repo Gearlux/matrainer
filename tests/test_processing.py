@@ -6,8 +6,8 @@ from unittest.mock import patch
 import confluid
 import pytest
 from confluid import configurable
-from dataflux.core import Flux
-from dataflux.sample import Sample
+from sampleflux.core import Flux
+from sampleflux.sample import Sample
 
 from marainer.processing import DatasetProcessor
 

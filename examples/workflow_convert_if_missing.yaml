@@ -10,9 +10,9 @@
 # Only the selected branch's run() is ever called; wiring the branch `!lazy:`
 # means an unchosen branch is never even built.
 import:
-  - dataflux.core
-  - dataflux.sources
-  - dataflux.storage.hdf5
+  - sampleflux.core
+  - sampleflux.sources
+  - sampleflux.storage.hdf5
   - marainer.processing
   - marainer.workflow
 
@@ -22,15 +22,15 @@ processor: !class:marainer.workflow.Conditional
   if_true: null                                   # already converted -> nothing to do
   if_false: !lazy:marainer.processing.DatasetProcessor
     show_progress: true
-    flux: !class:dataflux.core.Flux
-      source: !class:dataflux.sources.HuggingFaceSource
+    flux: !class:sampleflux.core.Flux
+      source: !class:sampleflux.sources.HuggingFaceSource
         path: mnist
         split: train
         input_feature: image
         target_feature: label
         count: 100
       ops:
-        - !class:dataflux.ops.ToTensorOp
+        - !class:sampleflux.ops.ToTensorOp
           normalize: true
-    sink: !class:dataflux.storage.hdf5.HDF5Sink
+    sink: !class:sampleflux.storage.hdf5.HDF5Sink
       path: ./mnist.h5

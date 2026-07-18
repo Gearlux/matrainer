@@ -4,7 +4,7 @@ from typing import Any, Dict, List
 
 import pytest
 import torch
-from dataflux.sample import Sample
+from sampleflux.sample import Sample
 
 from marainer.sinks import ClassificationPredictionsSink
 

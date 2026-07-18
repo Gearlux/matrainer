@@ -8,9 +8,9 @@ import torch
 import torch.nn as nn
 from confluid import Class, Instance, configurable, materialize
 from confluid.loader import load
-from dataflux.core import Flux
-from dataflux.sample import Sample
 from pytorch_lightning.loggers import CSVLogger
+from sampleflux.core import Flux
+from sampleflux.sample import Sample
 
 from marainer.trainer import LightningTrainer
 from marainer.utils import get_git_commit_hash
@@ -132,7 +132,7 @@ class TestYamlLoggers:
         yaml_text = f"""
 model: !class:tests.test_loggers.TinyModel()
 
-train_set: !class:dataflux.core.Flux
+train_set: !class:sampleflux.core.Flux
   source: []
 
 lightning: !lazy:pytorch_lightning.Trainer
