@@ -5,15 +5,15 @@ model: !class:examples.mnist_model.MNISTSimpleCNN()
   num_classes: 10
   input_channels: 1
 
-train_set: !class:dataflux.core.Flux()
-  source: !class:dataflux.sources.HuggingFaceSource()
+train_set: !class:sampleflux.core.Flux()
+  source: !class:sampleflux.sources.HuggingFaceSource()
     path: mnist
     split: train
     input_feature: image
     target_feature: label
     count: 1000
   ops:
-    - !class:dataflux.ops.ToTensorOp()
+    - !class:sampleflux.ops.ToTensorOp()
       normalize: true
 
 max_epochs: 10

@@ -1,8 +1,8 @@
 """Tests for Trainer with DataLoader-collated Samples."""
 
 import torch
-from dataflux.core import Flux
-from dataflux.sample import Sample
+from sampleflux.core import Flux
+from sampleflux.sample import Sample
 from torch.utils.data import DataLoader
 
 from marainer.trainer import LightningTrainer

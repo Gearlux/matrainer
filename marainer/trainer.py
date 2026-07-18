@@ -57,9 +57,9 @@ def build_metric_collection(metrics: Any, **flow_dims: Any) -> MetricCollection:
 def ensure_sample_dataset(source: Any) -> Dataset[Any]:
     """Normalize any wired source into a map-style ``Dataset`` that is GUARANTEED to yield ``Sample``s.
 
-    A wired ``train_set`` / ``val_set`` / ``test_set`` may be a `dataflux.Flux`, another `torch`
-    `Dataset`, a `dataflux` source like `HuggingFaceSource` (only `__getitem__`/`__len__`/`__iter__`),
-    or a plain list — and its items may be `Sample`s or raw rows (dicts, tuples, …). A `dataflux.Flux`
+    A wired ``train_set`` / ``val_set`` / ``test_set`` may be a `sampleflux.Flux`, another `torch`
+    `Dataset`, a `sampleflux` source like `HuggingFaceSource` (only `__getitem__`/`__len__`/`__iter__`),
+    or a plain list — and its items may be `Sample`s or raw rows (dicts, tuples, …). A `sampleflux.Flux`
     already coerces every item to a `Sample` (`Sample.from_any` in `__getitem__`/`__iter__`), so:
 
     * a `Flux` is returned as-is (already a `Dataset[Sample]`; this preserves a subclass's own wrap —
@@ -70,7 +70,7 @@ def ensure_sample_dataset(source: Any) -> Dataset[Any]:
     Calling this once up front lets the rest of the pipeline (target detection, label fitting/encoding,
     collate, metrics) assume `Sample` items unconditionally — no per-call "is this a Sample?" checks.
     """
-    from dataflux import Flux
+    from sampleflux import Flux
 
     if isinstance(source, Flux):
         return source

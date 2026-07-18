@@ -7,8 +7,8 @@ import pytorch_lightning as L
 import torch
 import torch.nn as nn
 from confluid import Class, configurable, output_specs
-from dataflux.core import Flux
-from dataflux.sample import Sample
+from sampleflux.core import Flux
+from sampleflux.sample import Sample
 from torch.utils.data import DataLoader
 
 from marainer.trainer import LightningTrainer

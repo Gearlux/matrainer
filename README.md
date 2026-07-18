@@ -1,8 +1,8 @@
 # Marainer
 
-Project-agnostic training and processing pipeline orchestrator built on PyTorch Lightning, Confluid, and DataFlux.
+Project-agnostic training and processing pipeline orchestrator built on PyTorch Lightning, Confluid, and SampleFlux.
 
-Marainer provides a fully YAML-configurable training loop with multi-backend logging (TensorBoard, CSV, MLflow), flexible data pipelines (DataFlux), and a comprehensive metrics system (torchmetrics).
+Marainer provides a fully YAML-configurable training loop with multi-backend logging (TensorBoard, CSV, MLflow), flexible data pipelines (SampleFlux), and a comprehensive metrics system (torchmetrics).
 
 ## Installation
 
@@ -80,24 +80,24 @@ val_metrics: !class:torchmetrics.MetricCollection()
   metrics: !clone:metrics
   prefix: "val/"
 
-train_set: !class:dataflux.core.Flux()
-  source: !class:dataflux.sources.HuggingFaceSource()
+train_set: !class:sampleflux.core.Flux()
+  source: !class:sampleflux.sources.HuggingFaceSource()
     path: mnist
     split: train
     input_feature: image
     target_feature: label
   ops:
-    - !class:dataflux.ops.ToTensorOp()
+    - !class:sampleflux.ops.ToTensorOp()
       normalize: true
 
-val_set: !class:dataflux.core.Flux()
-  source: !class:dataflux.sources.HuggingFaceSource()
+val_set: !class:sampleflux.core.Flux()
+  source: !class:sampleflux.sources.HuggingFaceSource()
     path: mnist
     split: test
     input_feature: image
     target_feature: label
   ops:
-    - !class:dataflux.ops.ToTensorOp()
+    - !class:sampleflux.ops.ToTensorOp()
       normalize: true
 
 max_epochs: 10
@@ -180,7 +180,7 @@ model: !lazy:sonair.timm_classifier.TimmModel   # num_classes omitted
 val_metrics: !lazy:torchmetrics.MetricCollection
   metrics:
     top1: !class:torchmetrics.classification.MulticlassAccuracy { top_k: 1 }
-train_set: !class:dataflux.sources.HuggingFaceSource  # provides derived_dimensions()
+train_set: !class:sampleflux.sources.HuggingFaceSource  # provides derived_dimensions()
   path: ylecun/mnist
   split: train
 ```
@@ -249,7 +249,7 @@ num_workers: 8       # broadcast into DataLoaders
 ## The `process` / `download` / `convert` Commands — `DatasetProcessor`
 
 For non-training workflows — converting datasets, windowing signals, running a
-pure DataFlux pipeline from a source to a sink — Marainer ships
+pure SampleFlux pipeline from a source to a sink — Marainer ships
 `marainer.processing.DatasetProcessor`. It's the generic `processor:` object the
 `process`, `download`, and `convert` verbs dispatch via `.run()` (the three
 verbs are semantic aliases; they all bind the object under the top-level
@@ -258,8 +258,8 @@ verbs are semantic aliases; they all bind the object under the top-level
 ```yaml
 # convert.yaml — run with: marainer convert convert.yaml
 import:
-  - dataflux.core
-  - dataflux.storage.hdf5
+  - sampleflux.core
+  - sampleflux.storage.hdf5
 
 processor: !class:marainer.processing.DatasetProcessor
   show_progress: true            # optional rich.progress bar
@@ -272,13 +272,13 @@ processor: !class:marainer.processing.DatasetProcessor
 
 | Field | Type | Default | Description |
 |-------|------|---------|-------------|
-| `flux` | `dataflux.core.Flux` | — | The pipeline (source + ops) to execute. |
+| `flux` | `sampleflux.core.Flux` | — | The pipeline (source + ops) to execute. |
 | `sink` | sink \| `None` | `None` | Terminal sink; when absent, samples are materialized to an in-memory list. |
 | `show_progress` | `bool` | `False` | Wrap iteration in a `rich.progress` bar (total from `len(flux.source)` when available). |
 | `progress_desc` | `str` | `"DatasetProcessor"` | Progress-bar label. |
 
 > `DatasetProcessor` lives in Marainer (not a domain package) because it is the
-> workspace's generic data-pipeline runner and depends only on DataFlux +
+> workspace's generic data-pipeline runner and depends only on SampleFlux +
 > Confluid. It was moved here from `waivefront.processing`.
 
 > `show_progress` controls the **console** `rich` bar only. A GUI executor
@@ -292,7 +292,7 @@ processor: !class:marainer.processing.DatasetProcessor
 
 A *workflow* is several runnables (trainers / evaluators / `DatasetProcessor`s)
 orchestrated together. `marainer.workflow` provides Confluid-`@configurable`
-**higher-order runnables** — the runnable-level analogue of DataFlux's
+**higher-order runnables** — the runnable-level analogue of SampleFlux's
 higher-order ops (`Parallel` / `Tee` / `Enable`) — so a whole workflow is ONE
 Confluid document, run with the generic `process` verb:
 
@@ -341,7 +341,7 @@ EvaluateModel().run()
 > Because the combinators are plain `@configurable` runnables, they surface in
 > navigaitor (MCP) and FluxStudio with no bespoke glue — a workflow is dispatched
 > by the same `process` verb that runs any `.run()` object. On the FluxStudio
-> canvas a `Conditional` / `Sequence` / `Switch` node exposes `DATAFLUX_RUNNABLE`
+> canvas a `Conditional` / `Sequence` / `Switch` node exposes `SAMPLEFLUX_RUNNABLE`
 > input sockets, and a trainer / evaluator wired into one is built as an **instance**
 > (not run) so the combinator runs the selected branch. The combinators inherit
 > `TorchRunner` (autograd is restored for an inner trainer) and `ProgressReporting`
@@ -580,66 +580,66 @@ Explicit values always take precedence over broadcast values.
 
 ---
 
-## DataFlux Integration
+## SampleFlux Integration
 
-Training and validation datasets are defined as [DataFlux](https://github.com/Gearlux/dataflux) `Flux` pipelines:
+Training and validation datasets are defined as [SampleFlux](https://github.com/Gearlux/sampleflux) `Flux` pipelines:
 
 ```yaml
-train_set: !class:dataflux.core.Flux()
-  source: !class:dataflux.sources.HuggingFaceSource()
+train_set: !class:sampleflux.core.Flux()
+  source: !class:sampleflux.sources.HuggingFaceSource()
     path: mnist
     split: train
     input_feature: image
     target_feature: label
     count: 1000                    # Optional: limit samples
   ops:
-    - !class:dataflux.ops.numpy.RescaleOp()
+    - !class:sampleflux.ops.numpy.RescaleOp()
       in_min: 0
       in_max: 255
-    - !class:dataflux.ops.ToTensorOp()
+    - !class:sampleflux.ops.ToTensorOp()
       normalize: false
 ```
 
-DataFlux pipelines support functional composition with operations like normalization, tensor conversion, augmentation, and more. See the DataFlux documentation for available sources and operations.
+SampleFlux pipelines support functional composition with operations like normalization, tensor conversion, augmentation, and more. See the SampleFlux documentation for available sources and operations.
 
 ### Train / Val / Test Splits
 
 Marainer treats `val_set` and `test_set` as distinct signals: `val_set` is used per-epoch during `fit()` for model selection, and `test_set` is evaluated once via `lightning_trainer.test()` after `fit()` completes.
 
-The recommended pattern carves the training split of the source into a disjoint train/val view via DataFlux's `DatasetSplit`, and reserves the source's own test split for `test_set`:
+The recommended pattern carves the training split of the source into a disjoint train/val view via SampleFlux's `DatasetSplit`, and reserves the source's own test split for `test_set`:
 
 ```yaml
-hf_train: !class:dataflux.sources.HuggingFaceSource()
+hf_train: !class:sampleflux.sources.HuggingFaceSource()
   path: mnist
   split: train
   input_feature: image
   target_feature: label
 
-hf_test: !class:dataflux.sources.HuggingFaceSource()
+hf_test: !class:sampleflux.sources.HuggingFaceSource()
   path: mnist
   split: test
   input_feature: image
   target_feature: label
 
-train_set: !class:dataflux.core.Flux()
-  source: !class:dataflux.sources.DatasetSplit()
+train_set: !class:sampleflux.core.Flux()
+  source: !class:sampleflux.sources.DatasetSplit()
     source: !ref:hf_train
     split: train
     val_fraction: 0.1
     seed: 42
 
-val_set: !class:dataflux.core.Flux()
-  source: !class:dataflux.sources.DatasetSplit()
+val_set: !class:sampleflux.core.Flux()
+  source: !class:sampleflux.sources.DatasetSplit()
     source: !ref:hf_train
     split: val
     val_fraction: 0.1
     seed: 42
 
-test_set: !class:dataflux.core.Flux()
+test_set: !class:sampleflux.core.Flux()
   source: !ref:hf_test
 ```
 
-`DatasetSplit` also supports explicit `start`/`end` ranges and works with any indexable source. See DataFlux's README for the full reference and the HuggingFace native slicing alternative.
+`DatasetSplit` also supports explicit `start`/`end` ranges and works with any indexable source. See SampleFlux's README for the full reference and the HuggingFace native slicing alternative.
 
 ---
 
@@ -878,7 +878,7 @@ tests/
 | `torchmetrics` | Flexible metric computation |
 | `confluid` | YAML configuration and dependency injection |
 | `liquifai` | CLI framework with automatic DI |
-| `dataflux` | Data pipeline abstraction |
+| `sampleflux` | Data pipeline abstraction |
 | `loggair` | Structured logging |
 | `mlflow` | Experiment tracking |
 | `tensorboard` | TensorBoard logging backend |

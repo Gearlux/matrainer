@@ -2,7 +2,7 @@
 
 import pytest
 import torch
-from dataflux.sample import Sample
+from sampleflux.sample import Sample
 
 from marainer.collate import collate_fn_with_metadata
 

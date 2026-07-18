@@ -5,8 +5,8 @@ import pytorch_lightning as L
 import torch
 import torch.nn as nn
 from confluid import configurable
-from dataflux.core import Flux
-from dataflux.sample import Sample
+from sampleflux.core import Flux
+from sampleflux.sample import Sample
 from torch.utils.data import DataLoader
 from torchmetrics import Metric, MetricCollection
 from torchmetrics.classification import MulticlassAccuracy, MulticlassF1Score, MulticlassPrecision, MulticlassRecall

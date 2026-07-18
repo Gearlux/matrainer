@@ -1,4 +1,4 @@
-"""Generic collate functions for DataFlux Samples preserving metadata.
+"""Generic collate functions for SampleFlux Samples preserving metadata.
 
 The default PyTorch DataLoader collate fails on heterogeneous per-sample metadata
 (strings, variable-length lists, nested dicts). These helpers stack tensors and
@@ -9,21 +9,21 @@ predictions back to source samples.
 from typing import Any, Dict, List
 
 import torch
-from dataflux.sample import Sample
+from sampleflux.sample import Sample
 from torch import Tensor
 
 
 def collate_fn_with_metadata(batch: List[Sample]) -> Sample:
     """Collate per-sample Samples, stacking tensors and preserving metadata as a list.
 
-    Each input :class:`~dataflux.sample.Sample` is expected to carry:
+    Each input :class:`~sampleflux.sample.Sample` is expected to carry:
 
     * ``sample.input`` — A tensor or scalar (typically ``[C, H, W]`` for images,
       ``[T]`` or ``[F, T]`` for signals, or a scalar).
     * ``sample.target`` — A tensor or scalar (typically ``[H, W]`` for segmentation
       masks, a scalar for classification/regression, or ``[N, 4]`` for detection boxes).
 
-    The returned :class:`~dataflux.sample.Sample` has:
+    The returned :class:`~sampleflux.sample.Sample` has:
 
     * ``.input`` — Stacked input tensors (``[B, C, H, W]`` for images, etc.).
     * ``.target`` — Stacked target tensors (``[B, ...]`` matching input batch dim).
@@ -36,7 +36,7 @@ def collate_fn_with_metadata(batch: List[Sample]) -> Sample:
     mixed sizes must be resized upstream.
 
     Args:
-        batch: List of :class:`~dataflux.sample.Sample` objects.
+        batch: List of :class:`~sampleflux.sample.Sample` objects.
 
     Returns:
         A single batched Sample with stacked tensors and metadata preserved as a list.

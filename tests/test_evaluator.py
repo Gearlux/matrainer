@@ -17,8 +17,8 @@ import pytorch_lightning as L  # noqa: E402
 import torch  # noqa: E402
 import torch.nn as nn  # noqa: E402
 from confluid import Class  # noqa: E402
-from dataflux.core import Flux  # noqa: E402
-from dataflux.sample import Sample  # noqa: E402
+from sampleflux.core import Flux  # noqa: E402
+from sampleflux.sample import Sample  # noqa: E402
 from torch import Tensor  # noqa: E402
 from torch.utils.data import DataLoader  # noqa: E402
 from torchmetrics import MetricCollection  # noqa: E402
@@ -585,9 +585,9 @@ def test_evaluator_all_metrics_includes_scalars_and_matrices() -> None:
     assert json.dumps(out)  # JSON-safe (rides a STRING socket in FluxStudio)
 
 
-def test_evaluator_all_metrics_extracts_to_confusion_matrices_via_dataflux() -> None:
+def test_evaluator_all_metrics_extracts_to_confusion_matrices_via_sampleflux() -> None:
     # End-to-end with the viewer's extractor: all_metrics -> confusion_matrices_payload finds the CM.
-    from dataflux.ops.image import confusion_matrices_payload
+    from sampleflux.ops.image import confusion_matrices_payload
 
     cm = MulticlassConfusionMatrix(num_classes=2)
     cm.update(torch.tensor([0, 1, 1, 0]), torch.tensor([0, 1, 0, 0]))

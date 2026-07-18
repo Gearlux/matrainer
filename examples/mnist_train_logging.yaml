@@ -47,46 +47,46 @@ loggers:
       tags:
         mlflow.source.git.commit: !ref:marainer.utils.get_git_commit_hash()
 
-hf_train: !class:dataflux.sources.HuggingFaceSource()
+hf_train: !class:sampleflux.sources.HuggingFaceSource()
   path: mnist
   split: train
   input_feature: image
   target_feature: label
   count: 1000
 
-hf_test: !class:dataflux.sources.HuggingFaceSource()
+hf_test: !class:sampleflux.sources.HuggingFaceSource()
   path: mnist
   split: test
   input_feature: image
   target_feature: label
   count: 1000
 
-train_set: !class:dataflux.core.Flux()
-  source: !class:dataflux.sources.DatasetSplit()
+train_set: !class:sampleflux.core.Flux()
+  source: !class:sampleflux.sources.DatasetSplit()
     source: !ref:hf_train
     split: train
     val_fraction: 0.1
     seed: 42
   ops:
-    - !class:dataflux.ops.numpy.NormalizeOp()
+    - !class:sampleflux.ops.numpy.NormalizeOp()
       max_value: 255
-    - !class:dataflux.ops.ToTensorOp()
+    - !class:sampleflux.ops.ToTensorOp()
       normalize: false
 
-val_set: !class:dataflux.core.Flux()
-  source: !class:dataflux.sources.DatasetSplit()
+val_set: !class:sampleflux.core.Flux()
+  source: !class:sampleflux.sources.DatasetSplit()
     source: !ref:hf_train
     split: val
     val_fraction: 0.1
     seed: 42
   ops:
-    - !class:dataflux.ops.ToTensorOp()
+    - !class:sampleflux.ops.ToTensorOp()
       normalize: true
 
-test_set: !class:dataflux.core.Flux()
+test_set: !class:sampleflux.core.Flux()
   source: !ref:hf_test
   ops:
-    - !class:dataflux.ops.ToTensorOp()
+    - !class:sampleflux.ops.ToTensorOp()
       normalize: true
 
 max_epochs: 3
