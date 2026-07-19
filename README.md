@@ -293,7 +293,7 @@ processor: !class:marainer.processing.DatasetProcessor
 A *workflow* is several runnables (trainers / evaluators / `DatasetProcessor`s)
 orchestrated together. `marainer.workflow` provides Confluid-`@configurable`
 **higher-order runnables** — the runnable-level analogue of SampleFlux's
-higher-order ops (`Parallel` / `Tee` / `Enable`) — so a whole workflow is ONE
+higher-order ops (`Parallel` / `TransformChain` / `Enable`) — so a whole workflow is ONE
 Confluid document, run with the generic `process` verb:
 
 ```bash
