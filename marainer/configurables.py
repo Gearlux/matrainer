@@ -67,7 +67,7 @@ for _logger_cls in (
 # (already ``@configurable``) — they need no ``register`` call; they are re-exported here purely so
 # FluxStudio's ``__all__``-gated discovery pass surfaces them as RUNNABLE nodes (``_is_runnable``),
 # the same way the task trainers (sonair / deltaid / raidar) are. This makes a config rooted on the
-# generic base trainer (e.g. ``waivefront-rfuav/config/train_efficientvit_b0.yaml``) importable into
+# generic base trainer (e.g. ``waivefront/config/train_efficientvit_b0.yaml``) importable into
 # the canvas. Re-exported HERE (an import-only discovery module that already pulls Lightning) rather
 # than in ``marainer.__init__`` so a plain ``import marainer`` stays free of the Lightning import cost.
 
