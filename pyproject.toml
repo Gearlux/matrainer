@@ -22,7 +22,7 @@ requires-python = ">=3.12"
 [project.optional-dependencies]
 # Torch-only, Lightning-free helpers (marainer.torch: checkpoint / collate / output contracts).
 torch = ["torch"]
-# The PyTorch-Lightning training platform (marainer.lightning.LightningMarainer).
+# PyTorch-Lightning tracking helpers (marainer.lightning: TrackingCallback / TrackerLogger + metric utils).
 lightning = ["marainer[torch]", "pytorch-lightning", "torchmetrics", "tabulate", "matplotlib"]
 # The MlflowTracker backend + MLflow system metrics. pyobjc powers the inline IOAccelerator
 # reader (Apple-Silicon GPU utilisation, no sudo) in marainer.tracking.system.
@@ -36,7 +36,7 @@ mlflow = [
 tensorboard = ["marainer[torch]"]
 # The WandbTracker backend.
 wandb = ["wandb"]
-# The TensorFlow/Keras training platform (marainer.tensorflow.TensorFlowMarainer).
+# TensorFlow/Keras tracking helper (marainer.tensorflow.keras_tracking_callback).
 tensorflow = ["tensorflow"]
 # Everything a workspace install wants.
 all = ["marainer[lightning,mlflow,tensorboard,wandb]"]
@@ -60,7 +60,7 @@ marainer-tracking = "marainer.tracking"
 # ClassificationPredictionsSink (modality-neutral predictions sink; numpy/sampleflux only).
 marainer-sinks = "marainer.sinks"
 # The Lightning platform: registers the deferred runtime members (torch optimizers / DataLoader /
-# pl.Trainer) + stock Lightning loggers, and re-exports LightningMarainer / MetricPreset. Imports
+# pl.Trainer) + stock Lightning loggers, and re-exports the tracking callbacks / MetricPreset. Imports
 # pytorch_lightning — discovery must warn-and-continue on a light install without the [lightning] extra.
 marainer-lightning = "marainer.lightning.configurables"
 

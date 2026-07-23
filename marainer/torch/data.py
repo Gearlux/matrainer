@@ -10,10 +10,10 @@
 Both import the sampleflux surface from the package top level.
 """
 
-from typing import Any, Dict, List
+from typing import Any, List, cast
 
 import torch
-from sampleflux import Flux, Image, Label, Sample, item_data, primary
+from sampleflux import Flux, Label, Sample, primary, typed_collate
 from torch import Tensor
 from torch.utils.data import Dataset
 
@@ -40,82 +40,39 @@ def ensure_sample_dataset(source: Any) -> Dataset[Any]:
     return Flux(source=source)
 
 
-def _as_tensor(value: Any, what: str) -> Tensor:
-    """Normalize a primary field payload (tensor OR ndarray) to a ``torch.Tensor``."""
-    if isinstance(value, Tensor):
-        return value
-    try:
-        return torch.as_tensor(value)
-    except Exception as exc:  # noqa: BLE001 — surface a clear collate-contract error
-        raise TypeError(
-            f"collate_fn_with_metadata: the primary {what} payload must be a torch.Tensor or ndarray; "
-            f"got {type(value).__name__}."
-        ) from exc
-
-
-def _sample_metadata(s: Sample) -> Dict[str, Any]:
-    """Per-sample metadata dict = the non-primary (aux) fields' payloads, so string-valued
-    fields (``pack_id``/``iq_file``/…) survive collation."""
-    meta: Dict[str, Any] = {}
-    _, input_item = primary(s, "input")
-    _, target_item = primary(s, "target")
-    for key in s.keys():
-        item = s[key]
-        if item is input_item or item is target_item:
-            continue
-        meta[key] = item.value if isinstance(item, Label) else item_data(item)
-    return meta
-
-
 def collate_fn_with_metadata(batch: List[Sample]) -> Sample:
-    """Collate per-sample typed-bag ``Sample``\\ s, stacking tensors and preserving metadata as a list.
+    """Collate typed-bag ``Sample``\\ s via :func:`sampleflux.typed_collate`, stacking the target tensor.
 
-    Each ``Sample`` carries a primary ``input`` item (tensor payload) and a primary ``target``
-    item (tensor payload / :class:`~sampleflux.Label`). The returned batched ``Sample`` carries
-    field ``"input"`` — an :class:`~sampleflux.Image` (``layout="CHW"``) over the stacked ``[N, …]``
-    payload (an ``Image`` cannot hold a live ``torch.Tensor`` — ``NDArrayItem.__new__`` runs
-    ``np.asarray`` — so the consumer converts back at the model boundary), field ``"target"``
-    (role ``target``) — a :class:`~sampleflux.Label` whose ``.value`` is the stacked target tensor,
-    and field ``"metadata"`` (role ``aux``) — a ``list`` of per-sample metadata dicts.
+    Thin wrapper over the workspace's generic ``typed_collate`` — which stacks each field's array
+    payload and gathers wrapper-item attrs / aux (non-primary) fields as per-sample lists. The one thing
+    it does NOT do for a training batch is stack a wrapper-item :class:`~sampleflux.Label` **target**'s
+    per-sample values into an ``[N, …]`` tensor (an array-item target, e.g. a :class:`~sampleflux.Mask`,
+    IS stacked by ``typed_collate``); this wrapper adds exactly that so a torch trainer sees a batched
+    target tensor. Aux fields survive as their own per-sample list-fields (``typed_collate``'s metadata
+    shape) — recover them at the model boundary.
 
     Args:
         batch: List of typed-bag :class:`~sampleflux.Sample` objects.
 
     Returns:
-        A single batched ``Sample`` (stacked input/target + per-sample metadata list).
+        A single batched ``Sample`` (stacked input + stacked target + per-sample aux list-fields).
 
     Raises:
-        ValueError: If batch is empty.
-        TypeError: If a sample's primary input or target payload is not a Tensor.
+        ValueError: If ``batch`` is empty.
     """
     if not batch:
         raise ValueError("collate_fn_with_metadata received an empty batch.")
+    collated = cast(Sample, typed_collate(batch))
+    key, item = primary(collated, "target")
+    if isinstance(item, Label) and isinstance(item.value, list):
+        stacked = torch.stack([_as_tensor(v) for v in item.value])
+        collated = collated.replace_field(key, Label(stacked))
+    return collated
 
-    inputs: List[Tensor] = []
-    targets: List[Tensor] = []
-    metas: List[Dict[str, Any]] = []
 
-    for s in batch:
-        _, input_item = primary(s, "input")
-        _, target_item = primary(s, "target")
-        raw_inp = item_data(input_item)
-        raw_tgt = target_item.value if isinstance(target_item, Label) else item_data(target_item)
-        # An Image item can't hold a live tensor (NDArrayItem coerces to ndarray), so accept
-        # tensor OR ndarray and normalize to a tensor. Anything else is a real error.
-        inp = _as_tensor(raw_inp, "input")
-        tgt = _as_tensor(raw_tgt, "target")
-        inputs.append(inp)
-        targets.append(tgt)
-        metas.append(_sample_metadata(s))
-
-    return Sample(
-        {
-            "input": Image(torch.stack(inputs), layout="CHW"),
-            "target": Label(torch.stack(targets)),
-            "metadata": metas,
-        },
-        roles={"input": "input", "target": "target", "metadata": "aux"},
-    )
+def _as_tensor(value: Any) -> Tensor:
+    """Normalize a per-sample target value (tensor OR ndarray/scalar) to a ``torch.Tensor``."""
+    return value if isinstance(value, Tensor) else torch.as_tensor(value)
 
 
 __all__ = ["collate_fn_with_metadata", "ensure_sample_dataset"]
