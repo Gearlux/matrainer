@@ -1,40 +1,45 @@
 [project]
 name = "marainer"
-version = "0.1.0"
-description = "Project-agnostic training and processing pipeline orchestrator."
+version = "0.2.0"
+description = "Experiment tracking for any training platform (MLflow / TensorBoard / CSV / W&B)."
 authors = [{name = "Taidal"}]
 license = {text = "MIT"}
+# LIGHT core: only the tracking library + framework-neutral checkpoint policies. The heavy
+# training frameworks (torch / pytorch-lightning / tensorflow) and the logger libraries live
+# behind the extras below; each backend imports its library lazily (marainer._imports.require).
 dependencies = [
     "liquifai>=0.1.0",
     "loggair>=0.1.0",
     "confluid>=0.1.0",
     "sampleflux>=0.1.0",
-    "mlflow",
-    "torch",
     "numpy",
-    "pytorch-lightning",
-    "tensorboard",
-    "torchmetrics",
-    "tabulate",
-    "matplotlib",
-    "psutil",
-    # rich powers DatasetProcessor's optional progress bar (marainer.processing).
-    "rich",
     # coolname generates the default random run names (e.g. ``train_funny_rabbit``) in
     # marainer.run_names — offline adjective_noun slugs, no network.
     "coolname",
-    # pyobjc subset for the inline IOAccelerator reader (Apple-Silicon GPU
-    # utilisation, no sudo) in marainer.system_metrics. The full ``pyobjc``
-    # meta-package pulls in 100+ frameworks; these two are the minimum
-    # surface our reader uses. ``pyobjc-framework-Cocoa`` ships both the
-    # Foundation module (for ``NSBundle.bundleWithIdentifier_``) and the
-    # CoreFoundation module (for ``CFRelease`` on the props dict).
-    "pyobjc-core; sys_platform == 'darwin'",
-    "pyobjc-framework-Cocoa; sys_platform == 'darwin'",
 ]
 requires-python = ">=3.12"
 
 [project.optional-dependencies]
+# Torch-only, Lightning-free helpers (marainer.torch: checkpoint / collate / output contracts).
+torch = ["torch"]
+# The PyTorch-Lightning training platform (marainer.lightning.LightningMarainer).
+lightning = ["marainer[torch]", "pytorch-lightning", "torchmetrics", "tabulate", "matplotlib"]
+# The MlflowTracker backend + MLflow system metrics. pyobjc powers the inline IOAccelerator
+# reader (Apple-Silicon GPU utilisation, no sudo) in marainer.tracking.system.
+mlflow = [
+    "mlflow",
+    "psutil",
+    "pyobjc-core; sys_platform == 'darwin'",
+    "pyobjc-framework-Cocoa; sys_platform == 'darwin'",
+]
+# The TensorBoardTracker backend uses torch.utils.tensorboard, so it implies [torch].
+tensorboard = ["marainer[torch]"]
+# The WandbTracker backend.
+wandb = ["wandb"]
+# The TensorFlow/Keras training platform (marainer.tensorflow.TensorFlowMarainer).
+tensorflow = ["tensorflow"]
+# Everything a workspace install wants.
+all = ["marainer[lightning,mlflow,tensorboard,wandb]"]
 dev = [
     "black>=24.0.0,<25.0.0",
     "isort>=5.13.0,<6.0.0",
@@ -47,32 +52,17 @@ torpaido = [
     "torpaido>=0.1.0"
 ]
 
-[project.scripts]
-marainer = "marainer.cli:main"
-
-# Liquifai app registration: lets `liquifai-install-completions` discover this
-# CLI via an instant entry-point metadata read instead of executing the binary
-# (subprocess probe, 15 s timeout each). Name = the app/binary name; value =
-# the LiquifyApp instance. Entry-point changes need an editable reinstall.
-[project.entry-points."liquifai.apps"]
-marainer = "marainer.cli:app"
-
 [project.entry-points."confluid.configurables"]
+# Light root: the tracking backends, run-name helper, and checkpoint policies.
 marainer = "marainer"
-# Exposes ClassificationPredictionsSink (modality-neutral Evaluator predictions
-# sink) to confluid/navigaitor/FluxStudio discovery.
+# The four Tracker backends + TrackerGroup (import-safe; each lazily imports its library).
+marainer-tracking = "marainer.tracking"
+# ClassificationPredictionsSink (modality-neutral predictions sink; numpy/sampleflux only).
 marainer-sinks = "marainer.sinks"
-# Exposes DatasetProcessor (the generic process/download/convert pipeline runner)
-# to confluid/navigaitor discovery. Moved here from waivefront.processing.
-marainer-processing = "marainer.processing"
-# Registers select lazy runtime member classes (torch optimizers / DataLoader /
-# pl.Trainer) as confluid configurables so FluxStudio generates OBJECT nodes that
-# yield deferred LazyClass-es for a runnable's deferred slots. Import-only.
-marainer-configurables = "marainer.configurables"
-# Exposes the higher-order runnable combinators (Sequence / Conditional / Switch +
-# the PathExists / Not / AllOf / AnyOf predicates) — a workflow is one Confluid
-# document of these, run via `marainer process workflow.yaml`.
-marainer-workflow = "marainer.workflow"
+# The Lightning platform: registers the deferred runtime members (torch optimizers / DataLoader /
+# pl.Trainer) + stock Lightning loggers, and re-exports LightningMarainer / MetricPreset. Imports
+# pytorch_lightning — discovery must warn-and-continue on a light install without the [lightning] extra.
+marainer-lightning = "marainer.lightning.configurables"
 
 [tool.setuptools.packages.find]
 where = ["."]
@@ -122,6 +112,9 @@ module = [
     "torchmetrics.*",
     "pytorch_lightning.*",
     "tabulate.*",
-    "matplotlib.*"
+    "matplotlib.*",
+    "wandb.*",
+    "tensorflow.*",
+    "coolname.*"
 ]
 ignore_missing_imports = true

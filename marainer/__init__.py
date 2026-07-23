@@ -1,16 +1,42 @@
-"""Marainer - AI Orchestration Engine."""
+"""Marainer — experiment tracking for any training platform.
 
-__version__ = "0.1.0"
+Marainer's core is a light experiment-tracking library: log and track parameters,
+git provenance, log files, config artifacts, figures, metrics, and system metrics
+to various logger libraries (MLflow / TensorBoard / CSV / W&B) from ANY training
+platform. The heavy per-framework training code lives in opt-in subpackages —
+:mod:`marainer.lightning`, :mod:`marainer.tensorflow` — behind extras, and the
+logger libraries are imported lazily by their backend classes only.
 
-import torch.optim
-from confluid import register
+A plain ``import marainer`` stays light (no torch / pytorch_lightning): it exposes
+the tracking surface and the framework-neutral checkpoint policies.
+"""
 
-from marainer.runner import TorchRunner  # noqa: F401  (re-export the runnable grad marker)
+__version__ = "0.2.0"
 
-# Register standard torch optimizers for confluid usage
-register(torch.optim.Adam)
-register(torch.optim.SGD)
+from marainer.checkpoints import CheckpointPolicy, SaveBest, SaveEveryEpoch, SaveLast
+from marainer.run_names import generate_run_name
+from marainer.tracking import (
+    CsvTracker,
+    MlflowTracker,
+    TensorBoardTracker,
+    Tracker,
+    TrackerGroup,
+    WandbTracker,
+    log_run_context,
+)
 
-# Metrics module (registers MetricPreset with confluid)
-import marainer.metrics  # noqa: F401, E402
-import marainer.presets  # noqa: F401, E402
+__all__ = [
+    "__version__",
+    "Tracker",
+    "TrackerGroup",
+    "CsvTracker",
+    "MlflowTracker",
+    "TensorBoardTracker",
+    "WandbTracker",
+    "log_run_context",
+    "generate_run_name",
+    "CheckpointPolicy",
+    "SaveLast",
+    "SaveEveryEpoch",
+    "SaveBest",
+]

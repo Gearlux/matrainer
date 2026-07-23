@@ -1,4 +1,4 @@
-"""Tests for :func:`marainer.checkpoint.load_lightning_checkpoint`."""
+"""Tests for :func:`marainer.torch.checkpoint.load_lightning_checkpoint`."""
 
 from pathlib import Path
 from typing import cast
@@ -7,7 +7,7 @@ import pytest
 import torch
 import torch.nn as nn
 
-from marainer.checkpoint import load_lightning_checkpoint
+from marainer.torch.checkpoint import load_lightning_checkpoint
 
 
 class _Inner(nn.Module):

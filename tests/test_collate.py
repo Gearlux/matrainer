@@ -1,10 +1,10 @@
-"""Tests for :func:`marainer.collate.collate_fn_with_metadata`."""
+"""Tests for :func:`marainer.torch.data.collate_fn_with_metadata`."""
 
 import pytest
 import torch
 from sampleflux.sample import Sample
 
-from marainer.collate import collate_fn_with_metadata
+from marainer.torch.data import collate_fn_with_metadata
 
 
 def test_stacks_image_inputs_and_targets() -> None:
