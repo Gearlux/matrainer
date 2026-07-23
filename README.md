@@ -1,8 +1,14 @@
 # Marainer
 
-Project-agnostic training and processing pipeline orchestrator built on PyTorch Lightning, Confluid, and SampleFlux.
+**Experiment-tracking library** for machine-learning runs — parameters, git provenance, log
+files, config artifacts, figures, metric values, and system metrics — logged to whichever backend
+you use (MLflow, TensorBoard, CSV, Weights & Biases), across whichever training platform you run
+(PyTorch Lightning, TensorFlow/Keras, Ultralytics, a bare training loop).
 
-Marainer provides a fully YAML-configurable training loop with multi-backend logging (TensorBoard, CSV, MLflow), flexible data pipelines (SampleFlux), and a comprehensive metrics system (torchmetrics).
+Marainer holds **no training loop, no trainer/evaluator class, and no CLI.** A class that trains
+reads like a standard example for its framework and lives in *your* project; it reaches for Marainer
+only to *track* the run. The guiding invariant: **removing Marainer should cost only a couple of
+line changes** — the run keeps training (with loggair logging), it just loses the rich tracking.
 
 ## Installation
 
@@ -10,875 +16,221 @@ Marainer provides a fully YAML-configurable training loop with multi-backend log
 pip install git+https://github.com/Gearlux/marainer.git@main
 ```
 
-Tab completion: `marainer --install-completion` (bash/zsh/fish auto-detected from `$SHELL`).
+The core install is light — `confluid` / `liquifai` / `loggair` / `coolname` / `numpy` only.
+`import marainer` pulls in **no** torch, pytorch-lightning, mlflow, or wandb. Everything heavy is
+behind an extra and lazily imported the first time you use its backend:
 
-### Development
+| Extra | Pulls in | Enables |
+|---|---|---|
+| `marainer[torch]` | `torch` | `marainer.torch` — checkpoint loading, metadata-preserving collate, output contracts |
+| `marainer[lightning]` | torch, `pytorch-lightning`, `torchmetrics`, `tabulate`, `matplotlib` | `marainer.lightning` — Lightning tracking callbacks + metric helpers |
+| `marainer[mlflow]` | `mlflow`, `psutil`, `pyobjc` (macOS) | `MlflowTracker` + system metrics |
+| `marainer[tensorboard]` | torch (`torch.utils.tensorboard`) | `TensorBoardTracker` |
+| `marainer[wandb]` | `wandb` | `WandbTracker` |
+| `marainer[tensorflow]` | `tensorflow` | `marainer.tensorflow.keras_tracking_callback` |
+| `marainer[all]` | lightning + mlflow + tensorboard + wandb | everything |
 
-```bash
-git clone https://github.com/Gearlux/marainer.git
-cd marainer
-pip install -e ".[dev]"
+A missing backend library raises one clear error — e.g. `pip install marainer[mlflow]` — never a
+bare `ModuleNotFoundError`.
+
+## The `Tracker` — the one abstraction
+
+`marainer.Tracker` (in `marainer.tracking.base`) mirrors the `pytorch_lightning.loggers.Logger`
+shape so it drops into any framework's logger slot, plus a few extensions:
+
+```
+name / version / experiment                    # identity + the lazily-built native handle
+log_hyperparams(params)                         # config params
+log_metrics(metrics, step=None)                 # scalar metrics over time
+set_tags(tags) / log_artifact(path, dir=None)   # tags + file artifacts
+log_figure(name, figure, step=None)             # matplotlib / array figures
+save() / finalize(status) / log_dir             # lifecycle
 ```
 
-## Quick Start
+Four backends live one-per-file, each importing its library **lazily inside its methods** and every
+one **zero-arg constructible** (the native handle is built on first `.experiment` access):
 
-### 1. Define a Model
+| Backend | Library | Notes |
+|---|---|---|
+| `CsvTracker` | stdlib only | the always-available default — `metrics.csv` + `hparams.yaml` + artifact copies |
+| `MlflowTracker` | `mlflow` | run lifecycle via `MlflowClient`; optional `log_system_metrics=True` |
+| `TensorBoardTracker` | `torch.utils.tensorboard` | artifacts copied into the run dir |
+| `WandbTracker` | `wandb` | minimal, mock-tested |
 
-Any `nn.Module` works. Use `@configurable` to make constructor parameters controllable from YAML:
+`TrackerGroup([...])` fans one call out to several backends behind the same surface.
 
 ```python
-# my_project/model.py
-import torch
-import torch.nn as nn
-from confluid import configurable
+from marainer import CsvTracker, MlflowTracker, TrackerGroup
 
-@configurable
-class SimpleCNN(nn.Module):
-    def __init__(self, num_classes: int = 10, input_channels: int = 1):
-        super().__init__()
-        self.conv = nn.Sequential(
-            nn.Conv2d(input_channels, 16, 3, padding=1),
-            nn.ReLU(), nn.MaxPool2d(2),
-            nn.Conv2d(16, 32, 3, padding=1),
-            nn.ReLU(), nn.MaxPool2d(2),
-        )
-        self.fc = nn.Sequential(
-            nn.Flatten(),
-            nn.Linear(32 * 7 * 7, 64), nn.ReLU(),
-            nn.Linear(64, num_classes),
-        )
-
-    def forward(self, x: torch.Tensor) -> torch.Tensor:
-        return self.fc(self.conv(x))
+tracker = TrackerGroup([CsvTracker(), MlflowTracker(experiment_name="drone-classify")])
+tracker.log_hyperparams({"lr": 1e-3, "batch_size": 32})
+for step, loss in enumerate(losses):
+    tracker.log_metrics({"train/loss": loss}, step=step)
+tracker.finalize("FINISHED")
 ```
 
-### 2. Write a YAML Config
+Trackers are `@configurable`, so they also wire straight from YAML.
 
-```yaml
-# train.yaml
-experiment_name: mnist_digits
-run_name: baseline
+## Automatic provenance
 
-num_classes: 10
+`marainer.log_run_context(trackers, params)` stamps everything you want reproducible in one call —
+so a run is rebuildable from its artifacts alone:
 
-model: !class:my_project.model.SimpleCNN()
-  input_channels: 1
+- **hyperparameters** — `params`
+- **git commit** — the `git.commit` tag (`+ "-dirty"` on uncommitted changes)
+- **config artifacts** — the transitively-`include:`-d YAML tree, uploaded under `config/`
 
-optimizer: !lazy:torch.optim.Adam
-  lr: 0.001
-
-metrics:
-  - !class:torchmetrics.classification.MulticlassAccuracy()
-  - !class:torchmetrics.classification.MulticlassF1Score()
-
-# !clone: creates independent deep copies (torchmetrics requires separate state)
-train_metrics: !class:torchmetrics.MetricCollection()
-  metrics: !clone:metrics
-  prefix: "train/"
-
-val_metrics: !class:torchmetrics.MetricCollection()
-  metrics: !clone:metrics
-  prefix: "val/"
-
-train_set: !class:sampleflux.core.Flux()
-  source: !class:sampleflux.sources.HuggingFaceSource()
-    path: mnist
-    split: train
-    input_feature: image
-    target_feature: label
-  ops:
-    - !class:sampleflux.ops.ToTensorOp()
-      normalize: true
-
-val_set: !class:sampleflux.core.Flux()
-  source: !class:sampleflux.sources.HuggingFaceSource()
-    path: mnist
-    split: test
-    input_feature: image
-    target_feature: label
-  ops:
-    - !class:sampleflux.ops.ToTensorOp()
-      normalize: true
-
-max_epochs: 10
-batch_size: 32
-num_workers: 4
-```
-
-### 3. Train
-
-```bash
-marainer train train.yaml
-```
-
-Marainer will:
-- Instantiate the model, optimizer, data pipelines, and metrics from YAML
-- Create separate train and validation metric collections
-- Run the training loop via PyTorch Lightning
-- Log hyperparameters (config params, git hash, config script) and metrics to all configured loggers
-
----
-
-## The `train` Command
-
-The `train` command is Marainer's primary entry point. It orchestrates the full lifecycle of a training run.
-
-### Usage
-
-```bash
-marainer train <config.yaml>
-```
-
-### What Happens
-
-1. **Config loading** -- Confluid parses the YAML file, resolving `!class:` tags, `!ref:` references, environment variables (`${VAR}`), and scope overrides.
-
-2. **Trainer construction** -- A `Trainer` instance is created with all parameters from the YAML. Confluid's broadcasting pushes root-level scalars (like `num_classes`, `batch_size`, `max_epochs`) into matching constructor parameters across all configured objects.
-
-3. **Logger setup** -- Configured logging backends (TensorBoard, CSV, MLflow) are attached to the Lightning Trainer.
-
-4. **Hyperparameter logging** -- All configurable parameters, the git commit hash, and the config script path are logged to every attached logger.
-
-5. **Training execution** -- `Trainer.run()` materializes all deferred objects and starts the Lightning training loop.
-
-### Configuration Reference
-
-| Parameter | Type | Default | Description |
-|---|---|---|---|
-| `experiment_name` | `str` | `"marainer_run"` | MLflow experiment name |
-| `run_name` | `str` | *random* | MLflow run name. Omit it (or pass `null`) to auto-generate a friendly random slug like `train_funny_rabbit` (`marainer.run_names.generate_run_name`, `coolname`-backed); set it explicitly to pin one. |
-| `model` | `!class:` | *required* | Neural network model |
-| `optimizer` | `!class:` | `Adam(lr=1e-3)` | Optimizer |
-| `loss_fn` | `!class:` | `CrossEntropyLoss()` | Loss function (post-construction) |
-| `train_metrics` | `!class:` | `None` | Train MetricCollection (post-construction) |
-| `val_metrics` | `!class:` | `None` | Validation MetricCollection (post-construction) |
-| `test_metrics` | `!class:` | `None` | Test MetricCollection (post-construction) |
-| `train_set` | `!class:` | *required* | Training dataset (Flux pipeline or Dataset) |
-| `val_set` | `!class:` | `None` | Validation dataset (used during `fit`) |
-| `test_set` | `!class:` | `None` | Held-out test dataset. When set, `lightning_trainer.test()` runs after `fit()` |
-| `train_loader` | `!class:` | `DataLoader` | Training DataLoader config |
-| `val_loader` | `!class:` | `DataLoader` | Validation DataLoader config |
-| `test_loader` | `!class:` | `DataLoader` | Test DataLoader config |
-| `loggers` | `list[!class:]` | `None` | Logging backends (TensorBoard, CSV, MLflow) |
-| `lightning` | `!class:` | `L.Trainer` | PyTorch Lightning Trainer config |
-| `batch_size` | `int` | -- | Broadcast to DataLoaders |
-| `num_workers` | `int` | -- | Broadcast to DataLoaders |
-| `max_epochs` | `int` | -- | Broadcast to Lightning Trainer |
-
-### Dataset-derived model dimensions (`!lazy:`)
-
-The trainer is task-agnostic but supports deriving model dimensions from the
-dataset at run time. Declare the `model` (and/or metrics) as `!lazy:` and omit a
-dimension the dataset can supply; `LightningTrainer.run()` flows the dataset
-first, reads its `derived_dimensions() -> dict` hook (a duck-typed protocol — a
-classification dataset returns `{"num_classes": N}` by walking its targets), and
-injects only the **unset** keys when it constructs those deferred nodes:
-
-```yaml
-model: !lazy:sonair.timm_classifier.TimmModel   # num_classes omitted
-  model_name: efficientvit_b0
-val_metrics: !lazy:torchmetrics.MetricCollection
-  metrics:
-    top1: !class:torchmetrics.classification.MulticlassAccuracy { top_k: 1 }
-train_set: !class:sampleflux.sources.HuggingFaceSource  # provides derived_dimensions()
-  path: ylecun/mnist
-  split: train
-```
-
-marainer never names a specific dimension (no hardcoded `num_classes`) — keys
-come entirely from the dataset, and an explicitly-set value always wins over a
-derived one. Datasets that don't implement `derived_dimensions()` (e.g.
-detection/segmentation today) are untouched. This is the optimizer pattern
-(`flow(self.optimizer, params=self.parameters())`) generalised; see
-`marainer.dimensions`.
-
-### Configurable Loss Function
-
-The loss function defaults to `nn.CrossEntropyLoss()` but can be overridden in YAML via Confluid's post-construction attribute setting:
-
-```yaml
-# Use a different loss function
-loss_fn: !class:torch.nn.MSELoss()
-
-# Or with parameters
-loss_fn: !class:torch.nn.CrossEntropyLoss()
-  label_smoothing: 0.1
-```
-
-Any `torch.nn` loss module works. No code changes required.
-
-### Configurable Optimizer
-
-```yaml
-# SGD with momentum
-optimizer: !lazy:torch.optim.SGD
-  lr: 0.01
-  momentum: 0.9
-
-# AdamW
-optimizer: !lazy:torch.optim.AdamW
-  lr: 0.001
-  weight_decay: 0.01
-```
-
-> **Use `!lazy:` (not `!class:`) for `optimizer`, `train_loader` / `val_loader` / `test_loader`, and `lightning`.** The trainer holds these as deferred body slots and builds them itself at run time — the optimizer with `params=model.parameters()`, the loaders with `dataset=…`, the Lightning Trainer after auto-`ModelCheckpoint` / logger wiring. A bare `!class:` value for one of these is materialized eagerly on assignment (an optimizer built with no `params` would crash); Marainer auto-defers a misconfigured `!class:` here and logs a warning, but wire it `!lazy:` to be explicit.
-
-### Lightning Trainer Configuration
-
-Pass any `pytorch_lightning.Trainer` argument:
-
-```yaml
-lightning: !lazy:pytorch_lightning.Trainer
-  max_epochs: 50
-  accelerator: gpu
-  devices: 1
-  precision: 16-mixed
-  gradient_clip_val: 1.0
-```
-
-Or use root-level broadcasting for common parameters:
-
-```yaml
-max_epochs: 50       # broadcast into Lightning Trainer
-batch_size: 64       # broadcast into DataLoaders
-num_workers: 8       # broadcast into DataLoaders
-```
-
----
-
-## The `process` / `download` / `convert` Commands — `DatasetProcessor`
-
-For non-training workflows — converting datasets, windowing signals, running a
-pure SampleFlux pipeline from a source to a sink — Marainer ships
-`marainer.processing.DatasetProcessor`. It's the generic `processor:` object the
-`process`, `download`, and `convert` verbs dispatch via `.run()` (the three
-verbs are semantic aliases; they all bind the object under the top-level
-`processor:` key).
-
-```yaml
-# convert.yaml — run with: marainer convert convert.yaml
-import:
-  - sampleflux.core
-  - sampleflux.storage.hdf5
-
-processor: !class:marainer.processing.DatasetProcessor
-  show_progress: true            # optional rich.progress bar
-  flux: !class:Flux
-    source: !class:SomeSource { ... }
-    ops: [ ... ]
-  sink: !class:HDF5Sink
-    path: ./out.h5
-```
-
-| Field | Type | Default | Description |
-|-------|------|---------|-------------|
-| `flux` | `sampleflux.core.Flux` | — | The pipeline (source + ops) to execute. |
-| `sink` | sink \| `None` | `None` | Terminal sink; when absent, samples are materialized to an in-memory list. |
-| `show_progress` | `bool` | `False` | Wrap iteration in a `rich.progress` bar (total from `len(flux.source)` when available). |
-| `progress_desc` | `str` | `"DatasetProcessor"` | Progress-bar label. |
-
-> `DatasetProcessor` lives in Marainer (not a domain package) because it is the
-> workspace's generic data-pipeline runner and depends only on SampleFlux +
-> Confluid. It was moved here from `waivefront.processing`.
-
-> `show_progress` controls the **console** `rich` bar only. A GUI executor
-> (FluxStudio, driving ComfyUI's native per-node progress bar) gets progress via
-> a separate, comfy-free channel — see *Reporting progress to a GUI* below — which
-> fires per sample regardless of `show_progress`.
-
----
-
-## Workflows — composing runnables (`marainer.workflow`)
-
-A *workflow* is several runnables (trainers / evaluators / `DatasetProcessor`s)
-orchestrated together. `marainer.workflow` provides Confluid-`@configurable`
-**higher-order runnables** — the runnable-level analogue of SampleFlux's
-higher-order ops (`Parallel` / `TransformChain` / `Enable`) — so a whole workflow is ONE
-Confluid document, run with the generic `process` verb:
-
-```bash
-marainer process workflow.yaml
-```
-
-| Class | Role |
-|-------|------|
-| `Sequence` | Run a list of runnables in order — the workflow itself. |
-| `Conditional` | Run one of two runnables (`if_true` / `if_false`) depending on a `condition`. |
-| `Switch` | Run one of several runnables keyed by a `selector` value (`cases` + `default`). |
-| `PathExists` | Predicate (no-arg `__call__ -> bool`): `True` iff a path exists — the canonical cache check. |
-| `Not` / `AllOf` / `AnyOf` | Predicate combinators (NOT / AND / OR) to build a condition. |
-
-`condition` accepts any predicate (a no-arg `__call__ -> bool`), a zero-arg
-callable, or a plain `bool`. Branches are held as **instances** and only
-`run()` when selected — wire them `!lazy:` so an unchosen branch is never even
-built (no model / dataset materialised).
-
-```yaml
-# workflow.yaml — train only on a cache miss, then always evaluate.
-processor: !class:marainer.workflow.Sequence
-  steps:
-    - !class:marainer.workflow.Conditional
-      # condition true (checkpoint already on disk) -> skip training
-      condition: !class:marainer.workflow.PathExists
-        path: ${MODEL_ROOT}/model.ckpt
-      if_false: !lazy:TrainModel        # cache miss -> train
-      if_true:  null                    # cache hit  -> do nothing, fall through
-    - !lazy:EvaluateModel               # always runs — Sequence continues regardless
-```
-
-**The guarantee:** only the *selected* branch's `run()` is ever called. This is
-the *memoise-and-continue* answer to "don't recompute, move on" — the next
-`steps:` entry runs because `Sequence` drives them in order; there is no
-execution-blocking and no dead branches. A workflow compiles 1:1 to the Python
-you'd write by hand:
+`marainer.tracking.capture_log_file(trackers)` uploads the active loggair output file
+(`loggair.get_active_config()["log_file"]`) as a `logs/` artifact at run end. Don't hand-roll
+git/config/log-file logging elsewhere — these are the sanctioned helpers.
 
 ```python
-if not Path(f"{MODEL_ROOT}/model.ckpt").exists():
-    TrainModel().run()
-EvaluateModel().run()
+from marainer import log_run_context
+from marainer.tracking import capture_log_file
+
+log_run_context([tracker], params={"lr": 1e-3, "model": "efficientvit_b0"})
+# ... run training ...
+capture_log_file([tracker])
 ```
 
-> Because the combinators are plain `@configurable` runnables, they surface in
-> navigaitor (MCP) and FluxStudio with no bespoke glue — a workflow is dispatched
-> by the same `process` verb that runs any `.run()` object. On the FluxStudio
-> canvas a `Conditional` / `Sequence` / `Switch` node exposes `SAMPLEFLUX_RUNNABLE`
-> input sockets, and a trainer / evaluator wired into one is built as an **instance**
-> (not run) so the combinator runs the selected branch. The combinators inherit
-> `TorchRunner` (autograd is restored for an inner trainer) and `ProgressReporting`
-> (the progress bar follows the running step).
+## Three ways to hook tracking into PyTorch Lightning
 
----
+`marainer.lightning` (behind `[lightning]`) is **optional tracking helpers**, not a platform. Your
+`LightningModule` stays a standard one; pick whichever hookup fits — the choice is yours:
 
-## Reporting progress to a GUI (the `marainer.progress` protocol)
+**1. Plain functions** — call `log_run_context` / `capture_log_file` from your own run wrapper
+(shown above). Zero Lightning coupling.
 
-Every long-running runnable — `LightningTrainer` (and its task subclasses),
-`LightningEvaluator`, and `DatasetProcessor` — can report progress to a GUI
-executor **without marainer importing any GUI/ComfyUI code**, mirroring the
-`TorchRunner` autograd split. The executor injects a plain callback; the runnable
-drains it from its loop:
+**2. A `pl.Callback`** — `TrackingCallback` logs provenance on fit/test start and the log file on
+end:
 
 ```python
-from marainer.progress import ProgressReporting   # the mixin every runnable inherits
+import pytorch_lightning as pl
+from marainer import CsvTracker
+from marainer.lightning import TrackingCallback
 
-trainer.set_progress_callback(lambda value, total, desc: ...)  # (value, total, desc) -> None
-trainer.run()                                                  # callback fires as the run proceeds
+trainer = pl.Trainer(
+    max_epochs=10,
+    callbacks=[TrackingCallback([CsvTracker()], params={"lr": 1e-3})],
+)
 ```
 
-- **No callback injected** (a plain `marainer train` / `evaluate` / `process` CLI
-  run, or any non-GUI caller) ⇒ every report is a silent no-op; behaviour is
-  unchanged.
-- **Lightning runnables** get whole-run progress for free via
-  `marainer.progress.LightningProgressCallback`: training reports one bar over the
-  *whole run* (`trainer.global_step` out of `trainer.estimated_stepping_batches`,
-  so it advances across all epochs without resetting); standalone test / predict
-  report the per-stage batch count.
-- **`DatasetProcessor`** reports per sample (`len(flux.source)` total).
-
-FluxStudio is the reference consumer — it implements `set_progress_callback` to
-drive ComfyUI's native green progress bar. The protocol lives in
-`marainer.progress` (it is intentionally **not** re-exported from `marainer`'s
-package root, which stays free of the PyTorch-Lightning import cost).
-
----
-
-## Metrics System
-
-Marainer integrates with [torchmetrics](https://torchmetrics.readthedocs.io/) to provide flexible, YAML-configurable metrics. Metrics are automatically:
-
-- **Split** into independent train and validation collections (required by torchmetrics for correct state tracking)
-- **Prefixed** with `train/` and `val/` for unambiguous logging
-- **Logged** to the Lightning progress bar and all configured loggers at epoch end
-- **Moved** to the correct device (CPU/GPU) by Lightning
-
-### Approach 1: Explicit Metrics
-
-Define metrics as a list and use `!clone:` to create independent train/val collections:
-
-```yaml
-num_classes: 10   # broadcast to all metrics
-
-metrics:
-  - !class:torchmetrics.classification.MulticlassAccuracy()
-  - !class:torchmetrics.classification.MulticlassF1Score()
-      average: weighted
-  - !class:torchmetrics.classification.MulticlassPrecision()
-  - !class:torchmetrics.classification.MulticlassRecall()
-
-train_metrics: !class:torchmetrics.MetricCollection()
-  metrics: !clone:metrics
-  prefix: "train/"
-
-val_metrics: !class:torchmetrics.MetricCollection()
-  metrics: !clone:metrics
-  prefix: "val/"
-```
-
-Shared parameters like `num_classes` are **broadcast** from the YAML root into each metric's constructor automatically by Confluid. You can override per-metric (e.g., `average: weighted` above overrides the default).
-
-The `!clone:` tag deep-copies the referenced `metrics` list, giving each MetricCollection independent metric instances (required by torchmetrics for correct state tracking).
-
-### Approach 2: Inline MetricCollection with !clone:
-
-Define a single MetricCollection and clone it with different prefixes:
-
-```yaml
-num_classes: 10
-
-metrics: !class:torchmetrics.MetricCollection()
-  metrics:
-    - !class:torchmetrics.classification.MulticlassAccuracy()
-    - !class:torchmetrics.classification.MulticlassF1Score()
-
-train_metrics: !clone:metrics
-  prefix: "train/"
-
-val_metrics: !clone:metrics
-  prefix: "val/"
-```
-
-### MetricPreset Reference
-
-| Parameter | Type | Default | Description |
-|---|---|---|---|
-| `category` | `str` | `"classification"` | torchmetrics sub-module: `classification`, `regression`, `segmentation`, `detection`, `audio`, `image`, `text`, `clustering`, `retrieval`, `nominal`, `video`, `multimodal` |
-| `task` | `str` | `""` (all) | Task variant filter. For classification: `"binary"`, `"multiclass"`, `"multilabel"`. Filters by class name prefix. Empty string loads all variants. |
-| `exclude` | `list[str]` | `None` | Metric class names to skip (merged with built-in non-scalar exclusions) |
-| `num_classes` | `int` | `None` | Number of classes (passed to metrics that accept it) |
-| `num_labels` | `int` | `None` | Number of labels (for multilabel tasks) |
-| `average` | `str` | `"macro"` | Averaging strategy: `"macro"`, `"micro"`, `"weighted"` |
-
-Only parameters that a metric's `__init__` explicitly accepts are passed. Metrics whose required parameters cannot be satisfied are skipped with a warning.
-
-### Task-Specific Examples
-
-All examples below use the `!clone:` pattern. Define metrics once, then create independent train/val collections.
-
-#### Binary Classification
-
-```yaml
-metrics:
-  - !class:torchmetrics.classification.BinaryAccuracy()
-  - !class:torchmetrics.classification.BinaryF1Score()
-  - !class:torchmetrics.classification.BinaryAUROC()
-
-train_metrics: !class:torchmetrics.MetricCollection()
-  metrics: !clone:metrics
-  prefix: "train/"
-
-val_metrics: !class:torchmetrics.MetricCollection()
-  metrics: !clone:metrics
-  prefix: "val/"
-```
-
-#### Multiclass Classification (MNIST, CIFAR, etc.)
-
-```yaml
-num_classes: 10
-
-metrics:
-  - !class:torchmetrics.classification.MulticlassAccuracy()
-  - !class:torchmetrics.classification.MulticlassF1Score()
-  - !class:torchmetrics.classification.MulticlassPrecision()
-
-train_metrics: !class:torchmetrics.MetricCollection()
-  metrics: !clone:metrics
-  prefix: "train/"
-
-val_metrics: !class:torchmetrics.MetricCollection()
-  metrics: !clone:metrics
-  prefix: "val/"
-```
-
-#### Regression
-
-```yaml
-metrics:
-  - !class:torchmetrics.regression.MeanSquaredError()
-  - !class:torchmetrics.regression.MeanAbsoluteError()
-  - !class:torchmetrics.regression.R2Score()
-
-train_metrics: !class:torchmetrics.MetricCollection()
-  metrics: !clone:metrics
-  prefix: "train/"
-
-val_metrics: !class:torchmetrics.MetricCollection()
-  metrics: !clone:metrics
-  prefix: "val/"
-```
-
-### Log Output
-
-With metrics configured, the Lightning progress bar and MLflow will show:
-
-```
-Epoch 2: 100%|####| 63/63 [00:05] train/loss=0.234 val/loss=0.312
-                                   train/MulticlassAccuracy=0.931
-                                   val/MulticlassAccuracy=0.918
-                                   train/MulticlassF1Score=0.928
-                                   val/MulticlassF1Score=0.915
-```
-
-### Limitations
-
-- **Object detection metrics** (e.g., `MeanAveragePrecision`) expect dict-based inputs and are not compatible with the standard `(preds, target)` call pattern. Use a custom Trainer subclass for detection tasks.
-- **Non-scalar metrics** (ConfusionMatrix, ROC, PrecisionRecallCurve) are excluded by default from presets because `self.log_dict()` requires scalar values. You can still use them with explicit metrics if you override `training_step`/`validation_step`.
-
----
-
-## Outputs (the `@output` I/O contract)
-
-`LightningTrainer` and `LightningEvaluator` declare confluid `@output` properties — the read-only,
-post-run side of the I/O contract that tools (FluxStudio's results panel, navigaitor's form-spec)
-read via `confluid.output_specs`. They are **only valid after `run()`** (they raise a clear
-`RuntimeError` before — they are run artifacts, not config knobs, and never appear in `to_pydantic`):
-
-| Output | Type | Source |
-| --- | --- | --- |
-| `computed_metrics` | `Dict[str, float]` | Trainer: Lightning's `self.trainer.callback_metrics` (final logged scalars; the per-split `MetricCollection`s are reset each epoch). Evaluator: `self.metrics.compute()` (the `test/`-prefixed collection, not reset). **Scalars only** — non-scalar metrics (e.g. a confusion matrix) are logged as figures, not tabulated. |
-| `label_names` | `List[str]` | Resolved class names for the run (`[]` when the dataset exposes none). |
-| `all_metrics` (evaluator only) | `Dict[str, Any]` | The FULL `self.metrics.compute()` — *every* metric by name, scalars AND non-scalars (a confusion matrix becomes a nested list), JSON-safe. Since `computed_metrics` is scalars-only, this generic output is how non-scalar metrics are surfaced: a consumer (FluxStudio's *Confusion Matrix* viewer) extracts every confusion matrix from it. The evaluator carries no "which metric is the confusion matrix" knowledge. |
+**3. The `TrackerLogger` bridge** — hand a Marainer `Tracker` to `Trainer(logger=…)` so it receives
+per-step metrics like any pl logger:
 
 ```python
-trainer.run()
-print(trainer.computed_metrics)  # {"train/loss": 0.21, "test/acc": 0.93, ...}
-print(trainer.label_names)       # ["drone_a", "drone_b", ...]
+from marainer.lightning import TrackerLogger
+trainer = pl.Trainer(logger=TrackerLogger(MlflowTracker(experiment_name="exp")))
 ```
 
-Task subclasses (sonair / deltaid / raidar) inherit both outputs for free. In FluxStudio these
-populate the **Run node's results panel** after a run (see the FluxStudio README); the underlying
-JSON-safe coercion is `marainer.trainer._coerce_metric_value` (shared with the evaluator's metrics
-sidecar). `trained_model` (sonair) stays a wireable object output, distinct from these display values.
+Metrics may equally stay on stock `pytorch_lightning.loggers.*` — Marainer **uses** pl loggers,
+never reimplements them.
 
----
+`marainer.lightning` also ships the metric utilities (`build_metric_collection`, `MetricPreset`,
+`coerce_metric_value`, `scalar_metrics`), the progress bridge
+(`LightningProgressCallback` / `attach_lightning_progress`, mapping Lightning's per-batch hooks onto
+`sampleflux.runnable.ProgressReporting`), the system-metric callbacks
+(`MlflowSystemMetricsCallback` / `MPSMetricsCallback` + `activate_for_lightning`), and
+`build_checkpoint_callbacks` (translates the checkpoint policies below into `ModelCheckpoint`s).
 
-## Confluid Integration
+For TensorFlow/Keras, `marainer.tensorflow.keras_tracking_callback` is the analogue.
 
-Marainer leverages [Confluid](https://github.com/Gearlux/confluid) for all configuration and dependency injection.
+## Framework-neutral checkpoint policies
 
-### Key Concepts
+Declare *what* to checkpoint once; each framework translates it. `marainer.checkpoints` provides
+zero-arg `@configurable` carriers:
 
-- **`!class:module.Class()`** -- Instantiates a class immediately (Instance). Parameters are indented below.
-- **`!class:module.Class`** -- Deferred class. Stays as a `Class` object until explicitly `flow()`'d at runtime.
-- **`!clone:ref`** -- Deep-copies a referenced value, producing independent instances. Essential for torchmetrics which requires separate state for train vs validation.
-- **Broadcasting** -- Root-level scalar values are automatically injected into any class constructor that accepts a matching parameter name. This is how `num_classes: 10` reaches both the model and all metrics without repetition.
-- **`@configurable`** -- Decorator that enables post-construction attribute setting. Any YAML key that doesn't match a constructor parameter is set as an attribute (e.g., `loss_fn`, `train_metrics`, `val_metrics`).
+| Policy | Meaning |
+|---|---|
+| `SaveLast()` | keep `last.ckpt`, refreshed every epoch |
+| `SaveEveryEpoch(every_n_epochs=1)` | snapshot on a cadence |
+| `SaveBest(monitor, mode, top_k=1)` | keep the best `top_k` by a monitored metric |
 
-### How Broadcasting Works
+```python
+from marainer.checkpoints import SaveBest, SaveLast
+from marainer.lightning import build_checkpoint_callbacks
 
-```yaml
-num_classes: 10        # Root-level scalar
-batch_size: 32         # Root-level scalar
-
-model: !class:my_project.SimpleCNN()    # __init__ accepts num_classes -> gets 10
-  input_channels: 1                      # Explicit param (not broadcast)
-
-metrics:
-  - !class:torchmetrics.classification.MulticlassAccuracy()  # accepts num_classes -> gets 10
+callbacks = build_checkpoint_callbacks([SaveLast(), SaveBest(monitor="val/acc", mode="max")])
+trainer = pl.Trainer(callbacks=callbacks)   # -> pytorch_lightning ModelCheckpoint(s)
 ```
 
-Explicit values always take precedence over broadcast values.
+No policy ⇒ the framework default. Add a policy here; translate it in the framework helper.
 
----
+## System metrics (`marainer.tracking.system`, framework-free)
 
-## SampleFlux Integration
+- `enable_mlflow_system_metrics()` — the process-wide MLflow enable for `mlflow.start_run` clients.
+- `start_system_metrics_monitor()` — CPU / RAM / disk (and NVIDIA GPU when `pynvml` is present).
+- `MpsMetricsSampler` — an Apple-Silicon GPU sampler with a plain `start()` / `stop()`, pushing nine
+  `system/mps_*` scalars via `MlflowClient.log_metric`. It reads utilisation from an inlined IOKit
+  `PerformanceStatistics` query (the no-sudo private API the `stats` menu-bar app uses); `torch` and
+  `mlflow` are imported lazily.
 
-Training and validation datasets are defined as [SampleFlux](https://github.com/Gearlux/sampleflux) `Flux` pipelines:
+A non-Lightning platform calls these directly; the Lightning `pl.Callback` wrappers live in
+`marainer.lightning.callbacks`. Tune the cadence with
+`MLFLOW_SYSTEM_METRICS_SAMPLING_INTERVAL` (seconds, default 10) or disable via
+`MLFLOW_ENABLE_SYSTEM_METRICS_LOGGING=false`.
 
-```yaml
-train_set: !class:sampleflux.core.Flux()
-  source: !class:sampleflux.sources.HuggingFaceSource()
-    path: mnist
-    split: train
-    input_feature: image
-    target_feature: label
-    count: 1000                    # Optional: limit samples
-  ops:
-    - !class:sampleflux.ops.numpy.RescaleOp()
-      in_min: 0
-      in_max: 255
-    - !class:sampleflux.ops.ToTensorOp()
-      normalize: false
-```
+## `marainer.torch` — torch-only, Lightning-free helpers (`marainer[torch]`)
 
-SampleFlux pipelines support functional composition with operations like normalization, tensor conversion, augmentation, and more. See the SampleFlux documentation for available sources and operations.
+- `load_lightning_checkpoint(model, path, strict=False)` — loads a Lightning `.ckpt` (strips the
+  `model.` prefix), an Ultralytics `.pt` (pulls the live module's `state_dict`), or a plain
+  state-dict; auto-retargets to a named child when keys match one. `strict=False` tolerates a
+  re-headed `num_classes`.
+- `ensure_sample_dataset(source)` — normalise any wired source into a map-style `Dataset` that
+  yields `sampleflux.Sample`s (wrapping in a `Flux` when needed).
+- `collate_fn_with_metadata(batch)` — stack tensors, preserving per-sample metadata as a list.
+- Prediction-output contracts: `ClassificationOutput` / `DetectionOutput` / `SegmentationOutput`.
 
-### Train / Val / Test Splits
+These aren't strictly tracking but stay in Marainer for now so a non-Lightning trainer (e.g. an
+Ultralytics loop) can use them via `marainer[torch]` without pulling `pytorch_lightning`.
 
-Marainer treats `val_set` and `test_set` as distinct signals: `val_set` is used per-epoch during `fit()` for model selection, and `test_set` is evaluated once via `lightning_trainer.test()` after `fit()` completes.
+## `ClassificationPredictionsSink` (`marainer.sinks`)
 
-The recommended pattern carves the training split of the source into a disjoint train/val view via SampleFlux's `DatasetSplit`, and reserves the source's own test split for `test_set`:
+A modality-neutral top-k JSON predictions sink (numpy/sampleflux only, no torch/lightning), in the
+light core. It consumes per-sample prediction mappings — a model emits a per-sample mapping (not a
+batched tensor) in predict mode.
 
-```yaml
-hf_train: !class:sampleflux.sources.HuggingFaceSource()
-  path: mnist
-  split: train
-  input_feature: image
-  target_feature: label
+## Random run names
 
-hf_test: !class:sampleflux.sources.HuggingFaceSource()
-  path: mnist
-  split: test
-  input_feature: image
-  target_feature: label
+`marainer.generate_run_name(prefix="train")` returns a friendly `adjective_noun` slug (`coolname`,
+offline) — the default `Tracker.run_name`, and what a consumer's merged class uses
+(`generate_run_name(prefix=task)`).
 
-train_set: !class:sampleflux.core.Flux()
-  source: !class:sampleflux.sources.DatasetSplit()
-    source: !ref:hf_train
-    split: train
-    val_fraction: 0.1
-    seed: 42
+## What lives elsewhere
 
-val_set: !class:sampleflux.core.Flux()
-  source: !class:sampleflux.sources.DatasetSplit()
-    source: !ref:hf_train
-    split: val
-    val_fraction: 0.1
-    seed: 42
+The **runnable protocol** and **pipeline running** are *not* in Marainer — they moved to
+[SampleFlux](https://github.com/Gearlux/sampleflux):
 
-test_set: !class:sampleflux.core.Flux()
-  source: !ref:hf_test
-```
+- `sampleflux.runnable` — `TorchRunner`, `ProgressReporting`, and the `entrypoint` /
+  `runnable_entrypoints` method-annotation mechanism a merged train+eval class uses to declare its
+  `fit`/`evaluate`/`test`/`predict` capabilities.
+- `sampleflux.workflow` — the `Sequence` / `Conditional` / `Switch` combinators + predicates.
+- `sampleflux.processing` — `DatasetProcessor`.
+- `sampleflux run <config.yaml>` — the generic runner. A config roots at a top-level `runnable:` key
+  plus a `task:`; consumers may also ship their own CLI (`sonair train`, `raidar evaluate`, …).
 
-`DatasetSplit` also supports explicit `start`/`end` ranges and works with any indexable source. See SampleFlux's README for the full reference and the HuggingFace native slicing alternative.
-
----
-
-## Logging
-
-Marainer supports multiple logging backends via PyTorch Lightning's logger system. Configure any combination of TensorBoard, CSV, and MLflow loggers under the `lightning:` block:
-
-```yaml
-lightning: !lazy:pytorch_lightning.Trainer
-  max_epochs: 10
-  accelerator: auto
-  logger:
-    - !class:pytorch_lightning.loggers.TensorBoardLogger()
-        save_dir: "."
-        name: "tb_logs"
-    - !class:pytorch_lightning.loggers.CSVLogger()
-        save_dir: "."
-        name: "csv_logs"
-    - !class:pytorch_lightning.loggers.MLFlowLogger()
-        experiment_name: !ref:experiment_name
-        run_name: !ref:run_name
-```
-
-> **Important:** `logger:` lives **inside** the `lightning:` block — this is the single kwarg that PyTorch Lightning's `Trainer(logger=…)` constructor consumes. A top-level `loggers:` key on the marainer trainer is a no-op (no such kwarg exists; Lightning silently falls back to its default `./lightning_logs/`). The contract is pinned by `tests/test_loggers.py::TestYamlLoggers::test_yaml_loggers_reach_lightning_trainer`.
-
-All configured loggers automatically receive:
-
-- **Hyperparameters** -- All configurable parameters from the YAML config
-- **Git hash** -- Current commit hash for reproducibility
-- **Config script** -- Path to the YAML config file used
-- **YAML config files** -- The full include tree (main YAML + every transitively `include:`-d file) is copied/uploaded as `config/<name>.yaml` to every logger so a run is reproducible from its artifacts alone
-- **Metrics** -- Loss and all configured torchmetrics logged per epoch via `self.log()`
-
-When `logger:` is omitted, Lightning uses its default logger (TensorBoardLogger writing to `./lightning_logs/version_N/`).
-
-### Default checkpointing
-
-Marainer auto-injects a `ModelCheckpoint` callback before training starts (so a fresh YAML always produces something to load from):
-
-- `save_last=True` → writes `last.ckpt` after every epoch
-- `save_top_k=1` → keeps the single best checkpoint by the first val metric
-- `monitor` / `mode` resolved in this order:
-    1. First key in `val_metrics.metrics` (its `higher_is_better` attribute decides `mode`)
-    2. `val/loss` (`mode=min`) when no val metrics are wired but a `val_set` is present
-    3. `train/loss` (`mode=min`) when no `val_set` is wired
-
-To opt out, supply your own `ModelCheckpoint` (any `monitor`) under `lightning.callbacks` or set `enable_checkpointing: false` on the Lightning trainer. Either choice is respected; no second callback is added.
-
-### Loading checkpoints
-
-`marainer.checkpoint.load_lightning_checkpoint(model, path, strict=False)` is the loading counterpart — model classes call it from their `__init__` (typically gated on a `checkpoint_path` constructor arg) to load their own weights without dragging Marainer's Lightning wrapper into the picture. It lives in Marainer because it loads weights saved by Marainer's Lightning wrapper, so it's the natural home for the common upstream of every task package (sonair / deltaid / raidar / raidar-ultralytics), which import it across the dependency boundary.
-
-One helper tolerates three on-disk shapes:
-
-- **Lightning `.ckpt`** — top-level `state_dict` key whose entries carry the `model.` prefix Lightning's wrapper adds; the prefix is stripped on load.
-- **Ultralytics `.pt`** — top-level `model` key holding a *live* `nn.Module` (e.g. ultralytics' `DetectionModel`); its `state_dict()` is pulled and the `model.<n>...` namespace prefix is **kept** (it's a real layer level, not Lightning's wrapper). Detected by an `isinstance` check, so no `ultralytics` import is incurred.
-- **Plain state-dict** — `torch.save(model.state_dict(), path)`; the loaded object is the state dict.
-
-`strict` defaults to `False` so e.g. a re-trained head with a different `num_classes` doesn't reject the whole load. When the source keys don't match `model`'s own `state_dict` but do match one of its `named_children()`, the load is auto-retargeted to that child (e.g. `YOLO26Model(checkpoint_path=<best.pt>)` routes an Ultralytics checkpoint into `self.detector` without hand-prefixing). A missing `path` raises `FileNotFoundError`.
-
-### TensorBoard
-
-```yaml
-lightning: !lazy:pytorch_lightning.Trainer
-  max_epochs: 10
-  logger:
-    - !class:pytorch_lightning.loggers.TensorBoardLogger()
-        save_dir: "."
-        name: "tb_logs"
-```
-
-View results: `tensorboard --logdir tb_logs`
-
-### CSV
-
-```yaml
-lightning: !lazy:pytorch_lightning.Trainer
-  max_epochs: 10
-  logger:
-    - !class:pytorch_lightning.loggers.CSVLogger()
-        save_dir: "."
-        name: "csv_logs"
-```
-
-Metrics are written to `csv_logs/<name>/version_N/metrics.csv`, hyperparameters to `hparams.yaml`.
-
-### MLflow
-
-```yaml
-experiment_name: mnist_experiment
-run_name: baseline_v2
-
-lightning: !lazy:pytorch_lightning.Trainer
-  max_epochs: 10
-  logger:
-    - !class:pytorch_lightning.loggers.MLFlowLogger()
-        experiment_name: !ref:experiment_name
-        run_name: !ref:run_name
-```
-
-Use `!ref:` to reuse root-level `experiment_name` and `run_name` values. View results: `mlflow ui`
-
-### System metrics
-
-When an `MLFlowLogger` is wired, `LightningTrainer.run()` automatically
-attaches an MLflow `SystemMetricsMonitor` to the Lightning logger's run
-via a callback (`MlflowSystemMetricsCallback`). Without this, the global
-`mlflow.system_metrics.enable_system_metrics_logging()` flag is silently
-ineffective for Lightning runs — `pytorch_lightning.loggers.MLFlowLogger`
-uses `MlflowClient.create_run()` directly and bypasses the fluent
-`mlflow.start_run()` hook the global flag relies on.
-
-The monitor records CPU / RAM / disk usage via `psutil` at the configured
-sampling interval (default 10 s). NVIDIA GPU metrics are picked up
-automatically when `pynvml` is installed.
-
-On Apple-Silicon hosts the trainer additionally attaches an
-`MPSMetricsCallback` that runs a background daemon thread between
-`on_fit_start` and `on_fit_end` (and the matching `test_*` hooks),
-sampling MPS GPU stats every `sample_interval_s` seconds and pushing
-them straight to MLflow via `MlflowClient.log_metric`. The cadence is
-decoupled from training-step pacing so it matches MLflow's built-in
-CPU / RAM / disk monitor.
-
-Three per-process scalars come from `torch.mps`:
-
-- `system/mps_allocated_mb` — current process allocation
-- `system/mps_driver_mb` — driver-side allocation (includes caches)
-- `system/mps_recommended_max_mb` — Apple's soft cap
-
-The other six come from an inline IOKit reader
-(`marainer.system_metrics._read_mps_performance_statistics`) which
-queries the `IOAccelerator` service's `PerformanceStatistics` dict
-via `pyobjc` — the same no-sudo, private-API source used by the
-`stats` macOS menu-bar app and `macmon`:
-
-- `system/mps_device_util_pct` — overall GPU busy %
-- `system/mps_renderer_util_pct` — render-stage busy %
-- `system/mps_tiler_util_pct` — tile-binning-stage busy %
-- `system/mps_in_use_system_memory_mb` — system-level GPU memory in use
-- `system/mps_in_use_system_memory_driver_mb` — driver-side share of the above
-- `system/mps_alloc_system_memory_mb` — total system memory reserved by the GPU driver
-
-**Sampling cadence:** default 10 s. Override workspace-wide via
-`MLFLOW_SYSTEM_METRICS_SAMPLING_INTERVAL` (same env var MLflow's
-built-in monitor honours — so all system metrics tick at the same
-rate) or per-run by instantiating the callback directly with
-`sample_interval_s=...`. `pyobjc-core` + `pyobjc-framework-Cocoa` are
-declared under `sys_platform == "darwin"` so Linux / CUDA environments
-skip the IOKit reader cleanly. If Apple renames keys across macOS
-releases (it has happened — see
-[exelban/stats#2130](https://github.com/exelban/stats/issues/2130))
-any missing key is skipped silently rather than failing the sample.
-
-**Thread lifecycle:** the sampler runs in a **non-daemon** thread and
-also registers an `atexit` hook to signal stop. Together these prevent
-the thread from accessing `torch.mps` / IOKit / `MlflowClient` C state
-during interpreter teardown, which would segfault on macOS.
-
-The same behaviour applies to subclasses (`LightningClassificationTrainer`,
-`LightningSegmentationTrainer`, `LightningDetectionTrainer`).
-`raidar_ultralytics.UltralyticsTrainer` / `UltralyticsEvaluator` use the
-global `enable_system_metrics_logging()` path (ultralytics' MLflow
-integration calls `mlflow.start_run()` so the flag is sufficient there)
-and don't get the per-epoch MPS callback.
-
-Opt-out per trainer:
-
-```yaml
-trainer: !class:marainer.trainer.LightningTrainer
-  log_system_metrics: false   # disable for this run
-  # ... (other trainer settings unchanged)
-```
-
-Workspace-wide tuning via `.env`:
-
-```bash
-# Sampling interval in seconds (default: 10)
-MLFLOW_SYSTEM_METRICS_SAMPLING_INTERVAL=30
-# Disable from the environment (overrides the trainer's default-on behaviour)
-MLFLOW_ENABLE_SYSTEM_METRICS_LOGGING=false
-```
-
-NVIDIA GPU metrics are picked up automatically when `pynvml` is installed
-(not a marainer dep — install in the consuming project if you need it).
-
----
+There is no `marainer.runner` / `marainer.progress` / `marainer.workflow` / `marainer.processing`
+and no marainer binary.
 
 ## Examples
 
-The `examples/` directory contains ready-to-run configurations:
-
-| File | Description |
-|---|---|
-| `mnist_train_minimal.yaml` | Minimal MNIST training (no metrics) |
-| `mnist_train.yaml` | MNIST with data preprocessing |
-| `mnist_train_metrics.yaml` | MNIST with explicit metrics (Accuracy, F1, Precision, Recall) |
-| `mnist_train_preset.yaml` | MNIST with MetricPreset (all multiclass metrics) |
-| `mnist_train_logging.yaml` | MNIST with TensorBoard, CSV, and MLflow loggers |
-| `mnist_model.py` | Simple CNN model for MNIST |
-
-Run any example from the `examples/` directory:
+`examples/standalone_tracking.py` — a torch-free run of the `Tracker` surface end to end
+(hyperparams → metrics loop → figure → provenance → finalize) against `CsvTracker`, so you can see
+the artifacts land without any framework installed:
 
 ```bash
-cd examples
-marainer train mnist_train_metrics.yaml
+python examples/standalone_tracking.py
 ```
-
----
-
-## Project Architecture
-
-```
-marainer/
-  __init__.py       # Package init, optimizer registrations
-  trainer.py        # Trainer (LightningModule) with configurable metrics
-  metrics.py        # MetricPreset for category-based metric discovery
-  cli.py            # CLI entry point (Liquify app)
-examples/
-  mnist_model.py    # Example CNN model
-  mnist_train*.yaml # Example configurations
-tests/
-  test_metrics.py             # Metric system tests (27 tests)
-  test_training_scenarios.py  # Training integration tests
-  test_unpack_batch.py        # Batch handling tests
-```
-
----
 
 ## Dependencies
 
 | Package | Purpose |
 |---|---|
-| `pytorch-lightning` | Training loop, device management, logging |
-| `torch` | Neural networks, tensors, optimizers |
-| `torchmetrics` | Flexible metric computation |
-| `confluid` | YAML configuration and dependency injection |
-| `liquifai` | CLI framework with automatic DI |
-| `sampleflux` | Data pipeline abstraction |
-| `loggair` | Structured logging |
-| `mlflow` | Experiment tracking |
-| `tensorboard` | TensorBoard logging backend |
+| `confluid` | YAML configuration + dependency injection (`@configurable` Trackers/policies) |
+| `liquifai` | provenance's config-include resolution |
+| `loggair` | structured logging + the active-log-file handle `capture_log_file` uploads |
+| `coolname` | random run names |
+| `numpy` | the predictions sink |
+
+Everything else — torch, pytorch-lightning, torchmetrics, mlflow, tensorboard, wandb, tensorflow —
+is optional and behind an extra.
