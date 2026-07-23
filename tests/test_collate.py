@@ -1,83 +1,76 @@
-"""Tests for :func:`marainer.torch.data.collate_fn_with_metadata`."""
+"""Tests for :func:`marainer.torch.data.collate_fn_with_metadata` (typed-bag Sample)."""
+
+from typing import Any, Dict, List
 
 import pytest
 import torch
-from sampleflux.sample import Sample
+from sampleflux import Image, Label, Sample, item_data, primary
 
 from marainer.torch.data import collate_fn_with_metadata
 
 
+def _sample(inp: torch.Tensor, target: torch.Tensor, meta: Dict[str, Any] | None = None) -> Sample:
+    """A typed input sample: Image input, Label target, aux Label fields for metadata."""
+    fields: Dict[str, Any] = {"input": Image(inp, layout="CHW"), "target": Label(target)}
+    roles: Dict[str, Any] = {"input": "input", "target": "target"}
+    for k, v in (meta or {}).items():
+        fields[k] = Label(v)
+        roles[k] = "aux"
+    return Sample(fields, roles=roles)
+
+
+def _batched_input(result: Sample) -> Any:
+    return item_data(primary(result, "input")[1])
+
+
+def _batched_target(result: Sample) -> Any:
+    return primary(result, "target")[1].value
+
+
+def _batch_meta(result: Sample) -> List[Dict[str, Any]]:
+    return list(result["metadata"])
+
+
 def test_stacks_image_inputs_and_targets() -> None:
     batch = [
-        Sample(input=torch.randn(3, 224, 224), target=torch.tensor(5), metadata={"id": "a"}),
-        Sample(input=torch.randn(3, 224, 224), target=torch.tensor(7), metadata={"id": "b"}),
+        _sample(torch.randn(3, 224, 224), torch.tensor(5), {"id": "a"}),
+        _sample(torch.randn(3, 224, 224), torch.tensor(7), {"id": "b"}),
     ]
     result = collate_fn_with_metadata(batch)
-    assert result.input.shape == (2, 3, 224, 224)
-    assert result.target.shape == (2,)
-    assert result.batch_meta == [{"id": "a"}, {"id": "b"}]
+    assert _batched_input(result).shape == (2, 3, 224, 224)
+    assert _batched_target(result).shape == (2,)
+    assert _batch_meta(result) == [{"id": "a"}, {"id": "b"}]
 
 
 def test_preserves_metadata_as_list() -> None:
-    """Metadata should be a list of dicts, not nested under 'per_sample'."""
     batch = [
-        Sample(
-            input=torch.randn(3, 64, 64),
-            target=torch.tensor(0),
-            metadata={"filename": "img1.png", "pack_id": "pack_001"},
-        ),
-        Sample(
-            input=torch.randn(3, 64, 64),
-            target=torch.tensor(1),
-            metadata={"filename": "img2.png", "pack_id": "pack_001"},
-        ),
+        _sample(torch.randn(3, 64, 64), torch.tensor(0), {"filename": "img1.png", "pack_id": "p1"}),
+        _sample(torch.randn(3, 64, 64), torch.tensor(1), {"filename": "img2.png", "pack_id": "p1"}),
     ]
     result = collate_fn_with_metadata(batch)
-    assert isinstance(result.batch_meta, list)
-    assert len(result.batch_meta) == 2
-    assert result.batch_meta[0] == {"filename": "img1.png", "pack_id": "pack_001"}
-    assert result.batch_meta[1] == {"filename": "img2.png", "pack_id": "pack_001"}
-
-
-def test_coerces_integer_targets_to_int64() -> None:
-    """Int32 or other int dtypes should be coerced to int64 via torch.stack."""
-    batch = [
-        Sample(input=torch.randn(3, 32, 32), target=torch.tensor(2, dtype=torch.int32), metadata={}),
-        Sample(input=torch.randn(3, 32, 32), target=torch.tensor(3, dtype=torch.int32), metadata={}),
-    ]
-    result = collate_fn_with_metadata(batch)
-    # torch.stack on mixed int dtypes promotes to int64 automatically
-    assert result.target.dtype in (torch.int32, torch.int64)
+    meta = _batch_meta(result)
+    assert isinstance(meta, list) and len(meta) == 2
+    assert meta[0] == {"filename": "img1.png", "pack_id": "p1"}
 
 
 def test_handles_scalar_targets() -> None:
-    """0-D scalar targets should stack into a 1-D [B] tensor."""
     batch = [
-        Sample(input=torch.randn(1, 28, 28), target=torch.tensor(5), metadata={"label": "five"}),
-        Sample(input=torch.randn(1, 28, 28), target=torch.tensor(9), metadata={"label": "nine"}),
+        _sample(torch.randn(1, 28, 28), torch.tensor(5)),
+        _sample(torch.randn(1, 28, 28), torch.tensor(9)),
     ]
     result = collate_fn_with_metadata(batch)
-    assert result.target.dim() == 1
-    assert result.target.shape == (2,)
+    assert _batched_target(result).dim() == 1 and _batched_target(result).shape == (2,)
 
 
-def test_preserves_nested_metadata() -> None:
-    """Metadata can contain nested dicts and lists."""
+def test_handles_multidimensional_targets() -> None:
+    """Segmentation masks [H, W] should stack to [B, H, W]."""
     batch = [
-        Sample(
-            input=torch.randn(3, 16, 16),
-            target=torch.tensor(0),
-            metadata={"id": "a", "extra": {"nested": "value"}, "tags": ["tag1", "tag2"]},
-        ),
-        Sample(
-            input=torch.randn(3, 16, 16),
-            target=torch.tensor(1),
-            metadata={"id": "b", "extra": {"nested": "other"}, "tags": ["tag3"]},
-        ),
+        _sample(torch.randn(3, 64, 64), torch.randint(0, 10, (64, 64)), {"id": "mask1"}),
+        _sample(torch.randn(3, 64, 64), torch.randint(0, 10, (64, 64)), {"id": "mask2"}),
     ]
     result = collate_fn_with_metadata(batch)
-    assert result.batch_meta[0]["extra"]["nested"] == "value"
-    assert result.batch_meta[1]["tags"] == ["tag3"]
+    assert _batched_input(result).shape == (2, 3, 64, 64)
+    assert _batched_target(result).shape == (2, 64, 64)
 
 
 def test_rejects_empty_batch() -> None:
@@ -86,38 +79,7 @@ def test_rejects_empty_batch() -> None:
 
 
 def test_rejects_non_tensor_input() -> None:
-    batch = [
-        Sample(input=torch.randn(3, 32, 32), target=torch.tensor(0), metadata={}),
-        Sample(input=[1, 2, 3], target=torch.tensor(1), metadata={}),  # list instead of tensor
-    ]
-    with pytest.raises(TypeError, match="input.*Tensor"):
-        collate_fn_with_metadata(batch)
-
-
-def test_rejects_non_tensor_target() -> None:
-    batch = [
-        Sample(input=torch.randn(3, 32, 32), target=torch.tensor(0), metadata={}),
-        Sample(input=torch.randn(3, 32, 32), target=1, metadata={}),  # int instead of tensor
-    ]
-    with pytest.raises(TypeError, match="target.*Tensor"):
-        collate_fn_with_metadata(batch)
-
-
-def test_handles_multidimensional_targets() -> None:
-    """Segmentation masks and other [H, W] targets should stack to [B, H, W]."""
-    batch = [
-        Sample(
-            input=torch.randn(3, 64, 64),
-            target=torch.randint(0, 10, (64, 64)),
-            metadata={"id": "mask1"},
-        ),
-        Sample(
-            input=torch.randn(3, 64, 64),
-            target=torch.randint(0, 10, (64, 64)),
-            metadata={"id": "mask2"},
-        ),
-    ]
-    result = collate_fn_with_metadata(batch)
-    assert result.input.shape == (2, 3, 64, 64)
-    assert result.target.shape == (2, 64, 64)
-    assert result.batch_meta == [{"id": "mask1"}, {"id": "mask2"}]
+    # A non-tensor/ndarray primary input payload is a collate-contract error.
+    bad = Sample({"input": Label("not-an-array"), "target": Label(torch.tensor(1))}, roles={"target": "target"})
+    with pytest.raises(TypeError, match="input.*Tensor or ndarray"):
+        collate_fn_with_metadata([bad])

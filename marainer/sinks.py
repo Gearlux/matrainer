@@ -1,25 +1,25 @@
-"""Modality-neutral predictions sinks for :class:`marainer.evaluator.LightningEvaluator`.
+"""Modality-neutral predictions sink for a Lightning predict/test loop.
 
-The evaluator drives a Lightning predict/test loop and calls
-``predictions_sink.write(prediction, metadata)`` once per sample, then
-``predictions_sink.close()`` at end-of-run. This module hosts the sinks that
-bridge that contract to SampleFlux ``Sample``-ops *without* any domain coupling:
+A consumer's predict loop calls ``predictions_sink.write(prediction, metadata)``
+once per sample, then ``predictions_sink.close()`` at end-of-run. This module
+hosts the sink that bridges that contract to SampleFlux ``Sample``-ops *without*
+any domain coupling:
 
 * :class:`ClassificationPredictionsSink` — reads each per-sample
-  :class:`~marainer.outputs.ClassificationOutput` (``probs`` / ``class_idx``),
-  resolves the int class id to a human-readable label, builds a top-k list,
-  and threads a fresh ``Sample`` carrying ``predicted_class_id`` /
-  ``predicted_class_label`` / ``predicted_confidence`` / ``predicted_top_k``
-  through a configurable op chain (typically just a ``SampleSinkOp`` wrapping a
-  per-window JSON sink).
+  ``ClassificationOutput`` (``probs`` / ``class_idx``, see
+  ``marainer.torch.outputs``), resolves the int class id to a human-readable
+  label, builds a top-k list, and threads a fresh ``Sample`` carrying
+  ``predicted_class_id`` / ``predicted_class_label`` / ``predicted_confidence``
+  / ``predicted_top_k`` (as a single ``aux`` field) through a configurable op
+  chain (typically just a ``SampleSinkOp`` wrapping a per-window JSON sink).
 
 It lives in marainer — not in a domain package — because marainer both defines
 the ``predictions_sink`` contract AND owns the ``ClassificationOutput`` type it
 reads, and because the sink is fully modality-neutral (no signal/image
-specifics). Any classification package (sonair, …) reuses it with no
-cross-domain dependency. The signal-domain counterpart that back-projects pixel
-boxes to time/frequency regions (``DetectionPredictionsSink``) stays in
-``waivefront`` because it genuinely depends on waivefront's signal geometry.
+specifics). Any classification consumer reuses it with no cross-domain
+dependency. The signal-domain counterpart that back-projects pixel boxes to
+time/frequency regions stays in the signal package because it genuinely depends
+on that package's signal geometry.
 """
 
 from typing import Any, Dict, List, Optional
@@ -27,7 +27,7 @@ from typing import Any, Dict, List, Optional
 import numpy as np
 from confluid import configurable
 from loggair import get_logger
-from sampleflux.sample import Sample
+from sampleflux import Sample
 
 logger = get_logger(__name__)
 
@@ -36,29 +36,30 @@ logger = get_logger(__name__)
 class ClassificationPredictionsSink:
     """Adapter sink that lifts classification predictions into a Sample and runs ops.
 
-    Bridges the :class:`marainer.evaluator.LightningEvaluator` ``predictions_sink``
-    contract — ``write(prediction, metadata)`` per sample — to the Sample-based
-    ops in waivefront / sampleflux, mirroring
-    :class:`waivefront.sinks.DetectionPredictionsSink` so the
-    train→eval→predict triad has a uniform shape across detection,
-    segmentation, and classification.
+    Bridges a Lightning predict/test loop's ``predictions_sink`` contract —
+    ``write(prediction, metadata)`` per sample — to the Sample-based ops in
+    sampleflux, giving the train→eval→predict triad a uniform shape across
+    detection, segmentation, and classification.
 
     For each call:
 
-    1. Read the model's :class:`~marainer.outputs.ClassificationOutput` —
+    1. Read the model's ``ClassificationOutput`` (``marainer.torch.outputs``) —
        ``logits`` ``[C]``, ``probs`` ``[C]``, ``class_idx`` scalar (per
        sample).
     2. Resolve the int class id to a human-readable label via
        ``label_names``. Build a top-k list (``top_k`` highest-probability
        classes with their probabilities + labels).
-    3. Build a fresh ``Sample(input=None, target=None, metadata=...)``
-       carrying the original metadata plus the new prediction columns:
+    3. Build a fresh ``Sample`` carrying the original metadata plus the new
+       prediction columns as a single ``aux`` field ``"metadata"``:
 
        * ``predicted_class_id`` (int)
        * ``predicted_class_label`` (str)
        * ``predicted_confidence`` (float — top-1 probability)
        * ``predicted_top_k`` (list of ``{class_id, label, probability}``
          dicts, sorted by descending probability)
+
+       carried on the typed bag as a single ``aux`` field ``"metadata"``
+       (``Sample({"metadata": ...}, roles={"metadata": "aux"})``).
     4. Thread the Sample through ``ops`` — typically just
        ``SampleSinkOp(sink=JsonPerWindowSink(...))`` to dump per-window JSON.
 
@@ -132,7 +133,7 @@ class ClassificationPredictionsSink:
         top1_id = int(class_idx.item()) if hasattr(class_idx, "item") else int(class_idx)
         top1_prob = float(probs_arr[top1_id])
         if top1_prob < self.confidence_threshold:
-            logger.info(
+            logger.debug(
                 f"[diag][cls_pred_sink] {sample_id}: top1_prob={top1_prob:.3f} "
                 f"< threshold={self.confidence_threshold:.3f}; skipping."
             )
@@ -156,12 +157,15 @@ class ClassificationPredictionsSink:
         new_metadata["predicted_confidence"] = top1_prob
         new_metadata["predicted_top_k"] = top_k_list
 
-        logger.info(
+        logger.debug(
             f"[diag][cls_pred_sink] {sample_id}: top1={new_metadata['predicted_class_label']!r} "
             f"({top1_prob:.3f}), top_k={k}"
         )
 
-        sample = Sample(input=None, target=None, metadata=new_metadata)
+        # Carry the prediction metadata as a single ``aux`` field on a typed bag ``Sample``.
+        # Downstream ops (typically ``SampleSinkOp`` wrapping a per-window JSON sink) read it
+        # via ``sample["metadata"]``. There is no input/target on a prediction-only sample.
+        sample = Sample({"metadata": new_metadata}, roles={"metadata": "aux"})
         for i, op in enumerate(self.ops):
             if isinstance(op, Fluid):
                 op = flow(op)

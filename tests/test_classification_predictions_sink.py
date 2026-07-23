@@ -4,7 +4,7 @@ from typing import Any, Dict, List
 
 import pytest
 import torch
-from sampleflux.sample import Sample
+from sampleflux import Sample
 
 from marainer.sinks import ClassificationPredictionsSink
 
@@ -59,7 +59,7 @@ def test_top1_path_writes_predicted_columns() -> None:
     sink.write(_make_prediction([0.1, 0.7, 0.2], class_idx=1), _make_metadata())
 
     assert len(op.calls) == 1
-    meta = op.calls[0].meta
+    meta = op.calls[0]["metadata"]
     assert meta["predicted_class_id"] == 1
     assert meta["predicted_class_label"] == "DJI AVATA2"
     assert meta["predicted_confidence"] == pytest.approx(0.7, abs=1e-6)
@@ -76,7 +76,7 @@ def test_top_k_path_returns_descending_probabilities() -> None:
     )
     sink.write(_make_prediction([0.1, 0.4, 0.45, 0.05], class_idx=2), _make_metadata())
 
-    top_k = op.calls[0].meta["predicted_top_k"]
+    top_k = op.calls[0]["metadata"]["predicted_top_k"]
     assert len(top_k) == 3
     # Sorted descending by probability.
     probs = [entry["probability"] for entry in top_k]
@@ -91,7 +91,7 @@ def test_top_k_clamps_when_exceeds_num_classes() -> None:
     op = _CapturingOp()
     sink = ClassificationPredictionsSink(ops=[op], top_k=10)
     sink.write(_make_prediction([0.5, 0.3, 0.2], class_idx=0), _make_metadata())
-    assert len(op.calls[0].meta["predicted_top_k"]) == 3
+    assert len(op.calls[0]["metadata"]["predicted_top_k"]) == 3
 
 
 def test_label_names_string_keys_work() -> None:
@@ -103,7 +103,7 @@ def test_label_names_string_keys_work() -> None:
         top_k=1,
     )
     sink.write(_make_prediction([0.2, 0.8], class_idx=1), _make_metadata())
-    assert op.calls[0].meta["predicted_class_label"] == "b"
+    assert op.calls[0]["metadata"]["predicted_class_label"] == "b"
 
 
 def test_label_names_missing_key_falls_back_to_str_class_id() -> None:
@@ -115,26 +115,28 @@ def test_label_names_missing_key_falls_back_to_str_class_id() -> None:
     )
     sink.write(_make_prediction([0.1, 0.9], class_idx=1), _make_metadata())
     # Missing class 1 → falls back to "1".
-    assert op.calls[0].meta["predicted_class_label"] == "1"
+    assert op.calls[0]["metadata"]["predicted_class_label"] == "1"
 
 
 def test_no_label_names_uses_str_class_id() -> None:
     op = _CapturingOp()
     sink = ClassificationPredictionsSink(ops=[op], top_k=2)
     sink.write(_make_prediction([0.7, 0.3], class_idx=0), _make_metadata())
-    meta = op.calls[0].meta
+    meta = op.calls[0]["metadata"]
     assert meta["predicted_class_label"] == "0"
     assert {entry["label"] for entry in meta["predicted_top_k"]} == {"0", "1"}
 
 
-def test_threaded_sample_carries_input_none() -> None:
-    """The contract mirrors DetectionPredictionsSink: input/target = None."""
+def test_threaded_sample_carries_metadata_aux_field_only() -> None:
+    """The threaded Sample carries only the prediction metadata as a single ``aux`` field."""
     op = _CapturingOp()
     sink = ClassificationPredictionsSink(ops=[op], top_k=1)
     sink.write(_make_prediction([0.6, 0.4], class_idx=0), _make_metadata())
     s = op.calls[0]
-    assert s.input is None
-    assert s.target is None
+    assert list(s.keys()) == ["metadata"]
+    assert s.role_of("metadata") == "aux"
+    assert s.inputs() == {}
+    assert s.targets() == {}
 
 
 def test_close_propagates_to_ops() -> None:
@@ -204,5 +206,5 @@ def test_handles_2d_probs_with_leading_singleton() -> None:
         _make_metadata(),
     )
     assert len(op.calls) == 1
-    assert op.calls[0].meta["predicted_class_id"] == 1
-    assert op.calls[0].meta["predicted_confidence"] == pytest.approx(0.6, abs=1e-6)
+    assert op.calls[0]["metadata"]["predicted_class_id"] == 1
+    assert op.calls[0]["metadata"]["predicted_confidence"] == pytest.approx(0.6, abs=1e-6)
