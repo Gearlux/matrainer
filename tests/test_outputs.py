@@ -2,7 +2,7 @@
 
 import torch
 
-from marainer.outputs import (
+from marainer.torch.outputs import (
     ClassificationOutput,
     DetectionOutput,
     SegmentationOutput,

@@ -1,33 +1,10 @@
-"""Tests for the flexible metrics system."""
+"""Tests for the flexible metrics system (MetricPreset + build_metric_collection)."""
 
 import pytest
-import pytorch_lightning as L
-import torch
-import torch.nn as nn
-from confluid import configurable
-from sampleflux.core import Flux
-from sampleflux.sample import Sample
-from torch.utils.data import DataLoader
 from torchmetrics import Metric, MetricCollection
-from torchmetrics.classification import MulticlassAccuracy, MulticlassF1Score, MulticlassPrecision, MulticlassRecall
+from torchmetrics.classification import MulticlassAccuracy, MulticlassF1Score
 
-from marainer.metrics import MetricPreset
-from marainer.trainer import LightningTrainer
-
-
-@configurable
-class TinyModel(nn.Module):
-    def __init__(self, input_size: int = 4, num_classes: int = 2) -> None:
-        super().__init__()
-        self.fc = nn.Linear(input_size, num_classes)
-
-    def forward(self, x: torch.Tensor) -> torch.Tensor:
-        return self.fc(x)  # type: ignore[no-any-return]
-
-
-def make_samples(n: int = 32, input_size: int = 4) -> Flux:
-    return Flux(source=[Sample(input=torch.randn(input_size), target=i % 2, metadata={}) for i in range(n)])
-
+from marainer.lightning.metrics import MetricPreset
 
 # ---------------------------------------------------------------------------
 # MetricPreset tests
@@ -134,93 +111,9 @@ class TestMetricPreset:
 # ---------------------------------------------------------------------------
 
 
-class TestTrainerMetricsIntegration:
-    def _make_trainer(
-        self,
-        train_metrics: MetricCollection | None = None,
-        val_metrics: MetricCollection | None = None,
-    ) -> LightningTrainer:
-        trainer = LightningTrainer(
-            model=TinyModel(),
-            train_set=make_samples(16),
-        )
-        if train_metrics is not None:
-            trainer.train_metrics = train_metrics
-        if val_metrics is not None:
-            trainer.val_metrics = val_metrics
-        return trainer
-
-    def test_no_metrics_backward_compat(self) -> None:
-        trainer = self._make_trainer()
-        assert trainer.train_metrics is None
-        assert trainer.val_metrics is None
-        flux = Flux(source=make_samples(16))
-        loader: DataLoader = DataLoader(flux, batch_size=8)
-        loss = trainer.training_step(next(iter(loader)), 0)
-        assert loss.dim() == 0
-
-    def test_metrics_set_via_configurable(self) -> None:
-        train_mc = MetricCollection(
-            [MulticlassAccuracy(num_classes=2), MulticlassF1Score(num_classes=2)],
-            prefix="train/",
-        )
-        val_mc = MetricCollection(
-            [MulticlassAccuracy(num_classes=2), MulticlassF1Score(num_classes=2)],
-            prefix="val/",
-        )
-        trainer = self._make_trainer(train_metrics=train_mc, val_metrics=val_mc)
-        assert trainer.train_metrics is not None
-        assert trainer.val_metrics is not None
-        assert isinstance(trainer.train_metrics, MetricCollection)
-        assert isinstance(trainer.val_metrics, MetricCollection)
-
-    def test_train_metrics_prefixed(self) -> None:
-        train_mc = MetricCollection([MulticlassAccuracy(num_classes=2)], prefix="train/")
-        trainer = self._make_trainer(train_metrics=train_mc)
-        assert trainer.train_metrics is not None
-        assert any("train/" in str(k) for k in trainer.train_metrics)
-
-    def test_val_metrics_prefixed(self) -> None:
-        val_mc = MetricCollection([MulticlassAccuracy(num_classes=2)], prefix="val/")
-        trainer = self._make_trainer(val_metrics=val_mc)
-        assert trainer.val_metrics is not None
-        assert any("val/" in str(k) for k in trainer.val_metrics)
-
-    def test_training_step_updates_metrics(self) -> None:
-        train_mc = MetricCollection([MulticlassAccuracy(num_classes=2)], prefix="train/")
-        trainer = self._make_trainer(train_metrics=train_mc)
-        flux = Flux(source=make_samples(16))
-        loader: DataLoader = DataLoader(flux, batch_size=8)
-        loss = trainer.training_step(next(iter(loader)), 0)
-        assert loss.dim() == 0
-
-    def test_validation_step_updates_metrics(self) -> None:
-        val_mc = MetricCollection([MulticlassAccuracy(num_classes=2)], prefix="val/")
-        trainer = self._make_trainer(val_metrics=val_mc)
-        flux = Flux(source=make_samples(16))
-        loader: DataLoader = DataLoader(flux, batch_size=8)
-        loss = trainer.validation_step(next(iter(loader)), 0)
-        assert loss.dim() == 0
-
-    def test_full_epoch_with_metrics(self) -> None:
-        train_mc = MetricCollection(
-            [
-                MulticlassAccuracy(num_classes=2),
-                MulticlassPrecision(num_classes=2),
-                MulticlassRecall(num_classes=2),
-            ],
-            prefix="train/",
-        )
-        trainer = self._make_trainer(train_metrics=train_mc)
-        flux = Flux(source=make_samples(32))
-        loader: DataLoader = DataLoader(flux, batch_size=16)
-        lt = L.Trainer(
-            max_epochs=1,
-            accelerator="cpu",
-            enable_progress_bar=False,
-            enable_model_summary=False,
-        )
-        lt.fit(model=trainer, train_dataloaders=loader)
+# NOTE: the training-loop integration tests (step functions / full-epoch fit) moved to the
+# consumer projects — marainer no longer owns a Lightning training class; its metrics module is
+# just the build_metric_collection + MetricPreset utilities tested here.
 
 
 # ---------------------------------------------------------------------------
@@ -236,7 +129,7 @@ class TestBuildMetricCollection:
         from confluid import LazyClass
         from torchmetrics.classification import MulticlassConfusionMatrix
 
-        from marainer.trainer import build_metric_collection
+        from marainer.lightning.metrics import build_metric_collection
 
         mc = build_metric_collection(LazyClass(MulticlassConfusionMatrix), num_classes=10)
         assert isinstance(mc, MetricCollection)
@@ -245,7 +138,7 @@ class TestBuildMetricCollection:
         assert mc["MulticlassConfusionMatrix"].num_classes == 10
 
     def test_single_live_metric_wraps(self) -> None:
-        from marainer.trainer import build_metric_collection
+        from marainer.lightning.metrics import build_metric_collection
 
         mc = build_metric_collection(MulticlassAccuracy(num_classes=3), num_classes=3)
         assert list(mc.keys()) == ["MulticlassAccuracy"]
@@ -254,7 +147,7 @@ class TestBuildMetricCollection:
         from confluid import LazyClass
         from torchmetrics.classification import MulticlassConfusionMatrix
 
-        from marainer.trainer import build_metric_collection
+        from marainer.lightning.metrics import build_metric_collection
 
         mc = build_metric_collection(
             [LazyClass(MulticlassAccuracy), LazyClass(MulticlassConfusionMatrix)], num_classes=4
@@ -264,7 +157,7 @@ class TestBuildMetricCollection:
     def test_dict_of_templates_still_flows(self) -> None:
         from confluid import LazyClass
 
-        from marainer.trainer import build_metric_collection
+        from marainer.lightning.metrics import build_metric_collection
 
         mc = build_metric_collection(
             {"acc": LazyClass(MulticlassAccuracy), "f1": LazyClass(MulticlassF1Score, average="macro")},
@@ -273,7 +166,7 @@ class TestBuildMetricCollection:
         assert set(mc.keys()) == {"acc", "f1"}
 
     def test_ready_made_collection_passes_through_unchanged(self) -> None:
-        from marainer.trainer import build_metric_collection
+        from marainer.lightning.metrics import build_metric_collection
 
         ready = MetricCollection({"acc": MulticlassAccuracy(num_classes=2)})
         assert build_metric_collection(ready, num_classes=2) is ready
@@ -283,7 +176,7 @@ class TestBuildMetricCollection:
         from confluid import LazyClass
         from torchmetrics.classification import MulticlassConfusionMatrix
 
-        from marainer.trainer import build_metric_collection
+        from marainer.lightning.metrics import build_metric_collection
 
         mc = build_metric_collection(LazyClass(MulticlassConfusionMatrix), num_classes=5).clone(prefix="test/")
         assert list(mc.keys()) == ["test/MulticlassConfusionMatrix"]
