@@ -2,16 +2,16 @@
 
 A consumer's predict loop calls ``predictions_sink.write(prediction, metadata)``
 once per sample, then ``predictions_sink.close()`` at end-of-run. This module
-hosts the sink that bridges that contract to SampleFlux ``Sample``-ops *without*
+hosts the sink that bridges that contract to SampleFlux record ops *without*
 any domain coupling:
 
 * :class:`ClassificationPredictionsSink` — reads each per-sample
   ``ClassificationOutput`` (``probs`` / ``class_idx``, see
   ``marainer.torch.outputs``), resolves the int class id to a human-readable
-  label, builds a top-k list, and threads a fresh ``Sample`` carrying
+  label, builds a top-k list, and threads a fresh record dict carrying
   ``predicted_class_id`` / ``predicted_class_label`` / ``predicted_confidence``
-  / ``predicted_top_k`` (as a single ``aux`` field) through a configurable op
-  chain (typically just a ``SampleSinkOp`` wrapping a per-window JSON sink).
+  / ``predicted_top_k`` (under a single ``"metadata"`` key) through a configurable
+  op chain (typically just a ``SampleSinkOp`` wrapping a per-window JSON sink).
 
 It lives in marainer — not in a domain package — because marainer both defines
 the ``predictions_sink`` contract AND owns the ``ClassificationOutput`` type it
@@ -27,17 +27,17 @@ from typing import Any, Dict, List, Optional
 import numpy as np
 from confluid import configurable
 from loggair import get_logger
-from sampleflux import Sample
+from sampleflux import Record
 
 logger = get_logger(__name__)
 
 
 @configurable
 class ClassificationPredictionsSink:
-    """Adapter sink that lifts classification predictions into a Sample and runs ops.
+    """Adapter sink that lifts classification predictions into a record dict and runs ops.
 
     Bridges a Lightning predict/test loop's ``predictions_sink`` contract —
-    ``write(prediction, metadata)`` per sample — to the Sample-based ops in
+    ``write(prediction, metadata)`` per sample — to the record-based ops in
     sampleflux, giving the train→eval→predict triad a uniform shape across
     detection, segmentation, and classification.
 
@@ -49,8 +49,8 @@ class ClassificationPredictionsSink:
     2. Resolve the int class id to a human-readable label via
        ``label_names``. Build a top-k list (``top_k`` highest-probability
        classes with their probabilities + labels).
-    3. Build a fresh ``Sample`` carrying the original metadata plus the new
-       prediction columns as a single ``aux`` field ``"metadata"``:
+    3. Build a fresh record dict carrying the original metadata plus the new
+       prediction columns as a single ``"metadata"`` key:
 
        * ``predicted_class_id`` (int)
        * ``predicted_class_label`` (str)
@@ -58,13 +58,12 @@ class ClassificationPredictionsSink:
        * ``predicted_top_k`` (list of ``{class_id, label, probability}``
          dicts, sorted by descending probability)
 
-       carried on the typed bag as a single ``aux`` field ``"metadata"``
-       (``Sample({"metadata": ...}, roles={"metadata": "aux"})``).
-    4. Thread the Sample through ``ops`` — typically just
+       carried on the record as ``{"metadata": ...}``.
+    4. Thread the record through ``ops`` — typically just
        ``SampleSinkOp(sink=JsonPerWindowSink(...))`` to dump per-window JSON.
 
     Args:
-        ops: Non-empty list of ops to run on each per-prediction Sample.
+        ops: Non-empty list of ops to run on each per-prediction record.
         label_names: Optional ``{int_class_id: str}`` map for converting
             the model's int64 class ids back to human-readable strings.
             Without it, labels become ``str(class_id)``. YAML int keys
@@ -162,15 +161,15 @@ class ClassificationPredictionsSink:
             f"({top1_prob:.3f}), top_k={k}"
         )
 
-        # Carry the prediction metadata as a single ``aux`` field on a typed bag ``Sample``.
+        # Carry the prediction metadata as a single ``"metadata"`` key on a plain record dict.
         # Downstream ops (typically ``SampleSinkOp`` wrapping a per-window JSON sink) read it
-        # via ``sample["metadata"]``. There is no input/target on a prediction-only sample.
-        sample = Sample({"metadata": new_metadata}, roles={"metadata": "aux"})
+        # via ``record["metadata"]``. There is no input/target on a prediction-only record.
+        record: Record = {"metadata": new_metadata}
         for i, op in enumerate(self.ops):
             if isinstance(op, Fluid):
                 op = flow(op)
                 self.ops[i] = op
-            sample = op(sample)
+            record = op(record)
 
     def close(self) -> None:
         """Propagate ``close()`` to ops that own resources (e.g. wrapped sinks).
