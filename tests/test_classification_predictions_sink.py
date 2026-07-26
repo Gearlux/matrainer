@@ -4,21 +4,21 @@ from typing import Any, Dict, List
 
 import pytest
 import torch
-from sampleflux import Sample
+from sampleflux import Record
 
 from marainer.sinks import ClassificationPredictionsSink
 
 
 class _CapturingOp:
-    """Tiny op that records every Sample it sees, for assertion purposes."""
+    """Tiny op that records every record dict it sees, for assertion purposes."""
 
     def __init__(self) -> None:
-        self.calls: List[Sample] = []
+        self.calls: List[Record] = []
         self.closed = False
 
-    def __call__(self, sample: Sample) -> Sample:
-        self.calls.append(sample)
-        return sample
+    def __call__(self, record: Record) -> Record:
+        self.calls.append(record)
+        return record
 
     def close(self) -> None:
         self.closed = True
@@ -127,16 +127,14 @@ def test_no_label_names_uses_str_class_id() -> None:
     assert {entry["label"] for entry in meta["predicted_top_k"]} == {"0", "1"}
 
 
-def test_threaded_sample_carries_metadata_aux_field_only() -> None:
-    """The threaded Sample carries only the prediction metadata as a single ``aux`` field."""
+def test_threaded_record_carries_metadata_key_only() -> None:
+    """The threaded record is a plain dict carrying only the prediction metadata key."""
     op = _CapturingOp()
     sink = ClassificationPredictionsSink(ops=[op], top_k=1)
     sink.write(_make_prediction([0.6, 0.4], class_idx=0), _make_metadata())
-    s = op.calls[0]
-    assert list(s.keys()) == ["metadata"]
-    assert s.role_of("metadata") == "aux"
-    assert s.inputs() == {}
-    assert s.targets() == {}
+    record = op.calls[0]
+    assert isinstance(record, dict)
+    assert list(record.keys()) == ["metadata"]
 
 
 def test_close_propagates_to_ops() -> None:
@@ -156,7 +154,7 @@ def test_confidence_threshold_drops_low_predictions() -> None:
         top_k=1,
         confidence_threshold=0.5,
     )
-    # top1 prob = 0.4, below threshold → no Sample produced.
+    # top1 prob = 0.4, below threshold → no record produced.
     sink.write(_make_prediction([0.4, 0.3, 0.3], class_idx=0), _make_metadata())
     assert op.calls == []
 
