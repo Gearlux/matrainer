@@ -11,7 +11,7 @@ any domain coupling:
   label, builds a top-k list, and threads a fresh record dict carrying
   ``predicted_class_id`` / ``predicted_class_label`` / ``predicted_confidence``
   / ``predicted_top_k`` (under a single ``"metadata"`` key) through a configurable
-  op chain (typically just a ``SampleSinkOp`` wrapping a per-window JSON sink).
+  op chain (typically just a ``RecordSinkOp`` wrapping a per-window JSON sink).
 
 It lives in marainer — not in a domain package — because marainer both defines
 the ``predictions_sink`` contract AND owns the ``ClassificationOutput`` type it
@@ -60,7 +60,7 @@ class ClassificationPredictionsSink:
 
        carried on the record as ``{"metadata": ...}``.
     4. Thread the record through ``ops`` — typically just
-       ``SampleSinkOp(sink=JsonPerWindowSink(...))`` to dump per-window JSON.
+       ``RecordSinkOp(sink=JsonPerWindowSink(...))`` to dump per-window JSON.
 
     Args:
         ops: Non-empty list of ops to run on each per-prediction record.
@@ -162,7 +162,7 @@ class ClassificationPredictionsSink:
         )
 
         # Carry the prediction metadata as a single ``"metadata"`` key on a plain record dict.
-        # Downstream ops (typically ``SampleSinkOp`` wrapping a per-window JSON sink) read it
+        # Downstream ops (typically ``RecordSinkOp`` wrapping a per-window JSON sink) read it
         # via ``record["metadata"]``. There is no input/target on a prediction-only record.
         record: Record = {"metadata": new_metadata}
         for i, op in enumerate(self.ops):
@@ -175,7 +175,7 @@ class ClassificationPredictionsSink:
         """Propagate ``close()`` to ops that own resources (e.g. wrapped sinks).
 
         The sink itself buffers nothing, but the wrapped ops typically do
-        (e.g. ``SampleSinkOp`` wrapping a buffered/file-handle sink).
+        (e.g. ``RecordSinkOp`` wrapping a buffered/file-handle sink).
         """
         for op in self.ops:
             close_fn = getattr(op, "close", None)
