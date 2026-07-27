@@ -23,8 +23,8 @@ import cost and couldn't be removed without gutting the training code.
 trainer/evaluator class, no CLI. A class that trains reads like a standard example for its framework
 and lives in the *consuming* project; it reaches for Marainer solely to track the run. The runnable
 protocol (`TorchRunner`, `ProgressReporting`, the `entrypoint` method-annotation mechanism), the
-workflow combinators, and `DatasetProcessor` moved to `sampleflux`; the generic runner is
-`sampleflux run <config>` binding a top-level `runnable:` key.
+workflow combinators, and `DatasetProcessor` moved to `recordstream`; the generic runner is
+`recordstream run <config>` binding a top-level `runnable:` key.
 
 **Consequences.**
 - The guiding invariant is testable: **removing Marainer costs a consumer only a couple of line
@@ -52,7 +52,7 @@ trainer.fit(MyStandardLightningModule(), datamodule=dm)   # delete the callback 
 
 **What you may change.** New tracking helpers, backends, provenance sources, and framework hookup
 styles are all in scope. What you may *not* add back: a training/evaluation loop, a step function, a
-`run()` dispatcher, a `DatasetProcessor`/workflow combinator (those live in `sampleflux`), or a CLI.
+`run()` dispatcher, a `DatasetProcessor`/workflow combinator (those live in `recordstream`), or a CLI.
 
 ---
 

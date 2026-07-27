@@ -5,7 +5,7 @@ from typing import Any, Dict, List
 import numpy as np
 import pytest
 import torch
-from sampleflux import Image, Label, Mask, Record, item_data
+from recordstream import Image, Label, Mask, Record, item_data
 
 from marainer.torch.data import collate_fn_with_metadata
 

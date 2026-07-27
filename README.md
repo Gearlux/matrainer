@@ -129,7 +129,7 @@ never reimplements them.
 `marainer.lightning` also ships the metric utilities (`build_metric_collection`, `MetricPreset`,
 `coerce_metric_value`, `scalar_metrics`), the progress bridge
 (`LightningProgressCallback` / `attach_lightning_progress`, mapping Lightning's per-batch hooks onto
-`sampleflux.runnable.ProgressReporting`), the system-metric callbacks
+`recordstream.runnable.ProgressReporting`), the system-metric callbacks
 (`MlflowSystemMetricsCallback` / `MPSMetricsCallback` + `activate_for_lightning`), and
 `build_checkpoint_callbacks` (translates the checkpoint policies below into `ModelCheckpoint`s).
 
@@ -176,9 +176,9 @@ A non-Lightning platform calls these directly; the Lightning `pl.Callback` wrapp
   `model.` prefix), an Ultralytics `.pt` (pulls the live module's `state_dict`), or a plain
   state-dict; auto-retargets to a named child when keys match one. `strict=False` tolerates a
   re-headed `num_classes`.
-- `ensure_sample_dataset(source)` — normalise any wired source into a map-style `Dataset` that
-  yields `sampleflux.Sample`s (wrapping in a `Flux` when needed).
-- `collate_fn_with_metadata(batch)` — stack tensors, preserving per-sample metadata as a list.
+- `ensure_record_dataset(source)` — normalise any wired source into a map-style `Dataset` that
+  yields `recordstream.Record`s (wrapping in a `Stream` when needed).
+- `collate_fn_with_metadata(batch)` — stack tensors, preserving per-record metadata as a list.
 - Prediction-output contracts: `ClassificationOutput` / `DetectionOutput` / `SegmentationOutput`.
 
 These aren't strictly tracking but stay in Marainer for now so a non-Lightning trainer (e.g. an
@@ -186,8 +186,8 @@ Ultralytics loop) can use them via `marainer[torch]` without pulling `pytorch_li
 
 ## `ClassificationPredictionsSink` (`marainer.sinks`)
 
-A modality-neutral top-k JSON predictions sink (numpy/sampleflux only, no torch/lightning), in the
-light core. It consumes per-sample prediction mappings — a model emits a per-sample mapping (not a
+A modality-neutral top-k JSON predictions sink (numpy/recordstream only, no torch/lightning), in the
+light core. It consumes per-record prediction mappings — a model emits a per-record mapping (not a
 batched tensor) in predict mode.
 
 ## Random run names
@@ -199,14 +199,14 @@ offline) — the default `Tracker.run_name`, and what a consumer's merged class 
 ## What lives elsewhere
 
 The **runnable protocol** and **pipeline running** are *not* in Marainer — they moved to
-[SampleFlux](https://github.com/Gearlux/sampleflux):
+[RecordStream](https://github.com/Gearlux/recordstream):
 
-- `sampleflux.runnable` — `TorchRunner`, `ProgressReporting`, and the `entrypoint` /
+- `recordstream.runnable` — `TorchRunner`, `ProgressReporting`, and the `entrypoint` /
   `runnable_entrypoints` method-annotation mechanism a merged train+eval class uses to declare its
   `fit`/`evaluate`/`test`/`predict` capabilities.
-- `sampleflux.workflow` — the `Sequence` / `Conditional` / `Switch` combinators + predicates.
-- `sampleflux.processing` — `DatasetProcessor`.
-- `sampleflux run <config.yaml>` — the generic runner. A config roots at a top-level `runnable:` key
+- `recordstream.workflow` — the `Sequence` / `Conditional` / `Switch` combinators + predicates.
+- `recordstream.processing` — `DatasetProcessor`.
+- `recordstream run <config.yaml>` — the generic runner. A config roots at a top-level `runnable:` key
   plus a `task:`; consumers may also ship their own CLI (`sonair train`, `raidar evaluate`, …).
 
 There is no `marainer.runner` / `marainer.progress` / `marainer.workflow` / `marainer.processing`

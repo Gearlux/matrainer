@@ -8,7 +8,7 @@ plain :mod:`marainer.tracking.provenance` functions directly):
   run provenance (git / config artifacts / params) to the given trackers; on end it
   captures the log file. One line in ``pl.Trainer(callbacks=[...])``.
 * :class:`LightningProgressCallback` / :func:`attach_lightning_progress` — bridge
-  Lightning's per-batch hooks to a :data:`~sampleflux.runnable.ProgressCallback`.
+  Lightning's per-batch hooks to a :data:`~recordstream.runnable.ProgressCallback`.
 * :class:`MlflowSystemMetricsCallback` / :class:`MPSMetricsCallback` /
   :func:`activate_for_lightning` — attach MLflow system-metric sampling
   (:mod:`marainer.tracking.system`) to a Lightning run whose ``MLFlowLogger``
@@ -26,7 +26,7 @@ import pytorch_lightning as L
 import torch
 from loggair import get_logger
 from pytorch_lightning.callbacks import ModelCheckpoint
-from sampleflux.runnable import ProgressCallback, ProgressReporting
+from recordstream.runnable import ProgressCallback, ProgressReporting
 
 from marainer.checkpoints import CheckpointPolicy, SaveBest, SaveEveryEpoch, SaveLast
 from marainer.tracking import provenance
@@ -103,7 +103,7 @@ def attach_lightning_progress(lightning_trainer: L.Trainer, runnable: ProgressRe
 
 
 class LightningProgressCallback(L.Callback):
-    """Bridge Lightning's per-batch hooks to a :data:`~sampleflux.runnable.ProgressCallback`.
+    """Bridge Lightning's per-batch hooks to a :data:`~recordstream.runnable.ProgressCallback`.
 
     **Training** reports ONE bar over the whole run — ``global_step`` out of
     ``estimated_stepping_batches`` (across ALL epochs). Standalone **test** / **predict**
@@ -227,7 +227,7 @@ class MPSMetricsCallback(L.Callback):
     ``MlflowClient``, and starts the framework-free sampler; on the matching end hook it stops it.
 
     Args:
-        sample_interval_s: Seconds between samples (``None`` = env var then 10s).
+        sample_interval_s: Seconds between records (``None`` = env var then 10s).
     """
 
     def __init__(self, sample_interval_s: Optional[float] = None) -> None:

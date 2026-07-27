@@ -118,7 +118,7 @@ class TestMetricPreset:
 
 # ---------------------------------------------------------------------------
 # build_metric_collection — normalizes any metrics spec into a MetricCollection.
-# A single metric (incl. a deferred LazyClass from a FluxStudio metric node's
+# A single metric (incl. a deferred LazyClass from a StreamStudio metric node's
 # `class` output) must work, not just a dict / ready-made collection.
 # ---------------------------------------------------------------------------
 
