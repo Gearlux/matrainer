@@ -169,7 +169,7 @@ def _mps_available() -> bool:
 class MpsMetricsSampler:
     """Background Apple-Silicon MPS metrics sampler pushing straight to MLflow.
 
-    A plain ``start()`` / ``stop()`` object (no Lightning coupling) that samples nine
+    A plain ``start()`` / ``stop()`` object (no Lightning coupling) that records nine
     ``system/mps_*`` scalars every ``sample_interval_s`` and pushes them via
     :meth:`mlflow.tracking.MlflowClient.log_metric`. Three per-process memory scalars
     come from ``torch.mps``; six system-level scalars come from the inlined IOKit
@@ -182,7 +182,7 @@ class MpsMetricsSampler:
     Args:
         mlflow_client: A live ``mlflow.tracking.MlflowClient`` to push to.
         run_id: The MLflow run id metrics are logged against.
-        sample_interval_s: Seconds between samples (``None`` = env var then 10s).
+        sample_interval_s: Seconds between records (``None`` = env var then 10s).
     """
 
     def __init__(self, mlflow_client: Any, run_id: Optional[str], sample_interval_s: Optional[float] = None) -> None:
@@ -195,7 +195,7 @@ class MpsMetricsSampler:
         self._atexit_registered = False
 
     @staticmethod
-    def _sample_metrics() -> Dict[str, float]:
+    def _record_metrics() -> Dict[str, float]:
         """One MPS snapshot — empty when MPS/torch isn't available."""
         metrics: Dict[str, float] = {}
         try:
@@ -225,9 +225,9 @@ class MpsMetricsSampler:
             metrics[metric_name] = float(value) * scale
         return metrics
 
-    def _sample_loop(self) -> None:
+    def _record_loop(self) -> None:
         while not self._stop_event.is_set():
-            metrics = self._sample_metrics()
+            metrics = self._record_metrics()
             if metrics and self._client is not None and self._run_id is not None:
                 timestamp_ms = int(time.time() * 1000)
                 step = self._step
@@ -250,7 +250,7 @@ class MpsMetricsSampler:
         if not _mps_available() or self._run_id is None or self._client is None:
             return
         self._stop_event.clear()
-        self._thread = threading.Thread(target=self._sample_loop, name="MPSMetricsSampler", daemon=False)
+        self._thread = threading.Thread(target=self._record_loop, name="MPSMetricsSampler", daemon=False)
         self._register_atexit_stop()
         self._thread.start()
         logger.info(f"MPS metrics sampler started for run {self._run_id} (interval={self.sample_interval_s}s).")

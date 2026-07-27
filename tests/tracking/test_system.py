@@ -56,7 +56,7 @@ def test_mps_sampler_start_noop_without_mps(monkeypatch: pytest.MonkeyPatch) -> 
 def test_mps_sampler_metrics_empty_without_torch(monkeypatch: pytest.MonkeyPatch) -> None:
     # Simulate torch not importable inside the static sampler.
     monkeypatch.setitem(sys.modules, "torch", None)
-    assert system.MpsMetricsSampler._sample_metrics() == {}
+    assert system.MpsMetricsSampler._record_metrics() == {}
 
 
 def test_mps_sampler_default_interval(monkeypatch: pytest.MonkeyPatch) -> None:

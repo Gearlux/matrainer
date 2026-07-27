@@ -16,7 +16,7 @@ training platform.
 * :func:`~marainer.tracking.render.render_matrix_as_table` — confusion-matrix table.
 
 Entry-pointed under ``confluid.configurables`` (``marainer-tracking``) so the
-backends are discoverable by navigaitor / FluxStudio.
+backends are discoverable by navigaitor / StreamStudio.
 """
 
 from marainer.tracking.base import Tracker, TrackerGroup

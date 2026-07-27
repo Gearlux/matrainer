@@ -1,11 +1,11 @@
 """Modality-neutral predictions sink for a Lightning predict/test loop.
 
 A consumer's predict loop calls ``predictions_sink.write(prediction, metadata)``
-once per sample, then ``predictions_sink.close()`` at end-of-run. This module
-hosts the sink that bridges that contract to SampleFlux record ops *without*
+once per record, then ``predictions_sink.close()`` at end-of-run. This module
+hosts the sink that bridges that contract to RecordStream record ops *without*
 any domain coupling:
 
-* :class:`ClassificationPredictionsSink` — reads each per-sample
+* :class:`ClassificationPredictionsSink` — reads each per-record
   ``ClassificationOutput`` (``probs`` / ``class_idx``, see
   ``marainer.torch.outputs``), resolves the int class id to a human-readable
   label, builds a top-k list, and threads a fresh record dict carrying
@@ -27,7 +27,7 @@ from typing import Any, Dict, List, Optional
 import numpy as np
 from confluid import configurable
 from loggair import get_logger
-from sampleflux import Record
+from recordstream import Record
 
 logger = get_logger(__name__)
 
@@ -37,15 +37,15 @@ class ClassificationPredictionsSink:
     """Adapter sink that lifts classification predictions into a record dict and runs ops.
 
     Bridges a Lightning predict/test loop's ``predictions_sink`` contract —
-    ``write(prediction, metadata)`` per sample — to the record-based ops in
-    sampleflux, giving the train→eval→predict triad a uniform shape across
+    ``write(prediction, metadata)`` per record — to the record-based ops in
+    recordstream, giving the train→eval→predict triad a uniform shape across
     detection, segmentation, and classification.
 
     For each call:
 
     1. Read the model's ``ClassificationOutput`` (``marainer.torch.outputs``) —
        ``logits`` ``[C]``, ``probs`` ``[C]``, ``class_idx`` scalar (per
-       sample).
+       record).
     2. Resolve the int class id to a human-readable label via
        ``label_names``. Build a top-k list (``top_k`` highest-probability
        classes with their probabilities + labels).
@@ -70,10 +70,10 @@ class ClassificationPredictionsSink:
             land here as strings (confluid stringifies all mapping keys
             at load time) — both forms are accepted; keys are normalized
             to ``str`` internally.
-        top_k: Number of top-probability predictions to record per sample.
+        top_k: Number of top-probability predictions to record per record.
             Defaults to ``1``. ``top_k > num_classes`` is silently clamped.
         confidence_threshold: Predictions whose top-1 probability is below
-            this value are skipped entirely (no Sample produced, no ops
+            this value are skipped entirely (no Record produced, no ops
             run). Default ``0.0`` keeps every prediction.
     """
 
@@ -118,7 +118,7 @@ class ClassificationPredictionsSink:
             return
 
         probs_arr = probs.detach().cpu().numpy() if hasattr(probs, "detach") else np.asarray(probs)
-        # Tolerate both [C] (single-sample) and [1, C] (batched-with-1) shapes.
+        # Tolerate both [C] (single-record) and [1, C] (batched-with-1) shapes.
         if probs_arr.ndim == 2 and probs_arr.shape[0] == 1:
             probs_arr = probs_arr[0]
         if probs_arr.ndim != 1:
@@ -161,7 +161,7 @@ class ClassificationPredictionsSink:
             f"({top1_prob:.3f}), top_k={k}"
         )
 
-        # Carry the prediction metadata as a single ``"metadata"`` key on a plain record dict.
+        # Carry the prediction metadata as a single ``"metadata"`` key on a plain dict.
         # Downstream ops (typically ``RecordSinkOp`` wrapping a per-window JSON sink) read it
         # via ``record["metadata"]``. There is no input/target on a prediction-only record.
         record: Record = {"metadata": new_metadata}

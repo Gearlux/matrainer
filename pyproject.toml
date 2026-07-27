@@ -11,7 +11,7 @@ dependencies = [
     "liquifai>=0.1.0",
     "loggair>=0.1.0",
     "confluid>=0.1.0",
-    "sampleflux>=0.1.0",
+    "recordstream>=0.1.0",
     "numpy",
     # coolname generates the default random run names (e.g. ``train_funny_rabbit``) in
     # marainer.run_names — offline adjective_noun slugs, no network.
@@ -58,7 +58,7 @@ marainer = "marainer"
 # The four Tracker backends + TrackerGroup (import-safe; each lazily imports its library).
 marainer-tracking = "marainer.tracking"
 # ClassificationPredictionsSink (modality-neutral predictions sink; its own code is numpy-only,
-# but it imports sampleflux for Sample types, which transitively pulls torch — so it is NOT part of
+# but it imports recordstream for Record types, which transitively pulls torch — so it is NOT part of
 # the light-core import contract; only `import marainer` / `import marainer.tracking` stay torch-free).
 marainer-sinks = "marainer.sinks"
 # The Lightning platform: registers the deferred runtime members (torch optimizers / DataLoader /

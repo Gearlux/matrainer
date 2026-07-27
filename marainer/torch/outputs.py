@@ -5,7 +5,7 @@ task-specific superset. The keys *are* the documentation: downstream metrics,
 sinks, visualizers, and evaluators inspect known keys instead of guessing whether
 a tensor is logits, probabilities, or argmax'd class ids.
 
-* :class:`ClassificationOutput` — per-sample logits, softmax probabilities, argmax class index.
+* :class:`ClassificationOutput` — per-record logits, softmax probabilities, argmax class index.
 * :class:`DetectionOutput` — per-image object detection (xyxy pixel boxes, scores, int64 labels).
 * :class:`SegmentationOutput` — per-pixel logits, softmax probabilities, argmax mask.
 
@@ -22,7 +22,7 @@ from torch import Tensor
 
 
 class ClassificationOutput(TypedDict):
-    """Per-sample classification prediction.
+    """Per-record classification prediction.
 
     Keys:
         logits: ``[B, C]`` float — raw pre-softmax scores.

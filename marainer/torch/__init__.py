@@ -6,7 +6,7 @@ trainer) can use them without pulling Lightning in:
 
 * :func:`~marainer.torch.checkpoint.load_lightning_checkpoint` — load weights from a
   Lightning / Ultralytics / plain-state-dict checkpoint.
-* :func:`~marainer.torch.data.ensure_sample_dataset` /
+* :func:`~marainer.torch.data.ensure_record_dataset` /
   :func:`~marainer.torch.data.collate_fn_with_metadata` — dataset normalization + a
   metadata-preserving collate.
 * The prediction-output contracts (``ClassificationOutput`` / ``DetectionOutput`` /
@@ -14,7 +14,7 @@ trainer) can use them without pulling Lightning in:
 """
 
 from marainer.torch.checkpoint import load_lightning_checkpoint
-from marainer.torch.data import collate_fn_with_metadata, ensure_sample_dataset
+from marainer.torch.data import collate_fn_with_metadata, ensure_record_dataset
 from marainer.torch.outputs import (
     ClassificationOutput,
     DetectionOutput,
@@ -27,7 +27,7 @@ from marainer.torch.outputs import (
 __all__ = [
     "load_lightning_checkpoint",
     "collate_fn_with_metadata",
-    "ensure_sample_dataset",
+    "ensure_record_dataset",
     "ClassificationOutput",
     "DetectionOutput",
     "DetectionPredictions",
