@@ -1,6 +1,6 @@
 [project]
 name = "marainer"
-version = "0.2.0"
+version = "0.1.0"
 description = "Experiment tracking for any training platform (MLflow / TensorBoard / CSV / W&B)."
 authors = [{name = "Taidal"}]
 license = {text = "MIT"}

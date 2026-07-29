@@ -22,7 +22,7 @@ behind an extra and lazily imported the first time you use its backend:
 
 | Extra | Pulls in | Enables |
 |---|---|---|
-| `marainer[torch]` | `torch` | `marainer.torch` — checkpoint loading, metadata-preserving collate, output contracts |
+| `marainer[torch]` | `torch` | `marainer.torch` — checkpoint loading, metadata-preserving collate, class-imbalance weighting, output builders |
 | `marainer[lightning]` | torch, `pytorch-lightning`, `torchmetrics`, `tabulate`, `matplotlib` | `marainer.lightning` — Lightning tracking callbacks + metric helpers |
 | `marainer[mlflow]` | `mlflow`, `psutil`, `pyobjc` (macOS) | `MlflowTracker` + system metrics |
 | `marainer[tensorboard]` | torch (`torch.utils.tensorboard`) | `TensorBoardTracker` |
@@ -179,10 +179,57 @@ A non-Lightning platform calls these directly; the Lightning `pl.Callback` wrapp
 - `ensure_record_dataset(source)` — normalise any wired source into a map-style `Dataset` that
   yields `recordstream.Record`s (wrapping in a `Stream` when needed).
 - `collate_fn_with_metadata(batch)` — stack tensors, preserving per-record metadata as a list.
-- Prediction-output contracts: `ClassificationOutput` / `DetectionOutput` / `SegmentationOutput`.
+- `apply_class_weights(loss_fn, class_ids, num_classes)` — the class-imbalance policy in one call:
+  check whether the loss takes a `weight` argument, derive inverse-frequency weights from the
+  observed class ids, and inject them. Returns `(loss_fn, weights)` — a deferred `!class:` loss is
+  *flowed* with the weights, so the caller must rebind. `weights` is `None` when balancing did not
+  happen (the loss takes no `weight`, or nothing was observed), and the loss comes back untouched.
+  The pieces are also exported separately: `loss_accepts_weight(loss)` (works on a live loss OR a
+  deferred marker, so a trainer can skip the target walk entirely) and
+  `inverse_frequency_weights(class_ids, num_classes)`.
+  Callers pass **already-encoded integer class ids** — mapping labels to ids belongs to whoever owns
+  the label map. `weight=` is a `torch.nn` *constructor* convention (Keras takes `class_weight` on
+  `fit()`), which is why this sits under `marainer.torch` rather than the package root.
+- The torch BUILDERS for the prediction-output contracts (`classification_output` /
+  `segmentation_output`) — the contracts themselves are framework-neutral, see below.
 
 These aren't strictly tracking but stay in Marainer for now so a non-Lightning trainer (e.g. an
 Ultralytics loop) can use them via `marainer[torch]` without pulling `pytorch_lightning`.
+
+## Prediction-output contracts (`marainer.outputs`)
+
+What a model's eval-mode `forward` returns, declared as typed dicts so downstream metrics, sinks
+and visualizers inspect known keys instead of guessing whether a tensor is logits, probabilities
+or argmax'd class ids:
+
+| Contract | Keys |
+|---|---|
+| `ClassificationOutput` | `logits` `[B, C]`, `probs` `[B, C]`, `class_idx` `[B]` |
+| `DetectionOutput` | `boxes` `[N, 4]` xyxy absolute pixels, `scores` `[N]`, `labels` `[N]` |
+| `SegmentationOutput` | `logits` `[B, C, H, W]`, `probs` `[B, C, H, W]`, `mask` `[B, H, W]` |
+
+They are **framework-neutral** — `marainer.outputs` imports nothing but `typing`, and each
+contract is generic in the array type it carries, so the same contract describes a torch, numpy,
+TensorFlow or JAX model:
+
+```python
+from marainer.outputs import ClassificationOutput
+
+def predict(self, x) -> ClassificationOutput[np.ndarray]:   # a non-torch backend
+    ...
+```
+
+The parameter is optional — a bare `ClassificationOutput` means "whatever array type".
+
+The **builders** cannot be neutral (`softmax` / `argmax` are library calls), so they live in the
+framework subpackage — `marainer.torch.outputs.classification_output(logits)` /
+`segmentation_output(logits)`, which also re-export the contracts so a torch consumer has one
+import for the pair. A new framework adds its own builder module; the contracts stay put. This is
+the same split as `marainer.checkpoints` (neutral policies) vs `marainer.lightning` (the
+translation).
+
+Detection has no builder: boxes come from the detector's own interface, so the dict is built
+inline at the call site.
 
 ## `ClassificationPredictionsSink` (`marainer.sinks`)
 

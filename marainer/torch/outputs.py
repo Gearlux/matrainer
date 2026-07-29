@@ -1,81 +1,46 @@
-"""Typed prediction-output contracts for torch models.
+"""Torch BUILDERS for the prediction-output contracts.
 
-Every model's eval-mode ``forward`` should return one of these dicts — or a
-task-specific superset. The keys *are* the documentation: downstream metrics,
-sinks, visualizers, and evaluators inspect known keys instead of guessing whether
-a tensor is logits, probabilities, or argmax'd class ids.
+The contracts themselves are framework-neutral and live in :mod:`marainer.outputs` — this
+module is the torch half: the functions that turn raw logits into a full output dict, which
+cannot be neutral because ``softmax`` / ``argmax`` are library calls.
 
-* :class:`ClassificationOutput` — per-record logits, softmax probabilities, argmax class index.
-* :class:`DetectionOutput` — per-image object detection (xyxy pixel boxes, scores, int64 labels).
-* :class:`SegmentationOutput` — per-pixel logits, softmax probabilities, argmax mask.
+The contracts are re-exported here (not redefined) so a torch consumer has ONE import for the
+pair, and so existing ``from marainer.torch.outputs import DetectionOutput`` call sites keep
+working. There is exactly one definition of each type.
 
-The two helpers (:func:`classification_output`, :func:`segmentation_output`)
-build the full dict from raw logits. Detection outputs flow directly from their
-detector's interface — build the dict inline at the call site.
+* :class:`~marainer.outputs.ClassificationOutput` — per-record logits, softmax probabilities,
+  argmax class index.
+* :class:`~marainer.outputs.DetectionOutput` — per-image object detection (xyxy pixel boxes,
+  scores, int64 labels).
+* :class:`~marainer.outputs.SegmentationOutput` — per-pixel logits, softmax probabilities,
+  argmax mask.
+
+Detection outputs flow directly from their detector's interface — build the dict inline at the
+call site; there is deliberately no ``detection_output`` builder to invent boxes from nothing.
 """
-
-from typing import List, TypedDict
 
 import torch
 import torch.nn.functional as F
 from torch import Tensor
 
+from marainer.outputs import ClassificationOutput, DetectionOutput, DetectionPredictions, SegmentationOutput
 
-class ClassificationOutput(TypedDict):
-    """Per-record classification prediction.
 
-    Keys:
-        logits: ``[B, C]`` float — raw pre-softmax scores.
-        probs: ``[B, C]`` float — softmax over the last dim.
-        class_idx: ``[B]`` int64 — argmax of ``logits`` along the last dim.
+def classification_output(logits: Tensor) -> ClassificationOutput[Tensor]:
+    """Build a full :class:`~marainer.outputs.ClassificationOutput` from raw ``[B, C]`` logits.
+
+    Example::
+
+        def predict_step(self, batch, batch_idx):
+            return classification_output(self(x))     # what a predictions sink reads
     """
-
-    logits: Tensor
-    probs: Tensor
-    class_idx: Tensor
-
-
-class DetectionOutput(TypedDict):
-    """Per-image object detection prediction.
-
-    Keys:
-        boxes: ``[N, 4]`` float32 — xyxy in **absolute pixels**.
-        scores: ``[N]`` float32 — confidence in ``[0, 1]``.
-        labels: ``[N]`` int64 — class ids. Class 0 is conventionally reserved
-            for background in torchvision-style detectors.
-    """
-
-    boxes: Tensor
-    scores: Tensor
-    labels: Tensor
-
-
-class SegmentationOutput(TypedDict):
-    """Per-pixel segmentation prediction.
-
-    Keys:
-        logits: ``[B, C, H, W]`` float — raw pre-softmax scores.
-        probs: ``[B, C, H, W]`` float — softmax over the channel dim.
-        mask: ``[B, H, W]`` int64 — argmax across channels.
-    """
-
-    logits: Tensor
-    probs: Tensor
-    mask: Tensor
-
-
-DetectionPredictions = List[DetectionOutput]
-
-
-def classification_output(logits: Tensor) -> ClassificationOutput:
-    """Build a full :class:`ClassificationOutput` from raw ``[B, C]`` logits."""
     probs = F.softmax(logits, dim=-1)
     class_idx = torch.argmax(logits, dim=-1).to(torch.int64)
     return ClassificationOutput(logits=logits, probs=probs, class_idx=class_idx)
 
 
-def segmentation_output(logits: Tensor) -> SegmentationOutput:
-    """Build a full :class:`SegmentationOutput` from raw ``[B, C, H, W]`` logits."""
+def segmentation_output(logits: Tensor) -> SegmentationOutput[Tensor]:
+    """Build a full :class:`~marainer.outputs.SegmentationOutput` from raw ``[B, C, H, W]`` logits."""
     probs = F.softmax(logits, dim=1)
     mask = torch.argmax(logits, dim=1).to(torch.int64)
     return SegmentationOutput(logits=logits, probs=probs, mask=mask)
