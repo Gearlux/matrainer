@@ -17,7 +17,7 @@ trainer) can use them without pulling Lightning in:
 
 from marainer.torch.balancing import apply_class_weights, inverse_frequency_weights, loss_accepts_weight
 from marainer.torch.checkpoint import load_lightning_checkpoint
-from marainer.torch.data import collate_fn_with_metadata, ensure_record_dataset
+from marainer.torch.data import RecordSource, collate_fn_with_metadata, ensure_record_dataset
 from marainer.torch.outputs import (
     ClassificationOutput,
     DetectionOutput,
@@ -33,6 +33,7 @@ __all__ = [
     "loss_accepts_weight",
     "load_lightning_checkpoint",
     "collate_fn_with_metadata",
+    "RecordSource",
     "ensure_record_dataset",
     "ClassificationOutput",
     "DetectionOutput",

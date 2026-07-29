@@ -10,15 +10,22 @@
 Both import the recordstream surface from the package top level.
 """
 
-from typing import Any, List, cast
+from typing import Any, Iterable, List, Union, cast
 
 import torch
 from recordstream import Label, Record, Stream, collate_records
 from torch import Tensor
 from torch.utils.data import Dataset
 
+#: What a wired dataset slot may hold. The contract :func:`ensure_record_dataset` enforces,
+#: named ONCE here rather than restated by every consumer: a map-style ``Dataset`` (which a
+#: ``recordstream.Stream`` is), or any iterable of records (a recordstream source, a plain
+#: list of record dicts). Consumers annotate their slots ``Optional[Lazy[RecordSource]]`` —
+#: ``Lazy`` because they flow the slot themselves at run time.
+RecordSource = Union[Dataset[Any], Iterable[Record]]
 
-def ensure_record_dataset(source: Any) -> Dataset[Any]:
+
+def ensure_record_dataset(source: RecordSource) -> Dataset[Any]:
     """Normalize any wired source into a map-style ``Dataset`` that yields record dicts.
 
     A wired ``train_set`` / ``val_set`` / ``test_set`` may be a ``recordstream.Stream``,
@@ -37,7 +44,12 @@ def ensure_record_dataset(source: Any) -> Dataset[Any]:
     """
     if isinstance(source, Stream):
         return source
-    return Stream(source=source)
+    # `cast`: a map-style `Dataset` iterates through Python's legacy `__getitem__` protocol,
+    # which mypy does not model — so it is not `Iterable` statically even though `Stream`
+    # consumes it correctly at runtime (`Stream.source`'s own docstring says "any iterable or
+    # indexable dataset"). Widening that annotation with a Protocol breaks `to_pydantic` for
+    # every Stream, so the exception is documented here instead. See recordstream TASKS.md.
+    return Stream(source=cast(Iterable[Any], source))
 
 
 def collate_fn_with_metadata(batch: List[Record], target_key: str = "class") -> Record:
