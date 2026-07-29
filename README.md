@@ -207,7 +207,7 @@ The **runnable protocol** and **pipeline running** are *not* in Marainer — the
 - `recordstream.workflow` — the `Sequence` / `Conditional` / `Switch` combinators + predicates.
 - `recordstream.processing` — `DatasetProcessor`.
 - `recordstream run <config.yaml>` — the generic runner. A config roots at a top-level `runnable:` key
-  plus a `task:`; consumers may also ship their own CLI (`sonair train`, `raidar evaluate`, …).
+  plus a `task:`; consumers may also ship their own CLI (`sonair lightning train`, `raidar evaluate`, …).
 
 There is no `marainer.runner` / `marainer.progress` / `marainer.workflow` / `marainer.processing`
 and no marainer binary.
