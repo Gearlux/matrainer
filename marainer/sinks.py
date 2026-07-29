@@ -22,7 +22,7 @@ time/frequency regions stays in the signal package because it genuinely depends
 on that package's signal geometry.
 """
 
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Protocol, runtime_checkable
 
 import numpy as np
 from confluid import configurable
@@ -30,6 +30,29 @@ from loggair import get_logger
 from recordstream import Record
 
 logger = get_logger(__name__)
+
+
+@runtime_checkable
+class PredictionsSink(Protocol):
+    """What a runnable's ``predictions_sink`` slot must provide.
+
+    Structural, not a base class: a sink is anything that can take one record's
+    prediction plus that record's metadata, and be closed at the end. Naming it here —
+    beside the sink marainer ships — means the consuming runnables annotate
+    ``Optional[Lazy[PredictionsSink]]`` instead of ``Any``, which declared nothing and
+    let a use site call ``.write`` on a slot that might still be a deferred marker.
+
+    ``@runtime_checkable`` so an ``isinstance`` guard is available; note that only the
+    METHOD NAMES are checked at runtime, never their signatures.
+    """
+
+    def write(self, prediction: Any, metadata: Dict[str, Any]) -> None:
+        """Record one prediction alongside the metadata of the record it came from."""
+        ...
+
+    def close(self) -> None:
+        """Flush and release whatever the sink holds open."""
+        ...
 
 
 @configurable
@@ -183,4 +206,4 @@ class ClassificationPredictionsSink:
                 close_fn()
 
 
-__all__ = ["ClassificationPredictionsSink"]
+__all__ = ["ClassificationPredictionsSink", "PredictionsSink"]
