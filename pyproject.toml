@@ -57,10 +57,8 @@ torpaido = [
 marainer = "marainer"
 # The four Tracker backends + TrackerGroup (import-safe; each lazily imports its library).
 marainer-tracking = "marainer.tracking"
-# ClassificationPredictionsSink (modality-neutral predictions sink; its own code is numpy-only,
-# but it imports recordstream for Record types, which transitively pulls torch — so it is NOT part of
-# the light-core import contract; only `import marainer` / `import marainer.tracking` stay torch-free).
-marainer-sinks = "marainer.sinks"
+# (The predictions sink moved to recordstream 2026-07-29 — see `recordstream.predictions`, which
+# recordstream discovers through its own entry point; there is no marainer-sinks group any more.)
 # The Lightning platform: registers the deferred runtime members (torch optimizers / DataLoader /
 # pl.Trainer) + stock Lightning loggers, and re-exports the tracking callbacks / MetricPreset. Imports
 # pytorch_lightning — discovery must warn-and-continue on a light install without the [lightning] extra.

@@ -1,44 +1,21 @@
-"""Torch-only, Lightning-free training helpers (``pip install marainer[torch]``).
+"""Torch-only, Lightning-free tracking helpers (``pip install marainer[torch]``).
 
-Reusable pieces a torch training platform needs but that carry no
-``pytorch_lightning`` dependency, so a non-Lightning platform (e.g. an Ultralytics
-trainer) can use them without pulling Lightning in:
+What a torch training platform needs from a TRACKING library, without pulling
+``pytorch_lightning`` in — so a non-Lightning platform (e.g. an Ultralytics trainer) can use it:
 
 * :func:`~marainer.torch.checkpoint.load_lightning_checkpoint` — load weights from a
-  Lightning / Ultralytics / plain-state-dict checkpoint.
-* :func:`~marainer.torch.data.ensure_record_dataset` /
-  :func:`~marainer.torch.data.collate_fn_with_metadata` — dataset normalization + a
-  metadata-preserving collate.
-* :func:`~marainer.torch.balancing.apply_class_weights` and friends — inverse-frequency
-  class weighting for a skewed label distribution.
-* The prediction-output contracts (``ClassificationOutput`` / ``DetectionOutput`` /
-  ``SegmentationOutput``) + their builders.
+  Lightning / Ultralytics / plain-state-dict checkpoint (reading back what a tracked run wrote).
+
+Everything else that once lived here moved DOWN to recordstream (2026-07-29), because it was
+data plumbing rather than tracking: ``ensure_record_dataset`` / ``RecordSource`` (a ``Stream``
+normalizer), the prediction-output contracts + builders and ``ClassificationPredictionsSink``
+(a model↔sink boundary, owned by the package that owns the sink), and the class-weight
+statistic (``recordstream.inverse_frequency_weights`` — a property of the labels). The
+framework-specific half of balancing — "does this loss take ``weight=``, and how do I inject
+it?" — is a per-backend concern and lives in the consuming runnable as an overridable method.
+``collate_fn_with_metadata`` was deleted outright: nothing used it.
 """
 
-from marainer.torch.balancing import apply_class_weights, inverse_frequency_weights, loss_accepts_weight
 from marainer.torch.checkpoint import load_lightning_checkpoint
-from marainer.torch.data import RecordSource, collate_fn_with_metadata, ensure_record_dataset
-from marainer.torch.outputs import (
-    ClassificationOutput,
-    DetectionOutput,
-    DetectionPredictions,
-    SegmentationOutput,
-    classification_output,
-    segmentation_output,
-)
 
-__all__ = [
-    "apply_class_weights",
-    "inverse_frequency_weights",
-    "loss_accepts_weight",
-    "load_lightning_checkpoint",
-    "collate_fn_with_metadata",
-    "RecordSource",
-    "ensure_record_dataset",
-    "ClassificationOutput",
-    "DetectionOutput",
-    "DetectionPredictions",
-    "SegmentationOutput",
-    "classification_output",
-    "segmentation_output",
-]
+__all__ = ["load_lightning_checkpoint"]
