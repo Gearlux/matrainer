@@ -103,3 +103,55 @@ class NewThingTracker(Tracker):
 **What you may change.** Add or extend backends and Tracker methods freely. What you may not do:
 import a backend's library at module top level, add a required constructor arg, or reintroduce a
 view/adapter layer over `Tracker`.
+
+---
+
+## 3. Output contracts are neutral; their builders are not (2026-07-29)
+
+**Context.** `ClassificationOutput` / `DetectionOutput` / `SegmentationOutput` declare what a
+model's eval-mode `forward` returns, so a sink reads `probs` by name instead of guessing whether
+a tensor is logits or probabilities. They were defined in `marainer.torch.outputs`, annotated
+with `torch.Tensor`, next to the `softmax`/`argmax` builders.
+
+That placement made a *type declaration* cost a torch install. A consumer on Keras, JAX or
+TensorFlow — which is the whole point of a multi-backend demo — could not say "my predict
+returns a classification output" without `pip install marainer[torch]`, so it would define its
+own near-identical dict, and the workspace would have two contracts that only look the same.
+
+**Decision.** The contracts move to **`marainer.outputs`**, which imports nothing but `typing`,
+and each becomes a **generic `TypedDict`** parameterized by the array type it carries. The
+builders stay in the framework subpackage, because `softmax` and `argmax` are library calls, not
+type declarations. `marainer.torch.outputs` re-exports the contracts — one definition, imported
+from two places, so no call site had to change.
+
+**Consequences.**
+
+- A non-torch backend declares `ClassificationOutput[np.ndarray]` from the core install.
+- `marainer.torch.outputs.classification_output` still returns something a torch consumer can
+  annotate as `ClassificationOutput[Tensor]`; `from marainer.torch.outputs import DetectionOutput`
+  keeps working, so the two detector wrappers that depend on it were untouched.
+- A bare `ClassificationOutput` (no parameter) means "any array type" — which is exactly what
+  every pre-existing annotation meant, so nothing became stricter.
+- A new framework adds `marainer.<framework>.outputs` with its own builders. It does NOT
+  redefine the contracts; a second definition is the failure mode this record exists to prevent.
+
+**Example.**
+
+```python
+# core install — no torch
+from marainer.outputs import ClassificationOutput
+
+def predict(self, x) -> ClassificationOutput[np.ndarray]:
+    probs = softmax(self.model(x))
+    return {"logits": ..., "probs": probs, "class_idx": probs.argmax(-1)}
+
+# torch install — the builder does the softmax/argmax for you
+from marainer.torch.outputs import classification_output
+def predict_step(self, batch, batch_idx):
+    return classification_output(self(x))
+```
+
+**What you may change.** Add a contract here when several consumers must agree on a payload's
+key names. Add a builder in the framework subpackage. Do not annotate anything in
+`marainer.outputs` with a concrete array type, and do not give detection a builder — its boxes
+come from the detector's own interface, and a builder would have to invent them.
