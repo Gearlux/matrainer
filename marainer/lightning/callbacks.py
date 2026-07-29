@@ -290,6 +290,26 @@ def activate_for_lightning(lightning_trainer: L.Trainer) -> None:
 # --------------------------------------------------------------------------- #
 # Checkpoint-policy translation
 # --------------------------------------------------------------------------- #
+def checkpoint_dir(trainer: Any) -> Optional[str]:
+    """Where this Lightning trainer writes checkpoints, if it can say.
+
+    The Lightning-specific half of :func:`marainer.artifacts.save_class_names`: that function
+    takes a plain directory, and THIS is what turns a ``pl.Trainer`` into one. Prefers the
+    checkpoint callback's ``dirpath`` (where checkpoints actually land) and falls back to the
+    trainer's ``default_root_dir``, so a run with checkpointing disabled still has somewhere
+    to put a run artifact.
+
+    Returns ``None`` when neither is set — the caller writes nothing rather than guessing.
+
+    Example::
+
+        save_class_names(self.label_map, checkpoint_dir(trainer), self._trackers)
+    """
+    callback = getattr(trainer, "checkpoint_callback", None)
+    dirpath = getattr(callback, "dirpath", None) if callback is not None else None
+    return str(dirpath) if dirpath else (getattr(trainer, "default_root_dir", None) or None)
+
+
 def build_checkpoint_callbacks(policies: Any) -> List[ModelCheckpoint]:
     """Translate framework-neutral :mod:`marainer.checkpoints` policies into ``ModelCheckpoint``\\ s.
 

@@ -30,6 +30,7 @@ from marainer.lightning.callbacks import (  # noqa: E402
     activate_for_lightning,
     attach_lightning_progress,
     build_checkpoint_callbacks,
+    checkpoint_dir,
     has_mlflow_logger,
 )
 from marainer.lightning.metrics import (  # noqa: E402
@@ -49,6 +50,7 @@ __all__ = [
     "activate_for_lightning",
     "attach_lightning_progress",
     "build_checkpoint_callbacks",
+    "checkpoint_dir",
     "has_mlflow_logger",
     "MetricPreset",
     "build_metric_collection",
