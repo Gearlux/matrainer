@@ -68,6 +68,15 @@ marainer-tracking = "marainer.tracking"
 # pytorch_lightning — discovery must warn-and-continue on a light install without the [lightning] extra.
 marainer-lightning = "marainer.lightning.configurables"
 
+# Which of this project's extras are ML FRAMEWORKS, for `aisland framework`. Selecting a name
+# here is what makes `aisland setup` add the matching extra to this project's install.
+#
+# These are the per-framework TRACKING helpers. `mlflow` / `tensorboard` / `wandb` are tracker
+# BACKENDS rather than frameworks and are deliberately absent: a run's config selects those,
+# not the machine's framework choice.
+[tool.aisland]
+frameworks = ["torch", "lightning", "keras", "tensorflow"]
+
 [tool.setuptools.packages.find]
 where = ["."]
 include = ["marainer*"]
