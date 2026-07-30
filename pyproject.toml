@@ -39,7 +39,10 @@ wandb = ["wandb"]
 # Keras tracking helper (marainer.keras.keras_tracking_callback). Keras 3 is standalone and
 # picks its own compute backend (torch / tensorflow / jax) via KERAS_BACKEND, so this extra
 # must NOT drag TensorFlow in — a consumer on the torch backend never asked for it.
-keras = ["keras>=3.0"]
+# `recordstream[keras]` is declared because the callback imports keras THROUGH
+# `recordstream.keras`, which sets KERAS_BACKEND before keras loads (that extra adds only the
+# same `keras` named above; recordstream itself is already a hard dependency).
+keras = ["keras>=3.0", "recordstream[keras]>=0.1.0"]
 # Only for a consumer that genuinely wants the TensorFlow ENGINE underneath Keras 3.
 tensorflow = ["marainer[keras]", "tensorflow>=2.16"]
 # Everything a workspace install wants.

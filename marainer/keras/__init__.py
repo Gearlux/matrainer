@@ -15,6 +15,17 @@ TensorFlow or JAX, chosen by ``KERAS_BACKEND``. Requiring ``tensorflow.keras`` �
 did until 2026-07-30 — forced a ~2GB TensorFlow install on a consumer training with Keras 3 on
 the torch backend, which is a framework it had deliberately not chosen. ``import keras`` is the
 same API (``tf.keras`` IS Keras 3 in TensorFlow >= 2.16) with none of that.
+
+**Why the import goes THROUGH ``recordstream.keras`` (2026-07-30).** That choice of backend is
+read by Keras at IMPORT time, and its own default is ``tensorflow`` — which ``marainer[keras]``
+deliberately does not install. So a bare ``import keras`` here died with
+``ModuleNotFoundError: No module named 'tensorflow'`` whenever this callback was the FIRST keras
+import in a process, and :func:`~marainer._imports.require` then reported it as *"the 'keras'
+package is not installed"* — advice that fixes nothing, because keras WAS installed.
+``recordstream.keras`` sets the variable to the first engine actually present before importing
+keras, so routing through it removes the failure instead of describing it. Requires no new
+dependency: recordstream is already a hard requirement, and that module needs nothing beyond the
+``keras`` this extra installs.
 """
 
 from __future__ import annotations
@@ -42,7 +53,9 @@ def keras_tracking_callback(
         params: Optional hyperparameters (only JSON-scalar values forwarded).
         capture_log: Upload the loggair log file as an artifact on train end.
     """
-    keras = require("keras", "keras", feature="keras_tracking_callback")
+    # `via=` so KERAS_BACKEND is set before keras loads (see the module docstring), while the
+    # error an operator without the extra sees still names `keras` — the thing they must install.
+    keras = require("keras", "keras", feature="keras_tracking_callback", via="recordstream.keras").keras
     members = list(trackers)
 
     class _KerasTrackingCallback(keras.callbacks.Callback):  # type: ignore[misc, name-defined]
