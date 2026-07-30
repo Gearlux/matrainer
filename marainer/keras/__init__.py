@@ -1,13 +1,20 @@
-"""TensorFlow/Keras tracking utilities (``pip install marainer[tensorflow]``).
+"""Keras tracking utilities (``pip install marainer[keras]``).
 
 marainer does NOT own a TensorFlow training loop — a consumer's model is a plain
 compiled ``keras.Model``. This subpackage provides the optional Keras tracking
 helper: :func:`keras_tracking_callback`, a ``keras.callbacks.Callback`` that forwards
 epoch logs (and, on train begin, run provenance) to marainer trackers — the
-TensorFlow analogue of :class:`~marainer.lightning.callbacks.TrackingCallback`.
+Keras analogue of :class:`~marainer.lightning.callbacks.TrackingCallback`.
 
-``tensorflow`` is imported lazily (raised with a clear ``pip install
-marainer[tensorflow]`` message when the callback is built).
+``keras`` is imported lazily (raised with a clear ``pip install
+marainer[keras]`` message when the callback is built).
+
+
+**Why ``keras``, not ``tensorflow``.** Keras 3 is a standalone package that runs on PyTorch,
+TensorFlow or JAX, chosen by ``KERAS_BACKEND``. Requiring ``tensorflow.keras`` — as this module
+did until 2026-07-30 — forced a ~2GB TensorFlow install on a consumer training with Keras 3 on
+the torch backend, which is a framework it had deliberately not chosen. ``import keras`` is the
+same API (``tf.keras`` IS Keras 3 in TensorFlow >= 2.16) with none of that.
 """
 
 from __future__ import annotations
@@ -35,7 +42,7 @@ def keras_tracking_callback(
         params: Optional hyperparameters (only JSON-scalar values forwarded).
         capture_log: Upload the loggair log file as an artifact on train end.
     """
-    keras = require("tensorflow.keras", "tensorflow", feature="keras_tracking_callback")
+    keras = require("keras", "keras", feature="keras_tracking_callback")
     members = list(trackers)
 
     class _KerasTrackingCallback(keras.callbacks.Callback):  # type: ignore[misc, name-defined]
