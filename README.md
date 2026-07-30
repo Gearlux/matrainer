@@ -27,7 +27,8 @@ behind an extra and lazily imported the first time you use its backend:
 | `marainer[mlflow]` | `mlflow`, `psutil`, `pyobjc` (macOS) | `MlflowTracker` + system metrics |
 | `marainer[tensorboard]` | torch (`torch.utils.tensorboard`) | `TensorBoardTracker` |
 | `marainer[wandb]` | `wandb` | `WandbTracker` |
-| `marainer[tensorflow]` | `tensorflow` | `marainer.tensorflow.keras_tracking_callback` |
+| `marainer[keras]` | `keras` | `marainer.keras.keras_tracking_callback` |
+| `marainer[tensorflow]` | `marainer[keras]`, `tensorflow` | the same helper, with the TensorFlow engine underneath |
 | `marainer[all]` | lightning + mlflow + tensorboard + wandb | everything |
 
 A missing backend library raises one clear error — e.g. `pip install marainer[mlflow]` — never a
@@ -133,7 +134,9 @@ never reimplements them.
 (`MlflowSystemMetricsCallback` / `MPSMetricsCallback` + `activate_for_lightning`), and
 `build_checkpoint_callbacks` (translates the checkpoint policies below into `ModelCheckpoint`s).
 
-For TensorFlow/Keras, `marainer.tensorflow.keras_tracking_callback` is the analogue.
+For Keras, `marainer.keras.keras_tracking_callback` is the analogue. It requires `keras`, not
+TensorFlow: Keras 3 is standalone and picks its own compute backend, so a consumer training
+on the torch backend is never asked to install a framework it did not choose.
 
 ## Framework-neutral checkpoint policies
 

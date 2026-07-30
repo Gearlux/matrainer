@@ -36,10 +36,14 @@ mlflow = [
 tensorboard = ["marainer[torch]"]
 # The WandbTracker backend.
 wandb = ["wandb"]
-# TensorFlow/Keras tracking helper (marainer.tensorflow.keras_tracking_callback).
-tensorflow = ["tensorflow"]
+# Keras tracking helper (marainer.keras.keras_tracking_callback). Keras 3 is standalone and
+# picks its own compute backend (torch / tensorflow / jax) via KERAS_BACKEND, so this extra
+# must NOT drag TensorFlow in — a consumer on the torch backend never asked for it.
+keras = ["keras>=3.0"]
+# Only for a consumer that genuinely wants the TensorFlow ENGINE underneath Keras 3.
+tensorflow = ["marainer[keras]", "tensorflow>=2.16"]
 # Everything a workspace install wants.
-all = ["marainer[lightning,mlflow,tensorboard,wandb]"]
+all = ["marainer[lightning,mlflow,tensorboard,wandb,keras]"]
 dev = [
     "black>=24.0.0,<25.0.0",
     "isort>=5.13.0,<6.0.0",
