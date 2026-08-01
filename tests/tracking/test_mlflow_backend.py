@@ -2,11 +2,38 @@
 
 import sys
 import types
+from pathlib import Path
 from typing import Any, List
 
 import pytest
 
 from marainer.tracking.mlflow_backend import MlflowTracker
+
+#: The standard tag NAMES, verified against the installed MLflow in
+#: ``test_the_standard_tag_names_match_the_installed_mlflow`` — so the fakes here cannot
+#: drift from reality without a test saying so.
+_STANDARD_TAGS = {
+    "MLFLOW_GIT_BRANCH": "mlflow.source.git.branch",
+    "MLFLOW_GIT_COMMIT": "mlflow.source.git.commit",
+    "MLFLOW_GIT_REPO_URL": "mlflow.source.git.repoURL",
+    "MLFLOW_SOURCE_NAME": "mlflow.source.name",
+    "MLFLOW_SOURCE_TYPE": "mlflow.source.type",
+}
+
+
+class _FakeDataset:
+    def __init__(self, name: str, digest: str, source_type: str, source: str) -> None:
+        self.name, self.digest, self.source_type, self.source = name, digest, source_type, source
+
+
+class _FakeInputTag:
+    def __init__(self, key: str, value: str) -> None:
+        self.key, self.value = key, value
+
+
+class _FakeDatasetInput:
+    def __init__(self, dataset: Any, tags: Any = None) -> None:
+        self.dataset, self.tags = dataset, tags
 
 
 class _FakeRun:
@@ -26,6 +53,7 @@ class _FakeClient:
         self.tags: dict = {}
         self.artifacts: List[tuple] = []
         self.terminated: Any = None
+        self.inputs: List[Any] = []
         _FakeClient.instances.append(self)
 
     def get_experiment_by_name(self, name: str) -> Any:
@@ -52,6 +80,9 @@ class _FakeClient:
     def set_terminated(self, run_id: str, status: str) -> None:
         self.terminated = status
 
+    def log_inputs(self, run_id: str, datasets: Any) -> None:
+        self.inputs.extend(datasets)
+
 
 @pytest.fixture
 def fake_mlflow(monkeypatch: pytest.MonkeyPatch) -> Any:
@@ -59,8 +90,24 @@ def fake_mlflow(monkeypatch: pytest.MonkeyPatch) -> Any:
     mlflow_mod = types.ModuleType("mlflow")
     tracking_mod = types.ModuleType("mlflow.tracking")
     tracking_mod.MlflowClient = _FakeClient  # type: ignore[attr-defined]
+
+    # The manifest projection reaches two more MLflow modules. They must be injected too:
+    # replacing the top-level `mlflow` with a bare ModuleType leaves it without a __path__,
+    # so `from mlflow.entities import ...` would raise and the projection would silently
+    # no-op — a mocked test that proves nothing.
+    entities_mod = types.ModuleType("mlflow.entities")
+    entities_mod.Dataset = _FakeDataset  # type: ignore[attr-defined]
+    entities_mod.DatasetInput = _FakeDatasetInput  # type: ignore[attr-defined]
+    entities_mod.InputTag = _FakeInputTag  # type: ignore[attr-defined]
+    tags_mod = types.ModuleType("mlflow.utils.mlflow_tags")
+    for _name, _value in _STANDARD_TAGS.items():
+        setattr(tags_mod, _name, _value)
+
     monkeypatch.setitem(sys.modules, "mlflow", mlflow_mod)
     monkeypatch.setitem(sys.modules, "mlflow.tracking", tracking_mod)
+    monkeypatch.setitem(sys.modules, "mlflow.entities", entities_mod)
+    monkeypatch.setitem(sys.modules, "mlflow.utils", types.ModuleType("mlflow.utils"))
+    monkeypatch.setitem(sys.modules, "mlflow.utils.mlflow_tags", tags_mod)
     return _FakeClient
 
 
@@ -112,3 +159,158 @@ def test_finalize_terminates_run(fake_mlflow: Any) -> None:
     _ = t2.experiment
     t2.finalize("failed")
     assert fake_mlflow.instances[1].terminated == "FAILED"
+
+
+# --------------------------------------------------------------------------- #
+# manifest projection
+# --------------------------------------------------------------------------- #
+
+
+def build_manifest(tmp_path: Any) -> Any:
+    from marainer.tracking.manifest import RunManifest
+
+    m = RunManifest(run_dir=tmp_path / "run", handle_interrupts=False)
+    m.set("command", {"argv": ["train.py", "-c", "a.yaml"], "cwd": "/w/project"})
+    m.set("config", {"script": "/w/project/train.yaml"})
+    m.set("params", {"lr": 0.1})
+    m.add("code", {"name": "lib", "path": "/w/lib", "commit": "aaa", "dirty": False, "branch": "main"})
+    m.add(
+        "code",
+        {
+            "name": "project",
+            "path": "/w/project",
+            "commit": "bbb",
+            "dirty": True,
+            "branch": "dev",
+            "remote": "git@example.com:o/p.git",
+        },
+    )
+    m.record_dataset(kind="hf", name="org/set", split="train", count=12, revision="v2")
+    return m
+
+
+def test_log_manifest_projects_the_standard_source_tags(fake_mlflow: Any, tmp_path: Any) -> None:
+    t = MlflowTracker(run_name="r", log_system_metrics=False)
+    t.log_manifest(build_manifest(tmp_path))
+    tags = fake_mlflow.instances[0].tags
+    assert tags["mlflow.source.name"] == "/w/project/train.yaml"  # the config, not `python`
+    assert tags["mlflow.source.type"] == "LOCAL"
+    # The repository containing the cwd wins the single native commit slot, not the first.
+    assert tags["mlflow.source.git.commit"] == "bbb"
+    assert tags["mlflow.source.git.branch"] == "dev"
+    assert tags["mlflow.source.git.repoURL"] == "git@example.com:o/p.git"
+    assert tags["mlflow.source.git.dirty"] == "true"
+
+
+def test_log_manifest_falls_back_to_argv_for_the_source_name(fake_mlflow: Any, tmp_path: Any) -> None:
+    from marainer.tracking.manifest import RunManifest
+
+    m = RunManifest(run_dir=tmp_path / "run", handle_interrupts=False)
+    m.set("command", {"argv": ["train.py"], "cwd": "/w"})
+    t = MlflowTracker(run_name="r", log_system_metrics=False)
+    t.log_manifest(m)
+    assert fake_mlflow.instances[0].tags["mlflow.source.name"] == "train.py"
+
+
+def test_log_manifest_omits_source_tags_it_has_no_value_for(fake_mlflow: Any, tmp_path: Any) -> None:
+    """A wheel-installed repo record has a commit and nothing else; don't invent the rest."""
+    from marainer.tracking.manifest import RunManifest
+
+    m = RunManifest(run_dir=tmp_path / "run", handle_interrupts=False)
+    m.add("code", {"name": "lib", "path": "/w/lib", "commit": "aaa"})
+    t = MlflowTracker(run_name="r", log_system_metrics=False)
+    t.log_manifest(m)
+    tags = fake_mlflow.instances[0].tags
+    assert tags["mlflow.source.git.commit"] == "aaa"
+    assert "mlflow.source.git.branch" not in tags
+    assert "mlflow.source.git.repoURL" not in tags
+    assert "mlflow.source.git.dirty" not in tags
+    assert "mlflow.source.name" not in tags  # no argv, no config script -> nothing to name
+
+
+def test_log_manifest_projects_datasets_as_inputs(fake_mlflow: Any, tmp_path: Any) -> None:
+    t = MlflowTracker(run_name="r", log_system_metrics=False)
+    t.log_manifest(build_manifest(tmp_path))
+    inputs = fake_mlflow.instances[0].inputs
+    assert len(inputs) == 1
+    dataset = inputs[0].dataset
+    assert dataset.name == "org/set"
+    assert dataset.source_type == "hf"
+    assert "org/set" in dataset.source and "train" in dataset.source
+    assert len(dataset.digest) == 16  # a reference digest stands in for an absent data digest
+    assert {t.key: t.value for t in inputs[0].tags} == {"split": "train", "count": "12", "revision": "v2"}
+
+
+def test_a_recorded_digest_is_used_verbatim(fake_mlflow: Any, tmp_path: Any) -> None:
+    from marainer.tracking.manifest import RunManifest
+
+    m = RunManifest(run_dir=tmp_path / "run", handle_interrupts=False)
+    m.record_dataset(kind="local", name="d", digest="0123456789abcdef0123")
+    MlflowTracker(run_name="r", log_system_metrics=False).log_manifest(m)
+    assert fake_mlflow.instances[0].inputs[0].dataset.digest == "0123456789abcdef0123"
+
+
+def test_the_reference_digest_is_stable_and_discriminating(tmp_path: Any) -> None:
+    """Two runs on the same reference must collide; two on different ones must not."""
+    from marainer.tracking.mlflow_backend import _reference_digest
+
+    a = {"kind": "hf", "name": "org/set", "split": "train"}
+    assert _reference_digest(a) == _reference_digest(dict(reversed(list(a.items()))))
+    assert _reference_digest(a) != _reference_digest({**a, "split": "test"})
+
+
+def test_log_manifest_still_does_the_generic_projection(fake_mlflow: Any, tmp_path: Any) -> None:
+    """Native slots are ADDITIONAL — the artifact and the params must land regardless."""
+    t = MlflowTracker(run_name="r", log_system_metrics=False)
+    t.log_manifest(build_manifest(tmp_path))
+    client = fake_mlflow.instances[0]
+    assert client.params["lr"] == 0.1
+    assert [Path(p).name for p, _ in client.artifacts] == ["manifest.yaml", "manifest.json"]
+
+
+def test_log_manifest_without_datasets_logs_no_inputs(fake_mlflow: Any, tmp_path: Any) -> None:
+    from marainer.tracking.manifest import RunManifest
+
+    t = MlflowTracker(run_name="r", log_system_metrics=False)
+    t.log_manifest(RunManifest(run_dir=tmp_path / "run", handle_interrupts=False))
+    assert fake_mlflow.instances[0].inputs == []
+
+
+def test_the_standard_tag_names_match_the_installed_mlflow() -> None:
+    """Pin the fakes above to reality, so a renamed MLflow constant fails HERE.
+
+    The projection imports these from ``mlflow.utils.mlflow_tags`` to keep one source of
+    truth; this asserts the names the mocked tests assert on are the real ones.
+    """
+    pytest.importorskip("mlflow")
+    from mlflow.utils import mlflow_tags
+
+    for name, value in _STANDARD_TAGS.items():
+        assert getattr(mlflow_tags, name) == value
+
+
+def test_projection_lands_in_a_real_mlflow_store(tmp_path: Any) -> None:
+    """Integration: mocks cannot prove ``log_inputs`` accepts what we build.
+
+    Runs against a real sqlite-backed store — MLflow 3.x refuses the file store outright,
+    so ``sqlite:///`` is the cheapest backend a test can use.
+    """
+    pytest.importorskip("mlflow")
+    tracker = MlflowTracker(
+        experiment_name="proj",
+        run_name="r",
+        tracking_uri=f"sqlite:///{tmp_path}/mlflow.db",
+        log_system_metrics=False,
+    )
+    tracker.log_manifest(build_manifest(tmp_path))
+
+    run = tracker.experiment.get_run(tracker.run_id)
+    assert run.data.tags["mlflow.source.git.commit"] == "bbb"
+    assert run.data.tags["mlflow.source.git.dirty"] == "true"
+    assert run.data.params["lr"] == "0.1"
+    inputs = run.inputs.dataset_inputs
+    assert [d.dataset.name for d in inputs] == ["org/set"]
+    assert inputs[0].dataset.source_type == "hf"
+
+    tracker.log_manifest(build_manifest(tmp_path))  # idempotent: MLflow dedups on digest
+    assert len(tracker.experiment.get_run(tracker.run_id).inputs.dataset_inputs) == 1

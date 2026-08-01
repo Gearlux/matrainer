@@ -80,3 +80,52 @@ def test_log_figure_and_finalize(fake_tb: Any, tmp_path: Path) -> None:
 def test_log_dir_reported_before_writer(tmp_path: Path) -> None:
     t = TensorBoardTracker(experiment_name="e", run_name="r", save_dir=str(tmp_path))
     assert t.log_dir == tmp_path / "e" / "r"
+
+
+# --------------------------------------------------------------------------- #
+# manifest projection
+# --------------------------------------------------------------------------- #
+
+
+def test_log_manifest_renders_the_manifest_into_the_text_tab(fake_tb: Any, tmp_path: Path) -> None:
+    """TensorBoard has no artifact store — `add_text` is the only slot the UI will show."""
+    from marainer.tracking.manifest import RunManifest
+
+    m = RunManifest(run_dir=tmp_path / "manifest-home", handle_interrupts=False)
+    m.set("params", {"lr": 0.1})
+    t = TensorBoardTracker(experiment_name="exp", run_name="r", save_dir=str(tmp_path / "tb"))
+    t.log_manifest(m)
+
+    texts = dict(t.experiment.texts)
+    assert "manifest" in texts
+    assert "```yaml" in texts["manifest"] and "lr: 0.1" in texts["manifest"]
+
+
+def test_log_manifest_still_copies_the_files_and_logs_hparams(fake_tb: Any, tmp_path: Path) -> None:
+    """Native slots are ADDITIONAL — the artifact copy must not be replaced by add_text."""
+    from marainer.tracking.manifest import RunManifest
+
+    m = RunManifest(run_dir=tmp_path / "manifest-home", handle_interrupts=False)
+    m.set("params", {"lr": 0.1})
+    run_dir = tmp_path / "tb" / "exp" / "r"
+    t = TensorBoardTracker(experiment_name="exp", run_name="r", save_dir=str(tmp_path / "tb"))
+    t.log_manifest(m)
+    assert (run_dir / "artifacts" / "manifest.yaml").exists()
+    assert (run_dir / "artifacts" / "manifest.json").exists()
+
+
+def test_log_hyperparams_drops_what_tensorboard_rejects(fake_tb: Any, tmp_path: Path) -> None:
+    """`add_hparams` accepts only int/float/str/bool — a list raises ValueError inside it."""
+    recorded: List[dict] = []
+
+    def capture(self: Any, hparams: dict, metrics: dict) -> None:
+        recorded.append(hparams)
+
+    monkey = pytest.MonkeyPatch()
+    monkey.setattr(_FakeWriter, "add_hparams", capture)
+    try:
+        t = TensorBoardTracker(experiment_name="exp", run_name="r", save_dir=str(tmp_path / "tb"))
+        t.log_hyperparams({"lr": 0.1, "size": [8, 8], "name": "x"})
+    finally:
+        monkey.undo()
+    assert recorded == [{"lr": 0.1, "name": "x"}]

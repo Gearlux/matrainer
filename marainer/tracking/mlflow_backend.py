@@ -15,8 +15,10 @@ tracker.
 
 from __future__ import annotations
 
+import hashlib
+import json
 from pathlib import Path
-from typing import Any, Mapping, Optional, Union
+from typing import TYPE_CHECKING, Any, Mapping, Optional, Union
 
 from confluid import configurable
 from loggair import get_logger
@@ -24,7 +26,23 @@ from loggair import get_logger
 from marainer._imports import require
 from marainer.tracking.base import Tracker
 
+if TYPE_CHECKING:  # type-only: `manifest` reaches `base`, so a runtime import would cycle.
+    from marainer.tracking.manifest import RunManifest
+
 logger = get_logger(__name__)
+
+
+def _reference_digest(fields: Mapping[str, Any]) -> str:
+    """A short digest of a dataset REFERENCE, for when the caller recorded no data digest.
+
+    MLflow requires every dataset input to carry a digest. When the manifest has none,
+    hashing the identity (kind / name / revision / split) still gives the run-comparison
+    property that matters — two runs on the same reference collide, two runs on different
+    references do not. It deliberately fingerprints the reference, NOT the bytes: computing
+    a real data digest would mean re-reading a dataset the run has already consumed.
+    """
+    material = json.dumps(fields, sort_keys=True, default=str)
+    return hashlib.sha256(material.encode()).hexdigest()[:16]
 
 
 @configurable
@@ -134,6 +152,94 @@ class MlflowTracker(Tracker):
             client.log_figure(self._run_id, figure, f"{safe}.png")
         except Exception as exc:  # pragma: no cover - defensive
             logger.debug(f"MLflow log_figure failed for {name}: {exc}")
+
+    def log_manifest(self, manifest: "RunManifest") -> None:
+        """Artifact + hyperparameters (the default), PLUS MLflow's own native slots.
+
+        MLflow has two homes the generic surface cannot reach: the ``mlflow.source.*``
+        standard tags, which its UI renders as the run's provenance panel, and
+        ``log_inputs``, which makes datasets first-class and links runs that share one.
+        Both are ADDITIONAL — the manifest artifact still carries everything, so a run
+        tracked here stays comparable with the same run tracked to a local directory.
+        """
+        super().log_manifest(manifest)
+        self._project_source_tags(manifest)
+        self._project_datasets(manifest)
+
+    def _project_source_tags(self, manifest: "RunManifest") -> None:
+        """Fill MLflow's standard source/git tags from the manifest's command + code sections."""
+        try:
+            from mlflow.utils.mlflow_tags import (
+                MLFLOW_GIT_BRANCH,
+                MLFLOW_GIT_COMMIT,
+                MLFLOW_GIT_REPO_URL,
+                MLFLOW_SOURCE_NAME,
+                MLFLOW_SOURCE_TYPE,
+            )
+        except ImportError as exc:  # pragma: no cover - the constant module has existed since 1.x
+            logger.debug(f"MLflow standard tag names unavailable; skipping source tags: {exc}")
+            return
+
+        tags: dict = {}
+        argv = manifest.section("command").get("argv") or []
+        # The config script names the run better than `python` does; fall back to argv[0].
+        source = manifest.section("config").get("script") or (argv[0] if argv else None)
+        if source:
+            tags[MLFLOW_SOURCE_NAME] = str(source)
+            tags[MLFLOW_SOURCE_TYPE] = "LOCAL"
+
+        primary = manifest.primary_code()
+        if primary:
+            tags[MLFLOW_GIT_COMMIT] = str(primary.get("commit"))
+            if primary.get("branch"):
+                tags[MLFLOW_GIT_BRANCH] = str(primary["branch"])
+            if primary.get("remote"):
+                tags[MLFLOW_GIT_REPO_URL] = str(primary["remote"])
+            if primary.get("dirty") is not None:
+                # MLflow's own dirty tag is a lowercase string, matching how it writes it.
+                tags["mlflow.source.git.dirty"] = str(bool(primary["dirty"])).lower()
+        if tags:
+            self.set_tags(tags)
+
+    def _project_datasets(self, manifest: "RunManifest") -> None:
+        """Log the manifest's datasets as MLflow dataset INPUTS, not merely as text.
+
+        Uses the entity-level ``Dataset`` rather than ``mlflow.data.from_*``: those load
+        the data to fingerprint it, and a manifest records a dataset by REFERENCE — the
+        run has already read it, and re-materialising a 12k-image set to log a row would
+        be absurd. Re-logging the same dataset is idempotent (MLflow dedups on digest),
+        so calling this twice does not duplicate the input.
+        """
+        datasets = manifest.section("datasets")
+        if not datasets:
+            return
+        try:
+            from mlflow.entities import Dataset, DatasetInput, InputTag
+        except ImportError as exc:  # pragma: no cover - defensive
+            logger.debug(f"MLflow dataset entities unavailable: {exc}")
+            return
+
+        inputs = []
+        for entry in datasets:
+            name = str(entry.get("name") or "dataset")
+            fields = {k: v for k, v in entry.items() if v is not None}
+            tags = [InputTag(key=k, value=str(entry[k])) for k in ("split", "revision", "count") if entry.get(k)]
+            inputs.append(
+                DatasetInput(
+                    dataset=Dataset(
+                        name=name,
+                        digest=str(entry.get("digest") or _reference_digest(fields)),
+                        source_type=str(entry.get("kind") or "unknown"),
+                        source=json.dumps(fields, sort_keys=True, default=str),
+                    ),
+                    tags=tags or None,
+                )
+            )
+        client = self.experiment
+        try:
+            client.log_inputs(self._run_id, inputs)
+        except Exception as exc:  # pragma: no cover - defensive
+            logger.debug(f"MLflow log_inputs failed: {exc}")
 
     def finalize(self, status: str = "success") -> None:
         if self._mps_sampler is not None:

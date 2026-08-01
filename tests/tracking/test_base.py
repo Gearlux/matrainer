@@ -80,11 +80,16 @@ def test_tracker_group_fans_out_all_calls() -> None:
     group.log_hyperparams({"lr": 0.1})
     group.log_metrics({"loss": 1.0}, step=3)
     group.log_figure("cm", object())
+    group.log_artifact("/tmp/a.txt", "config")
+    group.set_tags({"stage": "smoke"})
+    group.save()
     group.finalize("success")
     for t in (a, b):
         assert t.hparams == {"lr": 0.1}
         assert t.metrics == [{"step": 3, "loss": 1.0}]
         assert t.figures == ["cm"]
+        assert t.artifacts == [("/tmp/a.txt", "config")]
+        assert t.tags == {"stage": "smoke"}
         assert t.finalized == "success"
 
 

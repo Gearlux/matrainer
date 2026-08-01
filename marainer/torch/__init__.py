@@ -5,6 +5,12 @@ What a torch training platform needs from a TRACKING library, without pulling
 
 * :func:`~marainer.torch.checkpoint.load_lightning_checkpoint` — load weights from a
   Lightning / Ultralytics / plain-state-dict checkpoint (reading back what a tracked run wrote).
+* the metric helpers (:func:`~marainer.torch.metrics.build_metric_collection`,
+  :class:`~marainer.torch.metrics.MetricPreset`, the JSON-safe coercion helpers), moved here
+  from ``marainer.lightning`` on 2026-08-01. They never imported ``pytorch_lightning`` — only
+  confluid, torch and torchmetrics — so the old location described their first consumer rather
+  than their dependencies, and a backend training on plain torch could not reach them without
+  dragging Lightning in. ``marainer.lightning`` re-exports them all, unchanged.
 
 Everything else that once lived here moved DOWN to recordstream (2026-07-29), because it was
 data plumbing rather than tracking: ``ensure_record_dataset`` / ``RecordSource`` (a ``Stream``
@@ -17,5 +23,12 @@ it?" — is a per-backend concern and lives in the consuming runnable as an over
 """
 
 from marainer.torch.checkpoint import load_lightning_checkpoint
+from marainer.torch.metrics import MetricPreset, build_metric_collection, coerce_metric_value, scalar_metrics
 
-__all__ = ["load_lightning_checkpoint"]
+__all__ = [
+    "MetricPreset",
+    "build_metric_collection",
+    "coerce_metric_value",
+    "load_lightning_checkpoint",
+    "scalar_metrics",
+]

@@ -28,12 +28,15 @@ from __future__ import annotations
 
 from abc import ABC, abstractmethod
 from pathlib import Path
-from typing import Any, List, Mapping, Optional, Union
+from typing import TYPE_CHECKING, Any, List, Mapping, Optional, Union
 
 from confluid import configurable
 from loggair import get_logger
 
 from marainer.run_names import generate_run_name
+
+if TYPE_CHECKING:  # `manifest` imports `provenance`, which imports THIS module — type-only, no cycle.
+    from marainer.tracking.manifest import RunManifest
 
 logger = get_logger(__name__)
 
@@ -128,6 +131,35 @@ class Tracker(ABC):
         """Persist a matplotlib ``figure`` under ``name``. Default no-op."""
         logger.debug(f"{type(self).__name__}.log_figure({name!r}) not supported; skipping.")
 
+    def log_manifest(self, manifest: "RunManifest") -> None:
+        """Push the run manifest to this backend. Default: both files + the hyperparameters.
+
+        This is the *projection* half of the manifest contract: the manifest is the union
+        of everything static about the run, and every backend gets it whole, as an
+        artifact, for free. A backend with native homes for more of it (a dataset-input
+        API, source-control tags, a model registry) overrides this to ALSO write them
+        there — never *instead*, or two runs tracked differently stop being comparable.
+        See ``docs/architecture.md`` record 3.
+
+        The ``params`` section is projected here rather than in each override because
+        :meth:`log_hyperparams` is the one native slot EVERY backend has; a backend that
+        only implements the abstract surface still gets its hyperparameters where its UI
+        expects them.
+
+        A file already inside this backend's own :attr:`log_dir` is skipped rather than
+        copied next to itself — the common case, since the manifest is usually pointed at
+        that directory in the first place.
+        """
+        manifest.write()
+        params = manifest.section("params")
+        if params:
+            self.log_hyperparams(params)
+        log_dir = self.log_dir
+        for path in (manifest.path, manifest.json_path):
+            if log_dir is not None and path.is_relative_to(log_dir):
+                continue
+            self.log_artifact(path)
+
     @property
     def log_dir(self) -> Optional[Path]:
         """Local directory this backend writes to, or ``None`` for remote-only backends."""
@@ -185,6 +217,9 @@ class TrackerGroup(Tracker):
 
     def log_figure(self, name: str, figure: Any, step: Optional[int] = None) -> None:
         self._fan_out("log_figure", name, figure, step)
+
+    def log_manifest(self, manifest: "RunManifest") -> None:
+        self._fan_out("log_manifest", manifest)
 
     @property
     def log_dir(self) -> Optional[Path]:

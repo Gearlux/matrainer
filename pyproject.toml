@@ -16,12 +16,19 @@ dependencies = [
     # coolname generates the default random run names (e.g. ``train_funny_rabbit``) in
     # marainer.run_names — offline adjective_noun slugs, no network.
     "coolname",
+    # marainer.tracking.manifest writes the run manifest as YAML (the readable artifact)
+    # beside its JSON twin. Declared explicitly rather than leaned on transitively via
+    # confluid: a module that imports a package must depend on it.
+    "pyyaml>=6.0",
 ]
 requires-python = ">=3.12"
 
 [project.optional-dependencies]
-# Torch-only, Lightning-free helpers (marainer.torch: checkpoint / collate / output contracts).
-torch = ["torch"]
+# Torch-only, Lightning-free helpers (marainer.torch: checkpoint + the metric helpers).
+# torchmetrics is here rather than in [lightning] since 2026-08-01: `marainer.torch.metrics`
+# builds `MetricCollection`s and never touches pytorch_lightning, so a consumer training on
+# plain torch needs it — see marainer/torch/metrics.py.
+torch = ["torch", "torchmetrics"]
 # PyTorch-Lightning tracking helpers (marainer.lightning: TrackingCallback / TrackerLogger + metric utils).
 lightning = ["marainer[torch]", "pytorch-lightning", "torchmetrics", "tabulate", "matplotlib"]
 # The MlflowTracker backend + MLflow system metrics. pyobjc powers the inline IOAccelerator
@@ -36,6 +43,12 @@ mlflow = [
 tensorboard = ["marainer[torch]"]
 # The WandbTracker backend.
 wandb = ["wandb"]
+# The AimTracker backend. Aim is Apache-2.0 and fully self-hosted — runs land in a local
+# .aim repository and `aim up` serves the UI from it, with no server and no account.
+aim = ["aim>=3.29"]
+# The ClearMLTracker backend. Apache-2.0 with a self-hostable server (docker-compose);
+# `offline=True` records to local disk with no server and no credentials at all.
+clearml = ["clearml>=2.0"]
 # Keras tracking helper (marainer.keras.keras_tracking_callback). Keras 3 is standalone and
 # picks its own compute backend (torch / tensorflow / jax) via KERAS_BACKEND, so this extra
 # must NOT drag TensorFlow in — a consumer on the torch backend never asked for it.
@@ -46,7 +59,7 @@ keras = ["keras>=3.0", "recordstream[keras]>=0.1.0"]
 # Only for a consumer that genuinely wants the TensorFlow ENGINE underneath Keras 3.
 tensorflow = ["marainer[keras]", "tensorflow>=2.16"]
 # Everything a workspace install wants.
-all = ["marainer[lightning,mlflow,tensorboard,wandb,keras]"]
+all = ["marainer[lightning,mlflow,tensorboard,wandb,aim,clearml,keras]"]
 dev = [
     "black>=24.0.0,<25.0.0",
     "isort>=5.13.0,<6.0.0",
@@ -71,14 +84,19 @@ marainer-tracking = "marainer.tracking"
 # pytorch_lightning — discovery must warn-and-continue on a light install without the [lightning] extra.
 marainer-lightning = "marainer.lightning.configurables"
 
-# Which of this project's extras are ML FRAMEWORKS, for `aisland framework`. Selecting a name
-# here is what makes `aisland setup` add the matching extra to this project's install.
+# Which of this project's extras belong to each aisland selection axis. Selecting a name here
+# is what makes `aisland setup` add the matching extra to this project's install.
 #
-# These are the per-framework TRACKING helpers. `mlflow` / `tensorboard` / `wandb` are tracker
-# BACKENDS rather than frameworks and are deliberately absent: a run's config selects those,
-# not the machine's framework choice.
+# TWO SIBLING AXES, deliberately never merged: `frameworks` is what a machine TRAINS WITH,
+# `trackers` is where its results GO. They are unrelated choices, and folding the backends into
+# `frameworks` would install a tracking client because someone picked a training engine.
+#
+# `frameworks` lists the per-framework TRACKING helpers (marainer.lightning / .keras).
+# `trackers` lists the Tracker backends; `CsvTracker` is absent on purpose — it is stdlib-only,
+# always available, and has no extra to select.
 [tool.aisland]
 frameworks = ["torch", "lightning", "keras", "tensorflow"]
+trackers = ["mlflow", "tensorboard", "aim", "clearml", "wandb"]
 
 [tool.setuptools.packages.find]
 where = ["."]
