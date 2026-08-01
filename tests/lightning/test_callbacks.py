@@ -53,6 +53,86 @@ def test_tracking_callback_logs_context_once(monkeypatch: Any) -> None:
     assert cb._logged is True
 
 
+def _quiet_provenance(monkeypatch: Any, tmp_path: Any) -> None:
+    """Neutralise the ambient run context so a test sees only what it wired."""
+    from marainer.tracking import provenance
+
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setattr(provenance, "get_git_commit_hash", lambda: None)
+    monkeypatch.setattr(provenance, "config_script_path", lambda: None)
+    monkeypatch.setattr(provenance, "included_config_paths", lambda: [])
+    monkeypatch.setattr(provenance, "resolve_log_file", lambda: None)
+    monkeypatch.setattr(provenance, "code_state", list)
+
+
+def test_tracking_callback_derives_hyperparams_from_a_runnable(monkeypatch: Any, tmp_path: Any) -> None:
+    """Hand it the object, not a params dict — one derivation, not one per consumer."""
+    from confluid import configurable
+
+    @configurable
+    class CallbackToy:
+        def __init__(self, lr: float = 0.03, epochs: int = 9) -> None:
+            self.lr, self.epochs = lr, epochs
+
+    _quiet_provenance(monkeypatch, tmp_path)
+    t = _RecordingTracker()
+    cb = TrackingCallback([t], runnable=CallbackToy())
+    cb.on_fit_start(MagicMock(), MagicMock())
+
+    leaves = {key.rsplit(".", 1)[-1]: value for key, value in t.hparams.items()}
+    assert leaves["lr"] == 0.03 and leaves["epochs"] == 9
+    assert cb.manifest is not None
+
+
+def test_explicit_params_win_over_the_runnable(monkeypatch: Any, tmp_path: Any) -> None:
+    from confluid import configurable
+
+    @configurable
+    class OverrideCallbackToy:
+        def __init__(self, lr: float = 0.03) -> None:
+            self.lr = lr
+
+    _quiet_provenance(monkeypatch, tmp_path)
+    t = _RecordingTracker()
+    cb = TrackingCallback([t], params={"lr": 0.99}, runnable=OverrideCallbackToy())
+    cb.on_fit_start(MagicMock(), MagicMock())
+    assert t.hparams["lr"] == 0.99
+
+
+def test_fit_end_finishes_the_manifest(monkeypatch: Any, tmp_path: Any) -> None:
+    _quiet_provenance(monkeypatch, tmp_path)
+    cb = TrackingCallback([_RecordingTracker()])
+    cb.on_fit_start(MagicMock(), MagicMock())
+    cb.on_fit_end(MagicMock(), MagicMock())
+    assert cb.manifest is not None and cb.manifest.status == "success"
+
+
+def test_a_fit_then_test_run_keeps_the_first_terminal_status(monkeypatch: Any, tmp_path: Any) -> None:
+    """Both ends fire in a fit+test run; the second must not relabel the first."""
+    _quiet_provenance(monkeypatch, tmp_path)
+    cb = TrackingCallback([_RecordingTracker()])
+    cb.on_fit_start(MagicMock(), MagicMock())
+    cb.on_fit_end(MagicMock(), MagicMock())
+    cb.on_test_end(MagicMock(), MagicMock())
+    assert cb.manifest is not None and cb.manifest.status == "success"
+
+
+def test_an_exception_is_not_recorded_as_a_success(monkeypatch: Any, tmp_path: Any) -> None:
+    _quiet_provenance(monkeypatch, tmp_path)
+    cb = TrackingCallback([_RecordingTracker()])
+    cb.on_fit_start(MagicMock(), MagicMock())
+    cb.on_exception(MagicMock(), MagicMock(), RuntimeError("boom"))
+    assert cb.manifest is not None and cb.manifest.status == "failed"
+
+
+def test_a_ctrl_c_is_recorded_as_interrupted(monkeypatch: Any, tmp_path: Any) -> None:
+    _quiet_provenance(monkeypatch, tmp_path)
+    cb = TrackingCallback([_RecordingTracker()])
+    cb.on_fit_start(MagicMock(), MagicMock())
+    cb.on_exception(MagicMock(), MagicMock(), KeyboardInterrupt())
+    assert cb.manifest is not None and cb.manifest.status == "interrupted"
+
+
 def test_build_checkpoint_none_returns_empty() -> None:
     assert build_checkpoint_callbacks(None) == []
 

@@ -380,14 +380,17 @@ class RunManifest:
         """A COPY of one section — a ``dict`` for mapping sections, a ``list`` for list ones.
 
         This is how a backend's native projection reads the manifest: never through the
-        private store, so a projection cannot mutate what it is projecting.
+        private store, so a projection cannot mutate what it is projecting. Values come back
+        :func:`_plain`-coerced, the same as :meth:`to_dict` writes them — a backend handing
+        them to its own API must not have to re-do that, and a stray ``Path`` reaching a
+        native slot fails there rather than here.
         """
         self._require_known(name)
         with self._lock:
             value = self._sections[name]
             if name == "run":
-                return {**self._identity(), **value}
-            return list(value) if isinstance(value, list) else dict(value)
+                return _plain({**self._identity(), **value})
+            return _plain(list(value) if isinstance(value, list) else dict(value))
 
     def primary_code(self) -> Optional[Dict[str, Any]]:
         """The one code record that best answers "which repository is THIS run's?".

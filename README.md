@@ -307,7 +307,8 @@ comparable across backends:
 | `MlflowTracker` | the `mlflow.source.*` standard tags (name, type, git commit / branch / repoURL / dirty), and datasets as real **dataset inputs** via `log_inputs`, so MLflow links runs that share one |
 | `TensorBoardTracker` | the manifest as YAML in the **Text** tab (`add_text`) — TensorBoard has no artifact store, so a copied file would never be visible |
 | `ClearMLTracker` | the manifest in the **Configuration** tab (`connect_configuration`), readable and diffable between tasks; datasets and models as named **Hyperparameter** sections ClearML can compare across runs |
-| `CsvTracker`, `AimTracker`, `WandbTracker` | the default: both files plus `log_hyperparams` |
+| `AimTracker` | each section as a structured **run value** (`run["code"]`, `run["env"]`, `run["datasets"]`, …), which Aim's UI filters and compares across runs rather than leaving inside a file |
+| `CsvTracker`, `WandbTracker` | the default: both files plus `log_hyperparams` |
 
 **The single-commit slot may come back empty.** MLflow has one field for a source commit while the
 manifest holds a list. The narrowing is explicit — the repository containing the cwd, else the one
@@ -322,8 +323,8 @@ than picking arbitrarily. An empty field sends you to the manifest; a wrong one 
 **1. Plain functions** — call `log_run_context` / `capture_log_file` from your own run wrapper
 (shown above). Zero Lightning coupling.
 
-**2. A `pl.Callback`** — `TrackingCallback` logs provenance on fit/test start and the log file on
-end:
+**2. A `pl.Callback`** — `TrackingCallback` captures the run context on fit/test start and
+finishes the manifest (plus the log file) on end:
 
 ```python
 import pytorch_lightning as pl
@@ -332,9 +333,15 @@ from marainer.lightning import TrackingCallback
 
 trainer = pl.Trainer(
     max_epochs=10,
-    callbacks=[TrackingCallback([CsvTracker()], params={"lr": 1e-3})],
+    callbacks=[TrackingCallback([CsvTracker()], runnable=my_configured_runnable)],
 )
 ```
+
+Pass `runnable=` and it derives the hyperparameters and dumps the resolved config, exactly as
+`log_run_context` does — `params=` remains for values outside the config and wins over anything
+derived. The manifest is on the callback as `.manifest` from fit/test start onward, and a run
+that raises is recorded as `failed` (or `interrupted` on Ctrl-C) rather than left to look
+successful.
 
 **3. The `TrackerLogger` bridge** — hand a Marainer `Tracker` to `Trainer(logger=…)` so it receives
 per-step metrics like any pl logger:
@@ -451,7 +458,7 @@ The **runnable protocol** and **pipeline running** are *not* in Marainer — the
   over the labels. What a framework then does with the vector (`torch.nn`'s `weight=`, Keras's
   `class_weight`) is the consuming runnable's business.
 - `recordstream run <config.yaml>` — the generic runner. A config roots at a top-level `runnable:` key
-  plus a `task:`; consumers may also ship their own CLI (`sonair lightning train`, `raidar evaluate`, …).
+  plus a `task:`; consumers may also ship their own CLI wrapping it.
 
 There is no `marainer.runner` / `marainer.progress` / `marainer.workflow` / `marainer.processing`
 and no marainer binary.

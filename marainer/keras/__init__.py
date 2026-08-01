@@ -40,17 +40,23 @@ from marainer.tracking.base import Tracker
 def keras_tracking_callback(
     trackers: Sequence[Tracker],
     params: Optional[Mapping[str, Any]] = None,
+    runnable: Any = None,
     capture_log: bool = True,
 ) -> Any:
     """Build a ``keras.callbacks.Callback`` that forwards run tracking to marainer trackers.
 
-    On train begin it logs run provenance (git / config / params); on each epoch end it
-    forwards the epoch ``logs`` as metrics; on train end it captures the log file. Attach it
-    via ``model.fit(..., callbacks=[keras_tracking_callback([tracker])])``.
+    On train begin it captures the run context (git / code state / config / params) into a run
+    manifest and projects it onto every tracker; on each epoch end it forwards the epoch
+    ``logs`` as metrics; on train end it finishes the manifest and captures the log file.
+    Attach it via ``model.fit(..., callbacks=[keras_tracking_callback([tracker])])``.
 
     Args:
         trackers: The marainer trackers to log to.
-        params: Optional hyperparameters (only JSON-scalar values forwarded).
+        params: Optional hyperparameters (only JSON-scalar values forwarded). Merged OVER
+            anything derived from ``runnable``, so an explicit value wins.
+        runnable: The configured object driving the run. Given one, its hyperparameters are
+            derived and its resolved configuration dumped — hand it the object rather than
+            building a params dict, so that answer comes from one implementation.
         capture_log: Upload the loggair log file as an artifact on train end.
     """
     # `via=` so KERAS_BACKEND is set before keras loads (see the module docstring), while the
@@ -59,16 +65,21 @@ def keras_tracking_callback(
     members = list(trackers)
 
     class _KerasTrackingCallback(keras.callbacks.Callback):  # type: ignore[misc, name-defined]
+        #: The run manifest, available from train begin onward (``None`` before that).
+        manifest: Any = None
+
         def on_train_begin(self, logs: Optional[Dict[str, float]] = None) -> None:
-            provenance.log_run_context(members, params)
+            self.manifest = provenance.log_run_context(members, params, runnable=runnable)
 
         def on_epoch_end(self, epoch: int, logs: Optional[Dict[str, float]] = None) -> None:
             for tracker in members:
                 tracker.log_metrics(dict(logs or {}), step=epoch)
 
         def on_train_end(self, logs: Optional[Dict[str, float]] = None) -> None:
-            if capture_log:
-                provenance.capture_log_file(members)
+            # Finishing is not optional once a manifest exists: left at `running`, marainer's
+            # atexit hook would label a successful run `interrupted`.
+            if capture_log or self.manifest is not None:
+                provenance.capture_log_file(members, manifest=self.manifest, status="success")
 
     return _KerasTrackingCallback()
 

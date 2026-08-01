@@ -32,18 +32,27 @@ here because the symptom (a run with no hyperparameters) reads exactly like a bu
 from __future__ import annotations
 
 from pathlib import Path
-from typing import Any, Dict, Mapping, Optional, Union
+from typing import TYPE_CHECKING, Any, Dict, Mapping, Optional, Tuple, Union
 
 from confluid import configurable
 from loggair import get_logger
 
 from marainer._imports import require
 from marainer.tracking.base import Tracker
+from marainer.tracking.manifest import SECTIONS, ManifestSection
+
+if TYPE_CHECKING:  # type-only: `manifest` reaches `base`, so a runtime import would cycle.
+    from marainer.tracking.manifest import RunManifest
 
 logger = get_logger(__name__)
 
 #: Aim's own default system-metric sampling period, in seconds.
 AIM_SYSTEM_INTERVAL = 10.0
+
+#: Manifest sections written as Aim run values. ``params`` is excluded — the inherited
+#: ``log_manifest`` default already puts it in ``run["hparams"]``, which is where Aim's own
+#: hyperparameter comparison reads from, and writing it twice would just disagree eventually.
+PROJECTED_SECTIONS: Tuple[ManifestSection, ...] = tuple(name for name in SECTIONS if name != "params")
 
 
 @configurable
@@ -172,6 +181,31 @@ class AimTracker(Tracker):
         except Exception as exc:  # pragma: no cover - matplotlib/aim conversion
             logger.debug(f"Aim log_figure failed for {name}: {exc}")
 
+    def log_manifest(self, manifest: "RunManifest") -> None:
+        """Artifact + hyperparameters (the default), PLUS the sections as Aim run values.
+
+        Aim's native slot is a structured value on the run (``run["code"] = [...]``), which its
+        UI can filter and compare across runs — so the code state, configuration, environment
+        and dataset records become queryable rather than only readable inside an uploaded file.
+
+        ``params`` is skipped: the inherited default already put it in ``run["hparams"]``, which
+        is where Aim's own hyperparameter comparison reads from. Everything is ADDITIONAL to the
+        artifact, so a run tracked here stays comparable with the same run tracked elsewhere.
+        """
+        super().log_manifest(manifest)
+        run = self.experiment
+        for name in PROJECTED_SECTIONS:
+            value = manifest.section(name)
+            if not value:
+                continue
+            try:
+                run[name] = value
+            except Exception as exc:  # pragma: no cover - aim rejects an unrepresentable value
+                logger.debug(f"Aim could not record the {name!r} section: {exc}")
+        # The run's STATUS is deliberately not projected here: `log_manifest` is called while
+        # the run is still going, so it would record `running` forever and a filter on it would
+        # match nothing. `finalize()` writes `run["status"]` at the one moment it is true.
+
     def finalize(self, status: str = "success") -> None:
         if self._run is None:
             return
@@ -183,4 +217,4 @@ class AimTracker(Tracker):
             logger.debug(f"Aim run close failed: {exc}")
 
 
-__all__ = ["AIM_SYSTEM_INTERVAL", "AimTracker"]
+__all__ = ["AIM_SYSTEM_INTERVAL", "PROJECTED_SECTIONS", "AimTracker"]
