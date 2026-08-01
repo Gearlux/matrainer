@@ -50,4 +50,8 @@ test-report.xml
 csv_logs/
 tb_logs/
 checkpoints/
+
+# Run output. `RunManifest`'s default root and `AimTracker.save_dir` both default
+# to ./runs, so this covers the manifests and the Aim repository (runs/.aim).
+runs/
 /pyrightconfig.json

@@ -241,3 +241,58 @@ def test_round_trip_against_real_aim(tmp_path: Path) -> None:
     assert run["status"] == "success"
     assert sorted({m.name for m in run.metrics()}) == ["train/loss"]
     assert "stage=smoke" in list(run.props.tags)
+
+
+def test_log_manifest_projects_the_sections_as_run_values(fake_aim: Any, tmp_path: Path) -> None:
+    """Aim's native slot is a structured run value, which its UI can filter and compare."""
+    from marainer.tracking.manifest import RunManifest
+
+    m = RunManifest(run_dir=tmp_path / "run", handle_interrupts=False)
+    m.set("params", {"lr": 0.1})
+    m.set("env", {"python": "3.13"})
+    m.add("code", {"name": "pkg", "commit": "abc", "dirty": False})
+    m.record_dataset(kind="hf", name="org/set", split="train", count=12)
+
+    AimTracker(save_dir=str(tmp_path / "repo")).log_manifest(m)
+    values = fake_aim.instances[0].values
+    assert values["env"]["python"] == "3.13"
+    assert values["code"][0]["commit"] == "abc"
+    assert values["datasets"][0]["name"] == "org/set"
+
+
+def test_params_are_not_projected_twice(fake_aim: Any, tmp_path: Path) -> None:
+    """`hparams` is Aim's own comparison slot; a second copy would only ever disagree."""
+    from marainer.tracking.manifest import RunManifest
+
+    m = RunManifest(run_dir=tmp_path / "run", handle_interrupts=False)
+    m.set("params", {"lr": 0.1})
+    AimTracker(save_dir=str(tmp_path / "repo")).log_manifest(m)
+    values = fake_aim.instances[0].values
+    assert values["hparams"] == {"lr": 0.1}
+    assert "params" not in values
+
+
+def test_empty_sections_are_skipped(fake_aim: Any, tmp_path: Path) -> None:
+    from marainer.tracking.manifest import RunManifest
+
+    AimTracker(save_dir=str(tmp_path / "repo")).log_manifest(
+        RunManifest(run_dir=tmp_path / "run", handle_interrupts=False)
+    )
+    values = fake_aim.instances[0].values
+    assert "code" not in values and "datasets" not in values
+
+
+def test_the_status_is_not_projected_at_log_time(fake_aim: Any, tmp_path: Path) -> None:
+    """Regression: it would read `running` forever — `finalize()` owns `run["status"]`.
+
+    Measured against real Aim: `log_manifest` runs mid-run, so a status projected there is
+    always `running` and a filter on it matches nothing.
+    """
+    from marainer.tracking.manifest import RunManifest
+
+    tracker = AimTracker(save_dir=str(tmp_path / "repo"))
+    tracker.log_manifest(RunManifest(run_dir=tmp_path / "run", handle_interrupts=False))
+    assert "manifest_status" not in fake_aim.instances[0].values
+    assert "status" not in fake_aim.instances[0].values  # not yet — the run has not ended
+    tracker.finalize("success")
+    assert fake_aim.instances[0].values["status"] == "success"
