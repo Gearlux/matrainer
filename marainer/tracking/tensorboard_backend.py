@@ -11,13 +11,16 @@ from __future__ import annotations
 
 import shutil
 from pathlib import Path
-from typing import Any, Mapping, Optional, Union
+from typing import TYPE_CHECKING, Any, Mapping, Optional, Union
 
 from confluid import configurable
 from loggair import get_logger
 
 from marainer._imports import require
 from marainer.tracking.base import Tracker
+
+if TYPE_CHECKING:  # type-only: `manifest` reaches `base`, so a runtime import would cycle.
+    from marainer.tracking.manifest import RunManifest
 
 logger = get_logger(__name__)
 
@@ -97,6 +100,24 @@ class TensorBoardTracker(Tracker):
             self.experiment.add_figure(name, figure, global_step=step)
         except Exception as exc:  # pragma: no cover - defensive
             logger.debug(f"TensorBoard add_figure failed for {name}: {exc}")
+
+    def log_manifest(self, manifest: "RunManifest") -> None:
+        """Artifact + ``add_hparams`` (the default), PLUS the manifest in TensorBoard's Text tab.
+
+        TensorBoard has no artifact store — the default's ``log_artifact`` merely copies
+        the files into the run directory, where the UI will never show them. ``add_text``
+        is the one native slot it does have, so the manifest is also rendered there as a
+        fenced YAML block, which is what makes it *visible* rather than merely present.
+
+        Hyperparameters reach ``add_hparams`` through the inherited default;
+        :meth:`log_hyperparams` already drops the non-scalar values TensorBoard rejects
+        (it accepts only int / float / str / bool).
+        """
+        super().log_manifest(manifest)
+        try:
+            self.experiment.add_text("manifest", f"```yaml\n{manifest.path.read_text()}\n```")
+        except Exception as exc:  # pragma: no cover - tensorboard internal / unreadable file
+            logger.debug(f"TensorBoard add_text failed for the manifest: {exc}")
 
     def save(self) -> None:
         if self._writer is not None:

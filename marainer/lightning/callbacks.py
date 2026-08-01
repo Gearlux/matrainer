@@ -51,6 +51,11 @@ class TrackingCallback(L.Callback):
     Args:
         trackers: The marainer trackers to log provenance to.
         params: Optional hyperparameters to record (only JSON-scalar values forwarded).
+            Merged OVER anything derived from ``runnable``, so an explicit value wins.
+        runnable: The configured object driving the run. Given one, its hyperparameters are
+            derived and its resolved configuration dumped — hand it the object rather than
+            building a params dict, so the answer to "what were the hyperparameters?" comes
+            from one implementation instead of one per consumer.
         capture_log: Upload the loggair log file as an artifact on end (default ``True``).
     """
 
@@ -58,18 +63,31 @@ class TrackingCallback(L.Callback):
         self,
         trackers: Sequence[Tracker],
         params: Optional[Mapping[str, Any]] = None,
+        runnable: Any = None,
         capture_log: bool = True,
     ) -> None:
         super().__init__()
         self.trackers = list(trackers)
         self.params = params
+        self.runnable = runnable
         self.capture_log = capture_log
+        #: The run manifest, available from fit/test start onward (``None`` before that).
+        self.manifest: Optional[Any] = None
         self._logged = False
 
     def _log_context(self) -> None:
         if not self._logged:
-            provenance.log_run_context(self.trackers, self.params)
+            self.manifest = provenance.log_run_context(self.trackers, self.params, runnable=self.runnable)
             self._logged = True
+
+    def _finish(self, status: str = "success") -> None:
+        """Upload the log file and stamp the manifest's terminal status.
+
+        Safe to reach twice (a fit-then-test run ends both): the manifest keeps the FIRST
+        terminal status, so a successful fit is not relabelled by the test pass that follows.
+        """
+        if self.capture_log or self.manifest is not None:
+            provenance.capture_log_file(self.trackers, manifest=self.manifest, status=status)  # type: ignore[arg-type]
 
     def on_fit_start(self, trainer: L.Trainer, pl_module: L.LightningModule) -> None:
         self._log_context()
@@ -78,12 +96,19 @@ class TrackingCallback(L.Callback):
         self._log_context()
 
     def on_fit_end(self, trainer: L.Trainer, pl_module: L.LightningModule) -> None:
-        if self.capture_log:
-            provenance.capture_log_file(self.trackers)
+        self._finish()
 
     def on_test_end(self, trainer: L.Trainer, pl_module: L.LightningModule) -> None:
-        if self.capture_log:
-            provenance.capture_log_file(self.trackers)
+        self._finish()
+
+    def on_exception(self, trainer: L.Trainer, pl_module: L.LightningModule, exception: BaseException) -> None:
+        """A run that raised must not be recorded as a success.
+
+        Without this the manifest would still say ``running`` when the process unwound, and the
+        ``atexit`` hook would call it ``interrupted`` — true of a Ctrl-C, misleading for a crash.
+        """
+        status = "interrupted" if isinstance(exception, KeyboardInterrupt) else "failed"
+        self._finish(status)
 
 
 # --------------------------------------------------------------------------- #

@@ -1,4 +1,4 @@
-"""Metric construction + coercion for Lightning runnables.
+"""Metric construction + coercion for torch runnables — **Lightning-free**.
 
 * :func:`build_metric_collection` — normalize any metrics spec (mapping / list /
   single metric / ``MetricCollection``) into ONE ``MetricCollection`` the caller
@@ -7,6 +7,14 @@
   torchmetrics ``compute()`` result (used by the ``@output`` properties + the
   metrics sidecar).
 * :class:`MetricPreset` — category-based torchmetrics discovery factory.
+
+This module lived under ``marainer.lightning`` until 2026-08-01, which was a statement about
+its first CONSUMER rather than about its dependencies: nothing in it imports
+``pytorch_lightning``, only confluid, torch and torchmetrics. The move was forced by a consumer
+that trains on plain torch with no ``Trainer`` at all — importing the helpers from the old home
+pulled ``pytorch_lightning`` in as a side effect of the package ``__init__``'s ``require()``,
+which made a deliberately Lightning-free backend depend on Lightning. ``marainer.lightning``
+re-exports every name so its public surface is unchanged.
 """
 
 import importlib

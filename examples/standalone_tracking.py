@@ -13,6 +13,7 @@ import tempfile
 from pathlib import Path
 
 from marainer import CsvTracker, generate_run_name, log_run_context
+from marainer.tracking import capture_log_file
 
 
 def main() -> None:
@@ -23,8 +24,13 @@ def main() -> None:
         save_dir=tempfile.mkdtemp(prefix="marainer_demo_"),
     )
 
-    # Provenance in one call: hyperparameters + git commit tag + the config-include tree.
-    log_run_context([tracker], params={"lr": 1e-3, "batch_size": 32, "model": "toy"})
+    # ONE call at the start of the run: captures how it was invoked, what code it runs, what
+    # config it read, and projects all of it onto every tracker. The manifest it returns is
+    # re-emitted on every later call, so killing this script mid-loop still leaves a complete
+    # record — marked "interrupted" rather than absent.
+    manifest = log_run_context([tracker], params={"lr": 1e-3, "batch_size": 32, "model": "toy"})
+    assert manifest is not None  # a tracker was given, so a manifest was built
+    manifest.record_model(source="demo", name="toy")
 
     # A fake training loop — scalar metrics over time.
     for step in range(20):
@@ -33,6 +39,10 @@ def main() -> None:
         tracker.log_metrics({"train/loss": loss, "train/acc": acc}, step=step)
 
     tracker.set_tags({"stage": "smoke"})
+    manifest.record_output("epoch=19.ckpt", monitor="train/acc", value=acc)
+
+    # ONE call at the end: uploads the log file, finishes the manifest, re-projects it.
+    capture_log_file([tracker], manifest=manifest, status="success")
     tracker.finalize("FINISHED")
 
     run_dir = tracker.log_dir

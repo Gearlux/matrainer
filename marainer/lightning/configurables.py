@@ -17,8 +17,8 @@ from pytorch_lightning.loggers import CSVLogger, MLFlowLogger, TensorBoardLogger
 from torch.optim import SGD, Adam, AdamW
 from torch.utils.data import DataLoader
 
-from marainer.lightning.metrics import MetricPreset
 from marainer.lightning.trackers import TrackerLogger
+from marainer.torch.metrics import MetricPreset
 
 # Optimizers — ``params`` is the runtime-injected slot.
 register(Adam, group="optimizer", lazy=True)
