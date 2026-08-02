@@ -431,19 +431,40 @@ def capture_log_file(
     trackers: Sequence[Tracker],
     manifest: Optional["RunManifest"] = None,
     status: "RunStatus" = "success",
+    finalize: bool = True,
 ) -> None:
-    """Close a run out: upload the log file, and finish + re-project the manifest.
+    """Close a run out: upload the log file, finish + re-project the manifest, END the run.
 
-    The end-of-run counterpart to :func:`log_run_context`. Passing the manifest it
-    returned stamps the terminal ``status`` and pushes the final state, so the record a
-    backend holds matches the one on disk.
+    The end-of-run counterpart to :func:`log_run_context`, and the ONE place a run's terminal
+    status is stated. Passing the manifest it returned stamps that status and pushes the final
+    state, so the record a backend holds matches the one on disk.
+
+    **The tracker is finalized here, and that is why this is one function rather than a call
+    every consumer makes for itself.** Until 2026-08-02 this finished the MANIFEST and left the
+    tracker running: a real MLflow sweep of thirteen runs showed eleven as ``RUNNING`` with no
+    end time — so the same run was ``success`` on disk and in-flight in the UI, and no backend
+    could report a duration. Nothing called :meth:`Tracker.finalize` at all; the two runs that
+    looked right did so by accident, because a Lightning consumer had adapted its trackers into
+    ``pl.Logger``s and Lightning finalizes those itself. A per-consumer call would have been
+    eight chances to forget; here it is one, and every consumer already reaches it.
+
+    Finalizing is LAST, after the artifact and manifest pushes: a backend with an explicit run
+    lifecycle (MLflow, W&B) terminates the run in :meth:`~Tracker.finalize`, and a terminated
+    run rejects further writes.
 
     Args:
         trackers: The tracking backends to push to.
         manifest: The manifest from :func:`log_run_context`. Omit it to upload only the
             log file (the historical behaviour).
-        status: Terminal status for the manifest. The FIRST terminal status wins, so an
-            already-finished manifest is left alone.
+        status: Terminal status for the run AND the manifest. The manifest keeps the FIRST
+            terminal status, so an already-finished one is left alone.
+        finalize: End the run on each tracker. Pass ``False`` to upload the log file and push
+            the manifest WITHOUT closing the run — for a caller that reaches here more than
+            once (a Lightning fit-then-test pass ends twice) and has a backend that cannot
+            take a second ending. MLflow can: terminating twice is idempotent and a write
+            after the first still lands, with the status staying ``FINISHED`` (measured).
+            ``WandbTracker`` cannot, because its ``finish()`` drops the run handle and the
+            next access starts a NEW run.
     """
     log_file = resolve_log_file()
     if manifest is not None:
@@ -454,6 +475,8 @@ def capture_log_file(
                 tracker.log_artifact(log_file, "logs")
             if manifest is not None:
                 tracker.log_manifest(manifest)
+            if finalize:
+                tracker.finalize(status)
         except Exception as exc:  # pragma: no cover - backend-specific
             logger.debug(f"capture_log_file failed on {type(tracker).__name__}: {exc}")
 

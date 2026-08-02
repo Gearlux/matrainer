@@ -22,7 +22,7 @@ behind an extra and lazily imported the first time you use its backend:
 
 | Extra | Pulls in | Enables |
 |---|---|---|
-| `marainer[torch]` | `torch`, `torchmetrics` | `marainer.torch` — checkpoint loading + the metric helpers |
+| `marainer[torch]` | `torch`, `torchmetrics` | `marainer.torch` — checkpoint loading, the metric helpers, `resolve_device` |
 | `marainer[lightning]` | torch, `pytorch-lightning`, `torchmetrics`, `tabulate`, `matplotlib` | `marainer.lightning` — Lightning tracking callbacks |
 | `marainer[mlflow]` | `mlflow`, `psutil`, `pyobjc` (macOS) | `MlflowTracker` + system metrics |
 | `marainer[tensorboard]` | torch (`torch.utils.tensorboard`) | `TensorBoardTracker` |
@@ -131,7 +131,15 @@ just one.
 `log_run_context` is the **one call at the start of a run**. It fills a [run manifest](#the-run-manifest)
 — environment, code state, configuration, hyperparameters — and projects it onto every tracker,
 plus the `git.commit` tag and the config tree as `config/` artifacts. `capture_log_file` is its
-end-of-run counterpart: it uploads the loggair output file and finishes the manifest.
+end-of-run counterpart, and it is where a run ENDS: it uploads the loggair output file, finishes
+the manifest, and finalizes every tracker — in that order, because a backend with an explicit run
+lifecycle stops accepting writes once the run is closed.
+
+That last part is deliberately not left to the caller. A run whose tracker is never finalized
+stays `RUNNING` in the UI with no end time and therefore no duration, while its manifest on disk
+says `success` — the same run, described two ways. Pass `finalize=False` if you reach this more
+than once per run and your backend cannot take a second ending (MLflow can; `WandbTracker`
+cannot, since its `finish()` drops the run handle).
 
 ```python
 from marainer import CsvTracker, MlflowTracker, log_run_context
@@ -404,6 +412,40 @@ A non-Lightning platform calls these directly; the Lightning `pl.Callback` wrapp
 `MLFLOW_SYSTEM_METRICS_SAMPLING_INTERVAL` (seconds, default 10) or disable via
 `MLFLOW_ENABLE_SYSTEM_METRICS_LOGGING=false`.
 
+## Per-split metric slots (`marainer.metric_slots`, no extra needed)
+
+A training runnable typically takes `metrics` (what **every** split measures) plus
+`train_metrics` / `val_metrics` / `test_metrics` (what **that** split measures on top), so an
+expensive or split-specific metric can be added to validation alone without restating the shared
+set beside it. How the two combine is the same everywhere; *what a metric is* is not — so the rule
+lives here as two pure functions and is applied to whichever vocabulary your engine uses (a
+torchmetrics template mapping, a list of `keras.metrics` objects, a list of fastai function names).
+
+```python
+from marainer.metric_slots import merge_metric_specs, union_metric_specs
+
+# merge — an engine whose loop you own: each split gets its own set
+merge_metric_specs({"acc": A}, {"confusion": C})   # {"acc": A, "confusion": C}   add
+merge_metric_specs({"acc": A}, {"acc": A2})        # {"acc": A2}                  shadow
+merge_metric_specs(["accuracy"], ["top_k"])        # ["accuracy", "top_k"]        concatenate
+merge_metric_specs({"acc": A}, None)               # {"acc": A}   None = "not chosen"
+
+# union — an engine that compiles ONE metric list for several phases (keras, transformers)
+union_metric_specs(shared, train_spec, val_spec, test_spec)
+```
+
+Two mappings merge by key (a same-named entry in the split **shadows** the shared one, which is
+how a split overrides a template rather than adding to it); two sequences concatenate; anything
+else — a ready-made collection, a mapping against a list — means the split **replaces**, because
+there is no key-wise way to combine them and silently ignoring the split's own spec would be worse.
+`union_metric_specs` is for an engine that cannot be told to narrow (`keras.Model.compile` owns one
+list): a metric asked for on one split is then computed on the others too, which is noise a reader
+ignores — the alternative, dropping it, is a wired metric that silently reports nothing.
+
+The module imports **nothing but the standard library**, so a deliberately framework-free training
+loop can use it without pulling torch. That is also why it sits at the top level rather than under
+`marainer.torch`.
+
 ## `marainer.torch` — torch-only, Lightning-free helpers (`marainer[torch]`)
 
 - `load_lightning_checkpoint(model, path, strict=False)` — loads a Lightning `.ckpt` (strips the
@@ -419,9 +461,17 @@ A non-Lightning platform calls these directly; the Lightning `pl.Callback` wrapp
   `marainer.tracking.render_matrix_as_table` (below).
 - `MetricPreset(category=…, task=…)` — instantiate every compatible torchmetrics metric in a
   category, for a config that wants "all the classification metrics" without naming them.
+- `resolve_device(choice="auto")` + the closed `Device` literal (`"auto"`/`"cpu"`/`"cuda"`/`"mps"`)
+  — where the run executes. `"auto"` prefers CUDA, then Apple's MPS, then CPU; anything else is
+  taken at its word, so an operator who wrote `cpu` to compare against a GPU run gets CPU, and one
+  who wrote `cuda` on a machine without it gets torch's own error instead of a silent fallback that
+  would make the benchmark meaningless. A `Trainer` makes this choice for you; a hand-written loop
+  has to make it itself, and every such loop was making it identically.
 
 ```python
-from marainer.torch import build_metric_collection, scalar_metrics
+from marainer.torch import build_metric_collection, resolve_device, scalar_metrics
+
+device = resolve_device("auto")                   # cuda -> mps -> cpu, whichever is present
 
 base = build_metric_collection({"accuracy": LazyClass(MulticlassAccuracy)}, num_classes=10)
 train_metrics, val_metrics = base.clone(prefix="train/"), base.clone(prefix="val/")
@@ -490,8 +540,24 @@ once an epoch keeps its history on a backend whose native channel has no step ax
 ## Random run names
 
 `marainer.generate_run_name(prefix="train")` returns a friendly `adjective_noun` slug (`coolname`,
-offline) — the default `Tracker.run_name`, and what a consumer's merged class uses
-(`generate_run_name(prefix=task)`).
+offline) — the default `Tracker.run_name`.
+
+`run_prefix(task)` supplies the prefix a runnable's task implies, so the two compose into the one
+line a merged train/evaluate/predict class writes:
+
+```python
+from marainer import generate_run_name
+from marainer.run_names import run_prefix
+
+generate_run_name(prefix=run_prefix("fit"))       # "train_funny_rabbit"
+run_prefix("test"), run_prefix("evaluate")        # ("evaluate", "evaluate")
+```
+
+The mapping is deliberately many-to-one: `test` and `evaluate` are two entry points but one *kind*
+of run, and a name that said `test_…` for one and `evaluate_…` for the other would split one
+concept across two prefixes in every tracking backend. An unrecognised verb — including one a
+future runnable adds — is an evaluation rather than an error, because a run name is a label and
+refusing to produce one is never the right answer.
 
 ## What lives elsewhere
 
