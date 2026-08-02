@@ -47,6 +47,7 @@ log_hyperparams(params)                         # config params
 log_metrics(metrics, step=None)                 # scalar metrics over time
 set_tags(tags) / log_artifact(path, dir=None)   # tags + file artifacts
 log_figure(name, figure, step=None)             # matplotlib / array figures
+log_text(name, text, step=None)                 # anything that is neither (a rendered table)
 save() / finalize(status) / log_dir             # lifecycle
 ```
 
@@ -413,7 +414,8 @@ A non-Lightning platform calls these directly; the Lightning `pl.Callback` wrapp
   per split, flowing each template with the sizing kwarg (`num_classes=` / `num_labels=`).
 - `coerce_metric_value(value)` / `scalar_metrics(raw)` — JSON-safe coercion of a torchmetrics
   `compute()` result; `scalar_metrics` keeps only the scalars, so an `N×N` confusion matrix is
-  dropped rather than tabulated.
+  dropped — those channels hold one number per name. Report such a metric separately with
+  `marainer.tracking.render_matrix_as_table` (below).
 - `MetricPreset(category=…, task=…)` — instantiate every compatible torchmetrics metric in a
   category, for a config that wants "all the classification metrics" without naming them.
 
@@ -431,6 +433,48 @@ hand-written torch training loop — uses it via `marainer[torch]` without pulli
 `pytorch_lightning`. The metric helpers moved here on 2026-08-01 for exactly that reason: they
 import only confluid, torch and torchmetrics, so their old home described their first consumer
 rather than their dependencies. `marainer.lightning` re-exports all four, unchanged.
+
+### Reporting a metric that is not a single number
+
+`scalar_metrics` drops what a `{name: float}` channel cannot hold. Two pieces put such a value
+back: `render_matrix_as_table` turns it into something readable, and `Tracker.log_text` gives it
+a home.
+
+`marainer.tracking.render_matrix_as_table(name, matrix, class_names)` renders a square 2-D
+matrix (a confusion matrix: rows are true classes, columns predicted) as a GitHub-flavoured
+markdown table. It is framework-free (the matrix only needs `.tolist()`, or
+`.detach().cpu().tolist()`) and imports `tabulate` lazily, so it stays available on the light
+core install.
+
+```python
+from marainer.tracking import render_matrix_as_table
+
+values = val_metrics.compute()
+table = render_matrix_as_table("val/confusion", values["val/confusion"], ["cat", "dog"])
+logger.info(table)
+tracker.log_text("val/confusion", table, step=epoch)
+```
+
+`log_text(name, text, step=None)` is the third content channel beside `log_metrics` (numbers)
+and `log_figure` (images). Every backend has it: unlike `log_figure`, whose default is a skip,
+its default is real work — a `.md` file written into the backend's own `log_dir` (or uploaded
+via `log_artifact` when there is none), so a caller never has to ask whether this backend can
+hold a table. Where a backend has a native channel it uses that INSTEAD:
+
+| Backend | `log_text` lands in |
+|---|---|
+| MLflow | `client.log_text` → `text/<name>_<step>.md`, previewed inline in the UI |
+| TensorBoard | `add_text` → the **Text** tab, with `step` driving the slider |
+| Aim | `aim.Text` tracked as a sequence, so every step is kept |
+| ClearML | an artifact named `text/<name>_<step>.md` — *not* `report_text`, which writes to the console stream where a per-epoch table is unusable |
+| W&B | the inherited `.md` file, which W&B syncs from the run directory (it has no text primitive) |
+| CSV | the inherited `.md` file under the run directory |
+
+Note the contrast with `log_manifest`, where a native slot is written *in addition* to the
+artifact: there the artifact is a union guarantee that keeps two differently-tracked runs
+comparable, whereas here the text *is* the payload, so one durable home per backend is the whole
+requirement. `step` is part of the filename rather than a version of one file, so a value logged
+once an epoch keeps its history on a backend whose native channel has no step axis.
 
 ## Random run names
 

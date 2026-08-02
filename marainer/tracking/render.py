@@ -38,4 +38,8 @@ def render_matrix_as_table(name: str, matrix: Any, class_names: List[str]) -> st
     headers = [""] + [f"pred:{c}" for c in class_names]
     rows = [[f"true:{class_names[i]}", *arr[i]] for i in range(len(arr))]
     rendered: str = tabulate(rows, headers=headers, tablefmt="github")
-    return f"{name}:\n" + rendered
+    # A BLANK line after the title, not just a newline: the result is handed to
+    # `Tracker.log_text` as well as to a log, and every markdown renderer (TensorBoard's
+    # Text tab, MLflow's `.md` artifact preview) needs one to see a table rather than one
+    # run-on paragraph. In a plain log it costs a blank line.
+    return f"{name}:\n\n{rendered}"

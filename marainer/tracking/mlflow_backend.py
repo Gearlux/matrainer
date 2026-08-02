@@ -24,7 +24,7 @@ from confluid import configurable
 from loggair import get_logger
 
 from marainer._imports import require
-from marainer.tracking.base import Tracker
+from marainer.tracking.base import Tracker, text_file_stem
 
 if TYPE_CHECKING:  # type-only: `manifest` reaches `base`, so a runtime import would cycle.
     from marainer.tracking.manifest import RunManifest
@@ -152,6 +152,13 @@ class MlflowTracker(Tracker):
             client.log_figure(self._run_id, figure, f"{safe}.png")
         except Exception as exc:  # pragma: no cover - defensive
             logger.debug(f"MLflow log_figure failed for {name}: {exc}")
+
+    def log_text(self, name: str, text: str, step: Optional[int] = None) -> None:
+        """MLflow's own text artifact — the UI previews a ``.md`` file inline, no download."""
+        try:
+            self.experiment.log_text(self._run_id, text, f"text/{text_file_stem(name, step)}.md")
+        except Exception as exc:  # pragma: no cover - defensive
+            logger.debug(f"MLflow log_text failed for {name}: {exc}")
 
     def log_manifest(self, manifest: "RunManifest") -> None:
         """Artifact + hyperparameters (the default), PLUS MLflow's own native slots.

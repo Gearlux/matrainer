@@ -12,7 +12,7 @@ method surface deliberately mirrors ``pytorch_lightning.loggers.Logger``
 
 On top of the Lightning shape it adds the extensions every experiment needs but
 that ``Logger`` leaves backend-specific: ``set_tags`` / ``log_artifact`` /
-``log_figure`` / ``log_dir``.
+``log_figure`` / ``log_text`` / ``log_dir``.
 
 Concrete backends live one-per-file (``mlflow_backend`` / ``tensorboard_backend`` /
 ``csv_backend`` / ``wandb_backend``) and lazily import their library through
@@ -27,8 +27,9 @@ constructor stores config only; the native backend handle is created on first
 from __future__ import annotations
 
 from abc import ABC, abstractmethod
+from collections.abc import Iterable
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, List, Mapping, Optional, Union
+from typing import TYPE_CHECKING, Any, List, Mapping, Optional, Union, cast
 
 from confluid import configurable
 from loggair import get_logger
@@ -39,6 +40,40 @@ if TYPE_CHECKING:  # `manifest` imports `provenance`, which imports THIS module 
     from marainer.tracking.manifest import RunManifest
 
 logger = get_logger(__name__)
+
+
+def as_tracker_list(value: Any) -> Optional[List["Tracker"]]:
+    """Normalize a ``trackers`` slot value to a list (or ``None`` when nothing was wired).
+
+    A consuming trainer declares its slot as ``Union[Tracker, Iterable[Tracker]]`` so that a
+    YAML key can be a single tracker OR a list, and — the part that actually matters —
+    so confluid will broadcast a LIST-valued top-level ``trackers:`` key into it at all. That
+    gate reads the ANNOTATION: a list only reaches a slot whose declared type admits one, which
+    is why the same key silently did nothing on a slot typed ``Optional[List[Tracker]]`` and
+    assigned after construction.
+
+    Values pass through un-flowed: a slot may still hold deferred ``Fluid`` markers at
+    construction time, and it is the trainer's job to flow them when it runs.
+    """
+    if value is None:
+        return None
+    # `str`/`bytes` are Iterable but are never a list OF trackers — without the guard a
+    # stray string would explode into one "tracker" per character.
+    if isinstance(value, (str, bytes)) or not isinstance(value, Iterable):
+        return [cast("Tracker", value)]
+    return [cast("Tracker", item) for item in value]
+
+
+def text_file_stem(name: str, step: Optional[int] = None) -> str:
+    """The filename stem a :meth:`Tracker.log_text` value is stored under.
+
+    Shared so every backend files the same value under the same name: a metric name is
+    ``val/confusion``-shaped and ``/`` is a path separator, and a per-step value needs the
+    step in the NAME (a backend whose text channel has no step axis would otherwise keep
+    only the last one).
+    """
+    stem = name.replace("/", "_").strip("_") or "text"
+    return f"{stem}_{step}" if step is not None else stem
 
 
 @configurable
@@ -131,6 +166,37 @@ class Tracker(ABC):
         """Persist a matplotlib ``figure`` under ``name``. Default no-op."""
         logger.debug(f"{type(self).__name__}.log_figure({name!r}) not supported; skipping.")
 
+    def log_text(self, name: str, text: str, step: Optional[int] = None) -> None:
+        """Persist a block of text under ``name``. Default: a ``.md`` file in this backend's tree.
+
+        The channel for a run value that is neither a number nor an image — a confusion
+        matrix rendered as a table, a classification report, a diff. :meth:`log_metrics`
+        cannot carry it (one float per name) and :meth:`log_figure` needs a plotting
+        library to have drawn it first.
+
+        Unlike :meth:`log_figure` this default is REAL work, not a skip: text is trivially
+        serializable, so every backend can hold it and a caller never has to ask whether
+        this one can. A backend with a native text channel overrides and uses it INSTEAD —
+        note the contrast with :meth:`log_manifest`, where an override must write native
+        slots *in addition* to the artifact. There the artifact is a union guarantee that
+        keeps two differently-tracked runs comparable; here the text IS the payload, so one
+        durable home per backend is the whole requirement and a second copy is just a
+        second copy.
+
+        ``step`` is part of the FILENAME rather than a version of one file, so a value
+        logged once an epoch keeps its history on a backend whose native channel has no
+        step axis.
+        """
+        directory = self.log_dir or Path(self.save_dir)
+        path = Path(directory) / "text" / f"{text_file_stem(name, step)}.md"
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(text, encoding="utf-8")
+        # A file already inside this backend's own tree is where its reader looks; copying it
+        # into an `artifacts/` subdirectory of the same tree would just duplicate it (the same
+        # rule `log_manifest` applies). A remote-only backend has no tree, so it uploads.
+        if self.log_dir is None:
+            self.log_artifact(path, artifact_dir="text")
+
     def log_manifest(self, manifest: "RunManifest") -> None:
         """Push the run manifest to this backend. Default: both files + the hyperparameters.
 
@@ -218,6 +284,9 @@ class TrackerGroup(Tracker):
     def log_figure(self, name: str, figure: Any, step: Optional[int] = None) -> None:
         self._fan_out("log_figure", name, figure, step)
 
+    def log_text(self, name: str, text: str, step: Optional[int] = None) -> None:
+        self._fan_out("log_text", name, text, step)
+
     def log_manifest(self, manifest: "RunManifest") -> None:
         self._fan_out("log_manifest", manifest)
 
@@ -230,4 +299,4 @@ class TrackerGroup(Tracker):
         return None
 
 
-__all__ = ["Tracker", "TrackerGroup"]
+__all__ = ["Tracker", "TrackerGroup", "as_tracker_list", "text_file_stem"]

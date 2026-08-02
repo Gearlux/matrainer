@@ -24,8 +24,10 @@ class _FakeWriter:
     def add_figure(self, tag: str, figure: Any, global_step: Any = None) -> None:
         self.figures.append(tag)
 
-    def add_text(self, tag: str, text: str) -> None:
-        self.texts.append((tag, text))
+    def add_text(self, tag: str, text: str, global_step: Any = None) -> None:
+        # `global_step` mirrors the real `SummaryWriter.add_text` signature — `log_text` passes
+        # it (that is what drives the Text tab's step slider), `set_tags` does not.
+        self.texts.append((tag, text, global_step))
 
     def add_hparams(self, hparams: dict, metrics: dict) -> None:
         pass
@@ -96,9 +98,22 @@ def test_log_manifest_renders_the_manifest_into_the_text_tab(fake_tb: Any, tmp_p
     t = TensorBoardTracker(experiment_name="exp", run_name="r", save_dir=str(tmp_path / "tb"))
     t.log_manifest(m)
 
-    texts = dict(t.experiment.texts)
+    texts = {tag: text for tag, text, _step in t.experiment.texts}
     assert "manifest" in texts
     assert "```yaml" in texts["manifest"] and "lr: 0.1" in texts["manifest"]
+
+
+def test_log_text_goes_to_the_text_tab_with_its_step(fake_tb: Any, tmp_path: Path) -> None:
+    """The one native non-numeric slot TensorBoard has — and `step` is what makes it browsable.
+
+    No base-class `.md` file beside it: the value is already durable in the event file, so the
+    inherited default would only add a second copy nobody reads.
+    """
+    t = TensorBoardTracker(experiment_name="e", run_name="r", save_dir=str(tmp_path))
+    t.log_text("val/confusion", "|a|b|", step=2)
+
+    assert t.experiment.texts == [("val/confusion", "|a|b|", 2)]
+    assert not (tmp_path / "e" / "r" / "text").exists()
 
 
 def test_log_manifest_still_copies_the_files_and_logs_hparams(fake_tb: Any, tmp_path: Path) -> None:

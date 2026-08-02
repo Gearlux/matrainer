@@ -2,6 +2,12 @@
 
 Wraps a ``wandb`` run. ``wandb`` is imported lazily on first :attr:`experiment`
 access; importing this module needs no wandb installed.
+
+``log_text`` is deliberately NOT overridden: W&B has no text primitive
+(``wandb.Html`` would mean escaping the caller's text into markup, and a
+``wandb.Table`` is a dataframe wearing a different name), while its run directory
+IS its upload channel — so the base class's ``.md`` file, written under
+:attr:`log_dir`, is synced with the run for free and stays readable as itself.
 """
 
 from __future__ import annotations
