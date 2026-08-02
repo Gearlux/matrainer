@@ -5,7 +5,7 @@ from typing import Any, List, Mapping, Optional
 
 import pytest
 
-from marainer.tracking.base import Tracker, TrackerGroup
+from marainer.tracking.base import Tracker, TrackerGroup, text_file_stem
 
 
 class RecordingTracker(Tracker):
@@ -17,6 +17,7 @@ class RecordingTracker(Tracker):
         self.hparams: dict = {}
         self.artifacts: List[tuple] = []
         self.figures: List[str] = []
+        self.texts: List[tuple] = []
         self.finalized: Optional[str] = None
 
     @property
@@ -37,6 +38,18 @@ class RecordingTracker(Tracker):
 
     def finalize(self, status: str = "success") -> None:
         self.finalized = status
+
+
+class TextRecordingTracker(RecordingTracker):
+    """Records ``log_text`` instead of serving it.
+
+    Separate from :class:`RecordingTracker` on purpose: the ABC's ``log_text`` default WRITES
+    a file, which is the behaviour the tests below exercise directly — a recording override on
+    the shared fixture would hide it (and, in the fan-out test, write into ``./runs``).
+    """
+
+    def log_text(self, name: str, text: str, step: Optional[int] = None) -> None:
+        self.texts.append((name, text, step))
 
 
 def test_zero_arg_construction_draws_random_run_name() -> None:
@@ -74,12 +87,75 @@ def test_default_extensions_are_noops_not_errors() -> None:
     assert b.tags["a"] == "b"
 
 
+# ---------------------------------------------------------------------------
+# log_text — the channel for a run value that is neither a number nor an image
+# ---------------------------------------------------------------------------
+def test_text_file_stem_makes_a_metric_name_a_filename() -> None:
+    """A metric name is `val/confusion`-shaped, and `/` is a path separator."""
+    assert text_file_stem("val/confusion") == "val_confusion"
+    assert text_file_stem("val/confusion", step=2) == "val_confusion_2"
+    assert text_file_stem("val/confusion", step=0) == "val_confusion_0"  # step 0 is a step
+    assert text_file_stem("/") == "text"  # nothing left to name it by
+
+
+def test_log_text_defaults_to_a_file_in_the_backends_own_tree(tmp_path: Path) -> None:
+    """Unlike `log_figure`, the default is real work: text is trivially serializable.
+
+    A caller therefore never has to ask whether THIS backend can hold a table, which is the
+    point of putting the default on the ABC rather than in each backend.
+    """
+
+    class WithDir(RecordingTracker):
+        @property
+        def log_dir(self) -> Optional[Path]:
+            return tmp_path
+
+    t = WithDir()
+    t.log_text("val/confusion", "|a|b|", step=1)
+
+    written = tmp_path / "text" / "val_confusion_1.md"
+    assert written.read_text() == "|a|b|"
+    # No `log_artifact`: the file is already where this backend's reader looks, and copying it
+    # into an `artifacts/` subdirectory of the same tree would just duplicate it.
+    assert t.artifacts == []
+
+
+def test_a_remote_only_backend_uploads_the_text_file(tmp_path: Path) -> None:
+    """No `log_dir` means no tree to write into, so the file goes through `log_artifact`."""
+    t = RecordingTracker(save_dir=str(tmp_path))
+    assert t.log_dir is None
+    t.log_text("summary", "hello")
+
+    assert (tmp_path / "text" / "summary.md").read_text() == "hello"
+    assert t.artifacts == [(str(tmp_path / "text" / "summary.md"), "text")]
+
+
+def test_each_step_is_its_own_file(tmp_path: Path) -> None:
+    """A per-epoch value keeps its history even on a backend whose channel has no step axis."""
+
+    class WithDir(RecordingTracker):
+        @property
+        def log_dir(self) -> Optional[Path]:
+            return tmp_path
+
+    t = WithDir()
+    for step in range(3):
+        t.log_text("val/confusion", f"epoch {step}", step=step)
+
+    assert sorted(p.name for p in (tmp_path / "text").iterdir()) == [
+        "val_confusion_0.md",
+        "val_confusion_1.md",
+        "val_confusion_2.md",
+    ]
+
+
 def test_tracker_group_fans_out_all_calls() -> None:
-    a, b = RecordingTracker(), RecordingTracker()
+    a, b = TextRecordingTracker(), TextRecordingTracker()
     group = TrackerGroup([a, b])
     group.log_hyperparams({"lr": 0.1})
     group.log_metrics({"loss": 1.0}, step=3)
     group.log_figure("cm", object())
+    group.log_text("val/confusion", "|a|b|", step=3)
     group.log_artifact("/tmp/a.txt", "config")
     group.set_tags({"stage": "smoke"})
     group.save()
@@ -88,6 +164,7 @@ def test_tracker_group_fans_out_all_calls() -> None:
         assert t.hparams == {"lr": 0.1}
         assert t.metrics == [{"step": 3, "loss": 1.0}]
         assert t.figures == ["cm"]
+        assert t.texts == [("val/confusion", "|a|b|", 3)]
         assert t.artifacts == [("/tmp/a.txt", "config")]
         assert t.tags == {"stage": "smoke"}
         assert t.finalized == "success"

@@ -76,8 +76,11 @@ def coerce_metric_value(value: Any) -> Any:
 def scalar_metrics(raw: Any) -> Dict[str, float]:
     """Coerce a torchmetrics ``compute()`` result to a flat ``{name: float}`` of SCALARS only.
 
-    Non-scalar metrics (e.g. an ``N×N`` confusion matrix) are dropped — they are rendered as
-    figures to the trackers, not tabulated here. ``bool`` is excluded (not a metric value).
+    Non-scalar metrics (e.g. an ``N×N`` confusion matrix) are dropped: this feeds channels that
+    hold one number per name (``Tracker.log_metrics``, a metrics sidecar), and a caller that wants
+    a matrix reported renders it separately — see
+    :func:`~marainer.tracking.render.render_matrix_as_table`. ``bool`` is excluded (not a metric
+    value).
     """
     payload = coerce_metric_value(raw if isinstance(raw, dict) else {"value": raw})
     out: Dict[str, float] = {}

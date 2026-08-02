@@ -101,6 +101,18 @@ class TensorBoardTracker(Tracker):
         except Exception as exc:  # pragma: no cover - defensive
             logger.debug(f"TensorBoard add_figure failed for {name}: {exc}")
 
+    def log_text(self, name: str, text: str, step: Optional[int] = None) -> None:
+        """The Text tab, which is TensorBoard's only non-numeric native slot.
+
+        Durable AND visible: the value goes into the event file (so the base class's
+        ``.md`` copy would add nothing) and the UI renders it, with ``step`` driving the
+        slider — so a per-epoch value is browsable rather than only the last one.
+        """
+        try:
+            self.experiment.add_text(name, text, global_step=step)
+        except Exception as exc:  # pragma: no cover - defensive
+            logger.debug(f"TensorBoard add_text failed for {name}: {exc}")
+
     def log_manifest(self, manifest: "RunManifest") -> None:
         """Artifact + ``add_hparams`` (the default), PLUS the manifest in TensorBoard's Text tab.
 

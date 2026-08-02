@@ -38,7 +38,7 @@ from confluid import configurable
 from loggair import get_logger
 
 from marainer._imports import require
-from marainer.tracking.base import Tracker
+from marainer.tracking.base import Tracker, text_file_stem
 
 if TYPE_CHECKING:  # type-only: `manifest` reaches `base`, so a runtime import would cycle.
     from marainer.tracking.manifest import RunManifest
@@ -165,6 +165,20 @@ class ClearMLTracker(Tracker):
             )
         except Exception as exc:  # pragma: no cover - matplotlib/clearml conversion
             logger.debug(f"ClearML report_matplotlib_figure failed for {name}: {exc}")
+
+    def log_text(self, name: str, text: str, step: Optional[int] = None) -> None:
+        """``upload_artifact``, NOT ``report_text``.
+
+        ClearML's text primitive writes to the task's console log, which is a stream of
+        run output — a per-epoch table would be interleaved with everything else the
+        process printed and impossible to compare between tasks. An artifact is addressable
+        by name, which is what a value logged once an epoch needs; the name carries the
+        step for the same reason.
+        """
+        try:
+            self.experiment.upload_artifact(name=f"text/{text_file_stem(name, step)}.md", artifact_object=text)
+        except Exception as exc:  # pragma: no cover - defensive
+            logger.debug(f"ClearML log_text failed for {name}: {exc}")
 
     def log_manifest(self, manifest: "RunManifest") -> None:
         """Artifact + hyperparameters (the default), PLUS ClearML's own native slots.

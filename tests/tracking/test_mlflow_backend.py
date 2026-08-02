@@ -52,6 +52,7 @@ class _FakeClient:
         self.metrics: List[tuple] = []
         self.tags: dict = {}
         self.artifacts: List[tuple] = []
+        self.texts: List[tuple] = []
         self.terminated: Any = None
         self.inputs: List[Any] = []
         _FakeClient.instances.append(self)
@@ -76,6 +77,9 @@ class _FakeClient:
 
     def log_artifact(self, run_id: str, path: str, artifact_dir: Any = None) -> None:
         self.artifacts.append((path, artifact_dir))
+
+    def log_text(self, run_id: str, text: str, artifact_file: str) -> None:
+        self.texts.append((artifact_file, text))
 
     def set_terminated(self, run_id: str, status: str) -> None:
         self.terminated = status
@@ -148,6 +152,19 @@ def test_log_artifact_forwards(fake_mlflow: Any, tmp_path: Any) -> None:
     t = MlflowTracker(run_name="r", log_system_metrics=False)
     t.log_artifact(f, "config")
     assert fake_mlflow.instances[0].artifacts == [(str(f), "config")]
+
+
+def test_log_text_uses_mlflows_own_text_artifact(fake_mlflow: Any, tmp_path: Any) -> None:
+    """`client.log_text` writes the artifact itself, so the base class's file is not needed.
+
+    The step rides in the artifact NAME because MLflow artifacts have no step axis — without
+    it a value logged once an epoch would keep only the last one.
+    """
+    t = MlflowTracker(run_name="r", save_dir=str(tmp_path), log_system_metrics=False)
+    t.log_text("val/confusion", "|a|b|", step=2)
+
+    assert fake_mlflow.instances[0].texts == [("text/val_confusion_2.md", "|a|b|")]
+    assert fake_mlflow.instances[0].artifacts == []  # no second copy through log_artifact
 
 
 def test_finalize_terminates_run(fake_mlflow: Any) -> None:

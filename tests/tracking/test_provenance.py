@@ -556,9 +556,17 @@ def test_environment_snapshot_redacts_an_explicitly_named_secret(monkeypatch: py
 
 
 def test_environment_snapshot_honours_custom_prefixes(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setenv("PROJECT_DATA_ROOT", "/data")
-    monkeypatch.setenv("MLFLOW_TRACKING_URI", "http://x")
-    assert provenance.environment_snapshot(prefixes=["PROJECT_"]) == {"PROJECT_DATA_ROOT": "/data"}
+    """A custom prefix captures its own vars and NOTHING else — including the defaults.
+
+    The prefix is deliberately one no real environment carries. This asserted on `PROJECT_`
+    until 2026-08-01 and then failed for anyone who had sourced the workspace activation
+    script, which exports `PROJECT_ROOT`: a true match the strict equality read as a bug.
+    A test that reads the ambient environment has to pick a name the ambient environment
+    cannot supply.
+    """
+    monkeypatch.setenv("MARAINER_TEST_DATA_ROOT", "/data")
+    monkeypatch.setenv("MLFLOW_TRACKING_URI", "http://x")  # a default-prefix decoy the filter must drop
+    assert provenance.environment_snapshot(prefixes=["MARAINER_TEST_"]) == {"MARAINER_TEST_DATA_ROOT": "/data"}
 
 
 def test_platform_state_reports_the_interpreter_and_machine() -> None:

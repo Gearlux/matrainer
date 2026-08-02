@@ -56,6 +56,7 @@ def fake_aim(monkeypatch: pytest.MonkeyPatch) -> Any:
     mod = types.ModuleType("aim")
     mod.Run = _FakeRun  # type: ignore[attr-defined]
     mod.Image = lambda fig: ("image", fig)  # type: ignore[attr-defined]
+    mod.Text = lambda text: ("text", text)  # type: ignore[attr-defined]
     monkeypatch.setitem(sys.modules, "aim", mod)
     return _FakeRun
 
@@ -170,6 +171,12 @@ def test_log_artifact_skips_a_missing_file(fake_aim: Any, tmp_path: Path) -> Non
 def test_log_figure_tracks_an_image(fake_aim: Any, tmp_path: Path) -> None:
     AimTracker(save_dir=str(tmp_path)).log_figure("cm", "FIGURE", step=2)
     assert fake_aim.instances[0].tracked == [("cm", ("image", "FIGURE"), 2)]
+
+
+def test_log_text_tracks_an_aim_text_sequence(fake_aim: Any, tmp_path: Path) -> None:
+    """A tracked sequence, so the run page keeps every step rather than the last one."""
+    AimTracker(save_dir=str(tmp_path)).log_text("val/confusion", "|a|b|", step=2)
+    assert fake_aim.instances[0].tracked == [("val/confusion", ("text", "|a|b|"), 2)]
 
 
 def test_finalize_records_status_and_closes(fake_aim: Any, tmp_path: Path) -> None:

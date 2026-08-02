@@ -181,6 +181,14 @@ class AimTracker(Tracker):
         except Exception as exc:  # pragma: no cover - matplotlib/aim conversion
             logger.debug(f"Aim log_figure failed for {name}: {exc}")
 
+    def log_text(self, name: str, text: str, step: Optional[int] = None) -> None:
+        """``aim.Text`` — a tracked SEQUENCE, so the run page keeps every step's value."""
+        try:
+            aim = require("aim", "aim", feature="AimTracker")
+            self.experiment.track(aim.Text(text), name=name, step=step)
+        except Exception as exc:  # pragma: no cover - defensive
+            logger.debug(f"Aim log_text failed for {name}: {exc}")
+
     def log_manifest(self, manifest: "RunManifest") -> None:
         """Artifact + hyperparameters (the default), PLUS the sections as Aim run values.
 

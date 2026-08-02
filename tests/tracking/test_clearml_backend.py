@@ -193,6 +193,17 @@ def test_log_figure_reports_a_matplotlib_figure(fake_clearml: Any) -> None:
     assert fake_clearml.instances[0].logger.figures == [("cm", "FIGURE", 2)]
 
 
+def test_log_text_uploads_an_artifact_rather_than_reporting_to_the_console(fake_clearml: Any) -> None:
+    """`report_text` writes to the task's console stream, where a per-epoch table is unusable.
+
+    An artifact is addressable by name and comparable between tasks; the step is IN the name
+    because ClearML files artifacts by name and would otherwise keep only the last one.
+    """
+    ClearMLTracker().log_text("val/confusion", "|a|b|", step=2)
+
+    assert fake_clearml.instances[0].artifacts == [("text/val_confusion_2.md", "|a|b|")]
+
+
 def test_finalize_completes_or_fails(fake_clearml: Any) -> None:
     ok = ClearMLTracker()
     ok.experiment
