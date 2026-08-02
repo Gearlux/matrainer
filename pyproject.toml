@@ -31,6 +31,10 @@ requires-python = ">=3.12"
 torch = ["torch", "torchmetrics"]
 # PyTorch-Lightning tracking helpers (marainer.lightning: TrackingCallback / TrackerLogger + metric utils).
 lightning = ["marainer[torch]", "pytorch-lightning", "torchmetrics", "tabulate", "matplotlib"]
+# Rendering a non-scalar run value (a confusion matrix) as a FIGURE for `Tracker.log_figure`.
+# The markdown-table form needs no extra beyond `tabulate`; only the heatmap needs matplotlib,
+# which is why it is opt-in — see marainer/tracking/render.py::render_matrix_as_figure.
+plot = ["matplotlib"]
 # The MlflowTracker backend + MLflow system metrics. pyobjc powers the inline IOAccelerator
 # reader (Apple-Silicon GPU utilisation, no sudo) in marainer.tracking.system.
 mlflow = [
@@ -59,7 +63,7 @@ keras = ["keras>=3.0", "recordstream[keras]>=0.1.0"]
 # Only for a consumer that genuinely wants the TensorFlow ENGINE underneath Keras 3.
 tensorflow = ["marainer[keras]", "tensorflow>=2.16"]
 # Everything a workspace install wants.
-all = ["marainer[lightning,mlflow,tensorboard,wandb,aim,clearml,keras]"]
+all = ["marainer[lightning,mlflow,tensorboard,wandb,aim,clearml,keras,plot]"]
 dev = [
     "black>=24.0.0,<25.0.0",
     "isort>=5.13.0,<6.0.0",

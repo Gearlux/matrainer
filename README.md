@@ -30,8 +30,9 @@ behind an extra and lazily imported the first time you use its backend:
 | `marainer[aim]` | `aim` | `AimTracker` |
 | `marainer[clearml]` | `clearml` | `ClearMLTracker` |
 | `marainer[keras]` | `keras` | `marainer.keras.keras_tracking_callback` |
+| `marainer[plot]` | `matplotlib` | `render_matrix_as_figure` — a confusion matrix as a heatmap for `log_figure` |
 | `marainer[tensorflow]` | `marainer[keras]`, `tensorflow` | the same helper, with the TensorFlow engine underneath |
-| `marainer[all]` | lightning + mlflow + tensorboard + wandb | everything |
+| `marainer[all]` | every extra above | everything |
 
 A missing backend library raises one clear error — e.g. `pip install marainer[mlflow]` — never a
 bare `ModuleNotFoundError`.
@@ -436,24 +437,34 @@ rather than their dependencies. `marainer.lightning` re-exports all four, unchan
 
 ### Reporting a metric that is not a single number
 
-`scalar_metrics` drops what a `{name: float}` channel cannot hold. Two pieces put such a value
-back: `render_matrix_as_table` turns it into something readable, and `Tracker.log_text` gives it
-a home.
+`scalar_metrics` drops what a `{name: float}` channel cannot hold. Two renderers put such a value
+back, and a channel gives each a home:
 
-`marainer.tracking.render_matrix_as_table(name, matrix, class_names)` renders a square 2-D
-matrix (a confusion matrix: rows are true classes, columns predicted) as a GitHub-flavoured
-markdown table. It is framework-free (the matrix only needs `.tolist()`, or
-`.detach().cpu().tolist()`) and imports `tabulate` lazily, so it stays available on the light
-core install.
+| | renderer | channel | cost |
+|---|---|---|---|
+| **table** | `render_matrix_as_table` | `log_text` | `tabulate`; readable in a plain log |
+| **figure** | `render_matrix_as_figure` | `log_figure` | matplotlib (`marainer[plot]`); glanceable, and the only readable form at many classes |
+
+Both take a square 2-D matrix — a confusion matrix: rows true classes, columns predicted — and
+both are framework-free (the matrix only needs `.tolist()`, or `.detach().cpu().tolist()`), with
+their libraries imported lazily so this module stays in the light core.
 
 ```python
-from marainer.tracking import render_matrix_as_table
+from marainer.tracking import render_matrix_as_figure, render_matrix_as_table
 
 values = val_metrics.compute()
 table = render_matrix_as_table("val/confusion", values["val/confusion"], ["cat", "dog"])
 logger.info(table)
 tracker.log_text("val/confusion", table, step=epoch)
+
+# opt in when a picture is worth it
+tracker.log_figure("val/confusion", render_matrix_as_figure("val/confusion", values["val/confusion"], ["cat", "dog"]))
 ```
+
+`render_matrix_as_figure` builds a `matplotlib.figure.Figure` **directly**, never through
+`pyplot` — a pyplot figure is registered in a process-global manager and lives until someone
+calls `pyplot.close`, so a value rendered once an epoch would leak a figure per epoch in a caller
+with no reason to know pyplot has global state.
 
 `log_text(name, text, step=None)` is the third content channel beside `log_metrics` (numbers)
 and `log_figure` (images). Every backend has it: unlike `log_figure`, whose default is a skip,
@@ -528,5 +539,5 @@ python examples/standalone_tracking.py
 | `pyyaml` | the run manifest's readable half (`manifest.yaml`) |
 | `numpy` | the predictions sink |
 
-Everything else — torch, pytorch-lightning, torchmetrics, mlflow, tensorboard, wandb, tensorflow —
-is optional and behind an extra.
+Everything else — torch, pytorch-lightning, torchmetrics, mlflow, tensorboard, wandb, aim,
+clearml, tensorflow, matplotlib — is optional and behind an extra.

@@ -386,6 +386,10 @@ def log_run_context(
             run_dir=first.log_dir,
             experiment_name=first.experiment_name,
             run_name=first.run_name,
+            # Read off the runnable rather than left blank: `task` is what tells a training
+            # manifest from an evaluation one when comparing two runs of the SAME config, and
+            # by the time this is called a CLI verb has already overridden any YAML value.
+            task=getattr(runnable, "task", None),
         )
 
     manifest.capture_environment()
