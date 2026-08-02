@@ -10,7 +10,7 @@ from typing import Any, List
 
 import pytest
 
-from marainer.tracking import render_matrix_as_table
+from marainer.tracking import render_matrix_as_figure, render_matrix_as_table
 
 
 class _FakeTensor:
@@ -78,3 +78,52 @@ def test_every_count_reaches_the_table(value: Any) -> None:
 
     for count in ("1", "2", "3", "4"):
         assert count in rendered
+
+
+# ---------------------------------------------------------------------------
+# The figure form — for `Tracker.log_figure`
+# ---------------------------------------------------------------------------
+def test_the_figure_is_not_registered_with_pyplot() -> None:
+    """The load-bearing detail: a value rendered once an epoch must not leak a figure per epoch.
+
+    ``pyplot.subplots`` registers every figure in a process-global manager that keeps it alive
+    until someone calls ``pyplot.close`` — which a caller with no other reason to know about
+    pyplot will not do. A bare ``matplotlib.figure.Figure`` is owned by its reference.
+    """
+    import matplotlib.pyplot as plt
+
+    before = set(plt.get_fignums())
+    figure = render_matrix_as_figure("val/confusion", [[5, 1], [0, 4]], ["cat", "dog"])
+
+    assert type(figure).__name__ == "Figure"
+    assert set(plt.get_fignums()) == before
+
+
+def test_the_figure_carries_the_orientation_labels_and_counts() -> None:
+    """Same convention as the table: rows true, columns predicted, cells annotated."""
+    figure = render_matrix_as_figure("val/confusion", [[5, 1], [0, 4]], ["cat", "dog"])
+    axes = figure.get_axes()[0]
+
+    assert axes.get_title() == "val/confusion"
+    assert axes.get_xlabel() == "predicted" and axes.get_ylabel() == "true"
+    assert [t.get_text() for t in axes.get_yticklabels()] == ["cat", "dog"]
+    assert {t.get_text() for t in axes.texts} == {"5", "1", "0", "4"}
+
+
+def test_cell_annotations_are_dropped_when_there_are_too_many_classes() -> None:
+    """Past ~25 classes they are unreadable anyway, and the render cost grows with N².
+
+    The heatmap itself stays informative at any size, which is why this form exists beside the
+    table rather than instead of it.
+    """
+    big = [[0] * 30 for _ in range(30)]
+    figure = render_matrix_as_figure("cm", big, [str(i) for i in range(30)])
+
+    assert list(figure.get_axes()[0].texts) == []
+
+
+def test_a_tensor_renders_without_a_manual_conversion() -> None:
+    """The same `_as_rows` path the table uses — a live metric value is on a device."""
+    figure = render_matrix_as_figure("cm", _FakeTensor([[2, 0], [1, 3]]), ["a", "b"])
+
+    assert {t.get_text() for t in figure.get_axes()[0].texts} == {"2", "0", "1", "3"}

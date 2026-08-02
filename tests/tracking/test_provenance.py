@@ -623,3 +623,25 @@ def test_accelerator_state_survives_a_probe_failure(monkeypatch: pytest.MonkeyPa
     monkeypatch.setitem(sys.modules, "torch", fake_torch(broken=True))
     state = provenance.accelerator_state()
     assert state is not None and state["kind"] == "cpu"  # the version is still worth having
+
+
+def test_the_manifest_records_the_runnables_task(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """`task` is how you tell a training manifest from an evaluation one for the SAME config."""
+    from confluid import configurable
+
+    @configurable
+    class TaskToy:
+        def __init__(self, task: str = "evaluate") -> None:
+            self.task = task
+
+    monkeypatch.chdir(tmp_path)
+    manifest = provenance.log_run_context([RecordingTracker()], runnable=TaskToy(), capture_code=False)
+    assert manifest is not None
+    assert manifest.section("run")["task"] == "evaluate"
+
+
+def test_a_runnable_without_a_task_leaves_it_unset(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """Not every runnable has one; reading it must not invent a value."""
+    monkeypatch.chdir(tmp_path)
+    manifest = provenance.log_run_context([RecordingTracker()], capture_code=False)
+    assert manifest is not None and manifest.section("run")["task"] is None

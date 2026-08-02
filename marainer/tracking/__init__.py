@@ -12,7 +12,9 @@ training platform.
 * :mod:`~marainer.tracking.provenance` — git / config / environment capture plus
   :func:`~marainer.tracking.provenance.log_run_context`, the one call at run start.
 * :mod:`~marainer.tracking.system` — framework-free system-metric sampling.
-* :func:`~marainer.tracking.render.render_matrix_as_table` — confusion-matrix table.
+* :func:`~marainer.tracking.render.render_matrix_as_table` /
+  :func:`~marainer.tracking.render.render_matrix_as_figure` — a confusion matrix as a
+  markdown table (for ``log_text``) or a heatmap (for ``log_figure``).
 
 **Backends are discovered, not listed.** Every ``*_backend.py`` module in this package
 is scanned for :class:`Tracker` subclasses on first use (PEP 562 module ``__getattr__``),
@@ -39,7 +41,7 @@ from marainer.tracking.provenance import (
     log_run_context,
     resolve_log_file,
 )
-from marainer.tracking.render import render_matrix_as_table
+from marainer.tracking.render import render_matrix_as_figure, render_matrix_as_table
 from marainer.tracking.system import MpsMetricsSampler, enable_mlflow_system_metrics, start_system_metrics_monitor
 
 #: Suffix marking a module in this package as holding a backend.
@@ -62,6 +64,7 @@ __all__ = [
     "included_config_paths",
     "log_run_context",
     "resolve_log_file",
+    "render_matrix_as_figure",
     "render_matrix_as_table",
 ]
 
