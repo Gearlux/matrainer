@@ -35,6 +35,8 @@ class RecordingTracker(Tracker):
         self.hparams: dict = {}
         self.set_tag_calls: dict = {}
         self.artifacts: List[tuple] = []
+        #: The terminal status this tracker was ended with, or None if it never was.
+        self.finalized: Optional[str] = None
 
     @property
     def experiment(self) -> str:
@@ -51,6 +53,9 @@ class RecordingTracker(Tracker):
 
     def log_artifact(self, path: Any, artifact_dir: str = "") -> None:
         self.artifacts.append((str(path), artifact_dir))
+
+    def finalize(self, status: str = "success") -> None:
+        self.finalized = status
 
 
 def test_get_git_commit_hash_in_repo() -> None:
@@ -178,6 +183,61 @@ def test_capture_log_file_uploads_when_present(monkeypatch: pytest.MonkeyPatch, 
     t = RecordingTracker()
     provenance.capture_log_file([t])
     assert t.artifacts == [(str(log), "logs")]
+
+
+def test_capture_log_file_ends_the_run_on_every_tracker(monkeypatch: pytest.MonkeyPatch) -> None:
+    """The gap this closed: the manifest said ``success`` while the tracker still said RUNNING.
+
+    Found by a real MLflow sweep — eleven of thirteen finished runs showed ``RUNNING`` with no
+    end time, because NOTHING called `Tracker.finalize`. It belongs here rather than in each
+    consumer: this is already the one place a run's terminal status is stated, and a per-consumer
+    call would be one chance per backend to forget.
+    """
+    monkeypatch.setattr(provenance, "resolve_log_file", lambda: None)
+    first, second = RecordingTracker(), RecordingTracker()
+
+    provenance.capture_log_file([first, second], status="failed")
+
+    assert first.finalized == "failed" and second.finalized == "failed"
+
+
+def test_the_run_is_ended_AFTER_the_artifacts_are_pushed(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    """Ordering, not tidiness: a backend with a run lifecycle stops accepting writes when ended.
+
+    MLflow happens to tolerate a late write, but W&B's `finish()` drops the run handle and the
+    next access starts a NEW one — so an upload sequenced after the ending would land somewhere
+    else entirely.
+    """
+    from marainer.tracking.manifest import RunManifest
+
+    log = tmp_path / "app.log"
+    log.write_text("line")
+    monkeypatch.setattr(provenance, "resolve_log_file", lambda: log)
+
+    calls: List[str] = []
+
+    class OrderRecordingTracker(RecordingTracker):
+        def log_artifact(self, path: Any, artifact_dir: str = "") -> None:
+            calls.append("log_artifact")
+
+        def finalize(self, status: str = "success") -> None:
+            calls.append("finalize")
+
+    manifest = RunManifest(run_dir=tmp_path, handle_interrupts=False)
+    provenance.capture_log_file([OrderRecordingTracker()], manifest=manifest)
+
+    assert calls[-1] == "finalize", f"finalize must come last, got {calls}"
+    assert "log_artifact" in calls
+
+
+def test_capture_log_file_can_upload_without_ending_the_run(monkeypatch: pytest.MonkeyPatch) -> None:
+    """The escape hatch for a caller that reaches here twice per run and cannot end twice."""
+    monkeypatch.setattr(provenance, "resolve_log_file", lambda: None)
+    tracker = RecordingTracker()
+
+    provenance.capture_log_file([tracker], finalize=False)
+
+    assert tracker.finalized is None
 
 
 def test_log_run_context_with_nothing_to_report(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
