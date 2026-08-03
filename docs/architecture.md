@@ -1,4 +1,4 @@
-# Marainer Architecture Decisions
+# Matrainer Architecture Decisions
 
 Short decision records for the mechanisms whose *shape* isn't obvious from the code alone.
 Each record: **Context → Decision → Consequences → Example → What you may change**. User-facing
@@ -9,9 +9,9 @@ Per the workspace "Docs Never Name Dependent Projects" mandate, these records de
 
 ---
 
-## 1. Marainer tracks; it does not train (2026-07)
+## 1. Matrainer tracks; it does not train (2026-07)
 
-**Context.** Marainer used to be a training *orchestrator*: a `LightningTrainer` / `LightningEvaluator`
+**Context.** Matrainer used to be a training *orchestrator*: a `LightningTrainer` / `LightningEvaluator`
 pair with `training_step` / `validation_step` / `test_step`, a `run()` loop, a five-verb CLI, and
 `pytorch_lightning` / `torch` hard-imported even in modules that only logged a git hash. Two problems
 compounded. (a) Every consumer inherited a heavy base whose training loop it usually overrode anyway,
@@ -19,29 +19,29 @@ so the "shared" loop was a delegation maze, not a simplification. (b) A project 
 *tracking* (log params, git hash, config artifacts, system metrics) still paid the full Lightning
 import cost and couldn't be removed without gutting the training code.
 
-**Decision.** Marainer is an **experiment-tracking library only** — no training loop, no
+**Decision.** Matrainer is an **experiment-tracking library only** — no training loop, no
 trainer/evaluator class, no CLI. A class that trains reads like a standard example for its framework
-and lives in the *consuming* project; it reaches for Marainer solely to track the run. The runnable
+and lives in the *consuming* project; it reaches for Matrainer solely to track the run. The runnable
 protocol (`TorchRunner`, `ProgressReporting`, the `entrypoint` method-annotation mechanism), the
 workflow combinators, and `DatasetProcessor` moved to `recordstream`; the generic runner is
 `recordstream run <config>` binding a top-level `runnable:` key.
 
 **Consequences.**
-- The guiding invariant is testable: **removing Marainer costs a consumer only a couple of line
+- The guiding invariant is testable: **removing Matrainer costs a consumer only a couple of line
   changes** — it keeps training (with loggair logging), losing only the rich tracking. If a change
-  makes Marainer load-bearing for *training*, it's in the wrong project.
-- `import marainer` imports no torch/lightning/mlflow (see record 2). The light core is
+  makes Matrainer load-bearing for *training*, it's in the wrong project.
+- `import matrainer` imports no torch/lightning/mlflow (see record 2). The light core is
   `confluid`/`liquifai`/`loggair`/`coolname`/`numpy`.
 - There is exactly one thing to reintroduce-and-reject in review: a `training_step`, a `run()` loop,
-  or a `marainer.cli`. None belong here.
+  or a `matrainer.cli`. None belong here.
 
 **Example.** A consumer's standard `LightningModule` opts into tracking without inheriting anything
-from Marainer:
+from Matrainer:
 
 ```python
 import pytorch_lightning as pl
-from marainer import CsvTracker, MlflowTracker
-from marainer.lightning import TrackingCallback
+from matrainer import CsvTracker, MlflowTracker
+from matrainer.lightning import TrackingCallback
 
 trainer = pl.Trainer(
     max_epochs=10,
@@ -60,7 +60,7 @@ styles are all in scope. What you may *not* add back: a training/evaluation loop
 
 **Context.** Tracking must reach several logger libraries (MLflow, TensorBoard, CSV, Weights &
 Biases) that a given install rarely all has. Importing all of them at package import — the old shape
-— made a light `import marainer` drag in mlflow/wandb and fail on a machine that has neither, even
+— made a light `import matrainer` drag in mlflow/wandb and fail on a machine that has neither, even
 for a consumer that only wanted the CSV backend. Consumers also want ONE surface they can hand to any
 framework's logger slot, not four bespoke logging call sites.
 
@@ -69,14 +69,14 @@ framework's logger slot, not four bespoke logging call sites.
 `log_metrics`/`save`/`finalize`) plus the extensions `set_tags`/`log_artifact`/`log_figure`/
 `log_dir`. `TrackerGroup` fans out to a list behind the same surface. Each backend lives
 **one-per-file** and imports its library **lazily inside its methods** via
-`marainer._imports.require(module, extra)`; every backend is **zero-arg constructible**, building its
+`matrainer._imports.require(module, extra)`; every backend is **zero-arg constructible**, building its
 native handle on first `.experiment` access. The Tracker is the whole abstraction — no wrapper layer
 sits over it (an earlier `as_tracker` / `_LoggerTrackerView` machinery was removed as redundant).
 
 **Consequences.**
-- `import marainer` / `import marainer.tracking` imports **none** of torch/mlflow/tensorboard/wandb;
+- `import matrainer` / `import matrainer.tracking` imports **none** of torch/mlflow/tensorboard/wandb;
   a `tests/test_light_import.py` pins that contract. A missing library surfaces as one actionable
-  error (`pip install marainer[mlflow]`), never a bare `ModuleNotFoundError` at import time.
+  error (`pip install matrainer[mlflow]`), never a bare `ModuleNotFoundError` at import time.
 - `CsvTracker` is stdlib-only, so it is the always-available default and the backend every test can
   exercise without mocking.
 - Zero-arg construction is what lets Trackers be `@configurable` and wire from YAML like every other
@@ -87,9 +87,9 @@ sits over it (an earlier `as_tracker` / `_LoggerTrackerView` machinery was remov
 **Example.** Adding a backend is a new file that stays import-safe:
 
 ```python
-# marainer/tracking/newthing_backend.py
-from marainer._imports import require
-from marainer.tracking.base import Tracker
+# matrainer/tracking/newthing_backend.py
+from matrainer._imports import require
+from matrainer.tracking.base import Tracker
 
 class NewThingTracker(Tracker):
     @property
@@ -160,7 +160,7 @@ uses in `tracking/system.py`.
   `!class:` / `!ref:` / `!clone:` tags that only its own resolver can load; embedding that inside the
   manifest would make the manifest unreadable by a generic YAML tool, which defeats the point of
   choosing YAML. So the resolved configuration is written to its own `config/final.yaml` artifact and
-  the manifest references it by path plus digest. This is the same rule `marainer.artifacts` already
+  the manifest references it by path plus digest. This is the same rule `matrainer.artifacts` already
   follows for the label vocabulary — persist it, log it, but never re-hand-roll someone else's
   format. The installed-package freeze (`environment/requirements.txt`) is the second application of
   it: that is pip's format, so it too is a referenced artifact rather than an inlined list.
@@ -250,7 +250,7 @@ no change here.
 **The two identity protocols have deliberately different shapes, and the asymmetry is not drift.**
 A dataset source exposes two plain strings (`dataset_uri` / `dataset_url`) because it reads *one*
 dataset; a concatenation is the exception and has its own plural helper. A model wrapper exposes a
-*list* (`model_refs`, in `marainer.uri`) because it routinely **composes** artifacts into one
+*list* (`model_refs`, in `matrainer.uri`) because it routinely **composes** artifacts into one
 network: a pretrained backbone with a fine-tuned checkpoint loaded over it used two, and a run
 record that named only one of them would be wrong about how the weights were obtained. Each
 reference therefore carries the `role` it played — `pretrained` for weights from outside the run,
@@ -300,7 +300,7 @@ path against the working directory, so a Hub reference would be registered as a 
 does not exist. The projection would therefore be an empty versioned entity holding wrong paths,
 strictly less informative than the comparable hyperparameter section it would sit beside. That is
 also why the model half gates on an addressable scheme rather than passing every URI through.
-See marainer's `AGENTS.md` for the full reasoning.
+See matrainer's `AGENTS.md` for the full reasoning.
 
 ---
 
@@ -314,12 +314,12 @@ See marainer's `AGENTS.md` for the full reasoning.
 **Context.** Backends are a *menu*, not a set. A machine that tracks to a local server has no reason
 to download the client of a hosted service it has no account for, and a continuous-integration runner
 may want every backend installed so every one stays tested. Record 2 solved half of this: lazy
-in-method imports mean the code *tolerates* a missing backend, and a light `import marainer.tracking`
+in-method imports mean the code *tolerates* a missing backend, and a light `import matrainer.tracking`
 pulls in none of them. But nothing decides what a given machine *installs*, so in practice the
 answer is "the `[all]` extra, or nothing" — the same gap the framework extras had before the
 workspace gained a framework selection.
 
-A second, subtler limit: `marainer/tracking/__init__.py` imports each backend module by name and
+A second, subtler limit: `matrainer/tracking/__init__.py` imports each backend module by name and
 lists each class in `__all__`. That is fine for four, but it means every new backend edits a shared
 file, and a backend shipped by a *different distribution* can never appear there at all.
 
@@ -327,7 +327,7 @@ file, and a backend shipped by a *different distribution* can never appear there
 
 1. **Tolerate** (ships today, unchanged) — every backend imports its library lazily inside its
    methods through `require(module, extra)`, so a missing library is one actionable
-   `pip install marainer[<extra>]` error and never an import-time failure.
+   `pip install matrainer[<extra>]` error and never an import-time failure.
 2. **Declare** — a project declares which of its extras are tracker backends in its own
    `pyproject.toml`, in a table *sibling* to the framework declaration it already carries:
    `[tool.aisland] trackers = [...]`. Sibling rather than an addition to `frameworks`, because the
@@ -339,7 +339,7 @@ file, and a backend shipped by a *different distribution* can never appear there
    generated CI; machine layer never reaching a tracked file).
 
 Backend *discovery* is by entry point (`confluid.configurables`), so a backend shipped by another
-distribution is discoverable with no change to this package; and `marainer.tracking` exposes its own
+distribution is discoverable with no change to this package; and `matrainer.tracking` exposes its own
 backends through a module-level `__getattr__` (PEP 562) rather than a fixed import list, so adding
 one does not touch an existing file.
 
@@ -372,9 +372,9 @@ trackers   = ["mlflow", "tensorboard", "aim"]  # where this machine's results go
 and a new backend is a single self-contained file, discovered without editing anything:
 
 ```python
-# marainer/tracking/aim_backend.py
-from marainer._imports import require
-from marainer.tracking.base import Tracker
+# matrainer/tracking/aim_backend.py
+from matrainer._imports import require
+from matrainer.tracking.base import Tracker
 
 class AimTracker(Tracker):
     @property
@@ -394,35 +394,35 @@ hand-maintained backend registry, or fold the backend names into the framework s
 ## 5. A helper's home names its dependencies, not its first consumer (2026-08-01)
 
 **Context.** `build_metric_collection` / `coerce_metric_value` / `scalar_metrics` /
-`MetricPreset` lived in `marainer/lightning/metrics.py` from the day they were
+`MetricPreset` lived in `matrainer/lightning/metrics.py` from the day they were
 written, because a Lightning runnable was the only thing that called them. None of
 them imports `pytorch_lightning` — they use confluid, torch and torchmetrics and
 nothing else.
 
 That stayed harmless until a consumer arrived that trains on plain torch with no
-`Trainer` at all. `from marainer.lightning.metrics import build_metric_collection`
-imports the parent package first, and `marainer/lightning/__init__.py` opens with
+`Trainer` at all. `from matrainer.lightning.metrics import build_metric_collection`
+imports the parent package first, and `matrainer/lightning/__init__.py` opens with
 `require("pytorch_lightning", "lightning")` — so a deliberately Lightning-free
 backend could not reach a Lightning-free helper. Measured: after
-`import marainer.lightning.metrics`, `pytorch_lightning` is in `sys.modules`.
+`import matrainer.lightning.metrics`, `pytorch_lightning` is in `sys.modules`.
 
-**Decision.** The module moved to `marainer/torch/metrics.py`, and `torchmetrics`
-moved from the `[lightning]` extra to `[torch]` with it. `marainer.lightning`
+**Decision.** The module moved to `matrainer/torch/metrics.py`, and `torchmetrics`
+moved from the `[lightning]` extra to `[torch]` with it. `matrainer.lightning`
 re-exports all four names, so its public surface is unchanged.
 
-This is the same correction as `marainer.tensorflow` → `marainer.keras` (record 2's
+This is the same correction as `matrainer.tensorflow` → `matrainer.keras` (record 2's
 rule, "an optional helper's extra names the API it imports, never a distribution
 that happens to bundle it") applied one level up: a subpackage's name is a claim
 about what importing it costs.
 
 **Consequences.**
 
-- `pip install marainer[torch]` now gives a consumer the metric helpers. It also
+- `pip install matrainer[torch]` now gives a consumer the metric helpers. It also
   gives them `torchmetrics`, which is a real addition to that extra — accepted,
   because a torch consumer computing no metrics is not the case worth optimising.
 - Every existing import keeps working. `raidar/detector.py` does
-  `from marainer.lightning import scalar_metrics` and was not touched.
-- `marainer.torch` grows for the first time since its 2026-07-29 emptying. The rule
+  `from matrainer.lightning import scalar_metrics` and was not touched.
+- `matrainer.torch` grows for the first time since its 2026-07-29 emptying. The rule
   that emptied it still holds and this does not bend it: those helpers left because
   they were about the DATA (recordstream's business); these arrive because they are
   about torchmetrics, which is torch's.
@@ -430,8 +430,8 @@ about what importing it costs.
 **Example.**
 
 ```python
-from marainer.torch import build_metric_collection, scalar_metrics   # no Lightning
-from marainer.lightning import scalar_metrics                        # same object, still works
+from matrainer.torch import build_metric_collection, scalar_metrics   # no Lightning
+from matrainer.lightning import scalar_metrics                        # same object, still works
 ```
 
 **What you may change.** Move a helper whenever its home over-states its

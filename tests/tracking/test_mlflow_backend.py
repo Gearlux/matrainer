@@ -7,7 +7,7 @@ from typing import Any, List
 
 import pytest
 
-from marainer.tracking.mlflow_backend import MlflowTracker
+from matrainer.tracking.mlflow_backend import MlflowTracker
 
 #: The standard tag NAMES, verified against the installed MLflow in
 #: ``test_the_standard_tag_names_match_the_installed_mlflow`` — so the fakes here cannot
@@ -149,11 +149,11 @@ def test_import_error_names_the_extra(monkeypatch: pytest.MonkeyPatch) -> None:
     """When mlflow is unimportable, experiment access raises with the pip hint."""
 
     def fake_require(module: str, extra: str, feature: str = "") -> Any:
-        raise ImportError(f"{feature} requires the '{module}' package. Install with: pip install marainer[{extra}]")
+        raise ImportError(f"{feature} requires the '{module}' package. Install with: pip install matrainer[{extra}]")
 
-    monkeypatch.setattr("marainer.tracking.mlflow_backend.require", fake_require)
+    monkeypatch.setattr("matrainer.tracking.mlflow_backend.require", fake_require)
     t = MlflowTracker(log_system_metrics=False)
-    with pytest.raises(ImportError, match=r"pip install marainer\[mlflow\]"):
+    with pytest.raises(ImportError, match=r"pip install matrainer\[mlflow\]"):
         _ = t.experiment
 
 
@@ -214,7 +214,7 @@ def test_finalize_terminates_run(fake_mlflow: Any) -> None:
 
 
 def build_manifest(tmp_path: Any) -> Any:
-    from marainer.tracking.manifest import RunManifest
+    from matrainer.tracking.manifest import RunManifest
 
     m = RunManifest(run_dir=tmp_path / "run", handle_interrupts=False)
     m.set("command", {"argv": ["train.py", "-c", "a.yaml"], "cwd": "/w/project"})
@@ -250,7 +250,7 @@ def test_log_manifest_projects_the_standard_source_tags(fake_mlflow: Any, tmp_pa
 
 
 def test_log_manifest_falls_back_to_argv_for_the_source_name(fake_mlflow: Any, tmp_path: Any) -> None:
-    from marainer.tracking.manifest import RunManifest
+    from matrainer.tracking.manifest import RunManifest
 
     m = RunManifest(run_dir=tmp_path / "run", handle_interrupts=False)
     m.set("command", {"argv": ["train.py"], "cwd": "/w"})
@@ -261,7 +261,7 @@ def test_log_manifest_falls_back_to_argv_for_the_source_name(fake_mlflow: Any, t
 
 def test_log_manifest_omits_source_tags_it_has_no_value_for(fake_mlflow: Any, tmp_path: Any) -> None:
     """A wheel-installed repo record has a commit and nothing else; don't invent the rest."""
-    from marainer.tracking.manifest import RunManifest
+    from matrainer.tracking.manifest import RunManifest
 
     m = RunManifest(run_dir=tmp_path / "run", handle_interrupts=False)
     m.add("code", {"name": "lib", "path": "/w/lib", "commit": "aaa"})
@@ -289,7 +289,7 @@ def test_log_manifest_projects_datasets_as_inputs(fake_mlflow: Any, tmp_path: An
 
 
 def test_a_recorded_digest_is_used_verbatim(fake_mlflow: Any, tmp_path: Any) -> None:
-    from marainer.tracking.manifest import RunManifest
+    from matrainer.tracking.manifest import RunManifest
 
     m = RunManifest(run_dir=tmp_path / "run", handle_interrupts=False)
     m.record_dataset(kind="local", name="d", digest="0123456789abcdef0123")
@@ -299,7 +299,7 @@ def test_a_recorded_digest_is_used_verbatim(fake_mlflow: Any, tmp_path: Any) -> 
 
 def test_the_reference_digest_is_stable_and_discriminating(tmp_path: Any) -> None:
     """Two runs on the same reference must collide; two on different ones must not."""
-    from marainer.tracking.mlflow_backend import _reference_digest
+    from matrainer.tracking.mlflow_backend import _reference_digest
 
     a = {"kind": "hf", "name": "org/set", "split": "train"}
     assert _reference_digest(a) == _reference_digest(dict(reversed(list(a.items()))))
@@ -316,7 +316,7 @@ def test_log_manifest_still_does_the_generic_projection(fake_mlflow: Any, tmp_pa
 
 
 def test_log_manifest_without_datasets_logs_no_inputs(fake_mlflow: Any, tmp_path: Any) -> None:
-    from marainer.tracking.manifest import RunManifest
+    from matrainer.tracking.manifest import RunManifest
 
     t = MlflowTracker(run_name="r", log_system_metrics=False)
     t.log_manifest(RunManifest(run_dir=tmp_path / "run", handle_interrupts=False))
@@ -367,7 +367,7 @@ def test_projection_lands_in_a_real_mlflow_store(tmp_path: Any) -> None:
 
 
 def _manifest_with_models(tmp_path: Any) -> Any:
-    from marainer.tracking.manifest import RunManifest
+    from matrainer.tracking.manifest import RunManifest
 
     m = RunManifest(run_dir=tmp_path / "run", handle_interrupts=False)
     m.record_model(
@@ -417,7 +417,7 @@ def test_a_second_log_manifest_does_not_duplicate_the_models(fake_mlflow: Any, t
 
 
 def test_a_manifest_with_no_models_logs_nothing(fake_mlflow: Any, tmp_path: Any) -> None:
-    from marainer.tracking.manifest import RunManifest
+    from matrainer.tracking.manifest import RunManifest
 
     MlflowTracker(log_system_metrics=False).log_manifest(RunManifest(run_dir=tmp_path / "run", handle_interrupts=False))
     assert fake_mlflow.instances[0].logged_models == []

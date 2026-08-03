@@ -11,7 +11,7 @@ from __future__ import annotations
 
 import pytest
 
-from marainer.metric_slots import merge_metric_specs, union_metric_specs
+from matrainer.metric_slots import merge_metric_specs, union_metric_specs
 
 
 # ---------------------------------------------------------------------------
@@ -80,7 +80,7 @@ def test_the_union_of_mappings_merges_by_key() -> None:
 # the property that lets the framework-free backends use it
 # ---------------------------------------------------------------------------
 def test_the_module_imports_nothing_but_the_standard_library() -> None:
-    """The reason it sits at the top level rather than under ``marainer.torch``.
+    """The reason it sits at the top level rather than under ``matrainer.torch``.
 
     A JAX / MLX / Keras backend must be able to apply the rule without a torch import appearing
     in its dependency graph, and those backends' own suites AST-scan for exactly that. Checked
@@ -91,9 +91,9 @@ def test_the_module_imports_nothing_but_the_standard_library() -> None:
     import pathlib
     import sys
 
-    import marainer.metric_slots
+    import matrainer.metric_slots
 
-    source = pathlib.Path(str(marainer.metric_slots.__file__)).read_text()
+    source = pathlib.Path(str(matrainer.metric_slots.__file__)).read_text()
     imported = {
         (node.module or "").split(".")[0] for node in ast.walk(ast.parse(source)) if isinstance(node, ast.ImportFrom)
     } | {

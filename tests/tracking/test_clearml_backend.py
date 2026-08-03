@@ -7,7 +7,7 @@ from typing import Any, Dict, List, Mapping, Optional
 
 import pytest
 
-from marainer.tracking.clearml_backend import HPARAMS_SECTION, ClearMLTracker
+from matrainer.tracking.clearml_backend import HPARAMS_SECTION, ClearMLTracker
 
 
 class _FakeLogger:
@@ -42,7 +42,7 @@ class _FakeTask:
         self.closed = False
         _FakeTask.instances.append(self)
 
-    # -- the classmethod surface marainer uses -------------------------------------------
+    # -- the classmethod surface matrainer uses -------------------------------------------
     @classmethod
     def init(cls, **kw: Any) -> "_FakeTask":
         return cls(**kw)
@@ -116,10 +116,10 @@ def fake_clearml(monkeypatch: pytest.MonkeyPatch) -> Any:
 
 def test_import_error_names_the_extra(monkeypatch: pytest.MonkeyPatch) -> None:
     def fake_require(module: str, extra: str, feature: str = "") -> Any:
-        raise ImportError(f"{feature} requires the '{module}' package. Install with: pip install marainer[{extra}]")
+        raise ImportError(f"{feature} requires the '{module}' package. Install with: pip install matrainer[{extra}]")
 
-    monkeypatch.setattr("marainer.tracking.clearml_backend.require", fake_require)
-    with pytest.raises(ImportError, match=r"pip install marainer\[clearml\]"):
+    monkeypatch.setattr("matrainer.tracking.clearml_backend.require", fake_require)
+    with pytest.raises(ImportError, match=r"pip install matrainer\[clearml\]"):
         _ = ClearMLTracker().experiment
 
 
@@ -257,7 +257,7 @@ def test_log_dir_is_none(fake_clearml: Any) -> None:
 
 
 def build_manifest(tmp_path: Path) -> Any:
-    from marainer.tracking.manifest import RunManifest
+    from matrainer.tracking.manifest import RunManifest
 
     m = RunManifest(run_dir=tmp_path / "run", handle_interrupts=False)
     m.set("params", {"lr": 0.1})
@@ -284,7 +284,7 @@ def test_log_manifest_connects_datasets_and_models_as_sections(fake_clearml: Any
 
 
 def test_log_manifest_skips_empty_sections(fake_clearml: Any, tmp_path: Path) -> None:
-    from marainer.tracking.manifest import RunManifest
+    from matrainer.tracking.manifest import RunManifest
 
     t = ClearMLTracker()
     t.log_manifest(RunManifest(run_dir=tmp_path / "run", handle_interrupts=False))
@@ -323,7 +323,7 @@ def test_round_trip_against_real_clearml_offline(tmp_path: Path, monkeypatch: py
     cfg = tmp_path / "train.yaml"
     cfg.write_text("lr: 0.1")
 
-    tracker = ClearMLTracker(experiment_name="marainer-itest", run_name="r", offline=True, log_system_metrics=False)
+    tracker = ClearMLTracker(experiment_name="matrainer-itest", run_name="r", offline=True, log_system_metrics=False)
     tracker.log_hyperparams({"lr": 0.1})
     tracker.log_hyperparams({"epochs": 5})  # merged, not replaced
     tracker.log_metrics({"train/loss": 0.5}, step=0)
@@ -338,7 +338,7 @@ def test_round_trip_against_real_clearml_offline(tmp_path: Path, monkeypatch: py
 
 
 def _manifest_with_models(tmp_path: Any) -> Any:
-    from marainer.tracking.manifest import RunManifest
+    from matrainer.tracking.manifest import RunManifest
 
     m = RunManifest(run_dir=tmp_path / "run", handle_interrupts=False)
     m.add(
@@ -400,7 +400,7 @@ def test_offline_skips_registration_but_keeps_the_comparable_section(fake_clearm
 
 
 def test_a_manifest_with_no_models_registers_nothing(fake_clearml: Any, tmp_path: Any) -> None:
-    from marainer.tracking.manifest import RunManifest
+    from matrainer.tracking.manifest import RunManifest
 
     ClearMLTracker(log_system_metrics=False).log_manifest(
         RunManifest(run_dir=tmp_path / "run", handle_interrupts=False)
@@ -429,7 +429,7 @@ def test_the_weights_url_is_expanded_so_it_can_actually_resolve(
     needs the bytes on this disk. Without the expansion ClearML would be handed a path containing
     a literal `$MODEL_ROOT`, which exists nowhere — the same defect the W&B reference had.
     """
-    from marainer.tracking.manifest import RunManifest
+    from matrainer.tracking.manifest import RunManifest
 
     weights = tmp_path / "last.ckpt"
     weights.write_text("w")
@@ -459,7 +459,7 @@ def test_a_zoo_uri_is_not_registered_as_an_input_model(fake_clearml: Any, tmp_pa
     The model is not lost. It stays in the `models` hyperparameter section, which is exactly why
     that section is kept beside this registration rather than replaced by it.
     """
-    from marainer.tracking.manifest import RunManifest
+    from matrainer.tracking.manifest import RunManifest
 
     weights = tmp_path / "last.ckpt"
     weights.write_text("w")

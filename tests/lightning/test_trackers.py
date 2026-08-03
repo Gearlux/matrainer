@@ -2,8 +2,8 @@
 
 from typing import Any, List, Mapping, Optional
 
-from marainer.lightning.trackers import TrackerLogger
-from marainer.tracking.base import Tracker
+from matrainer.lightning.trackers import TrackerLogger
+from matrainer.tracking.base import Tracker
 
 
 class _RecordingTracker(Tracker):

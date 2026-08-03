@@ -1,7 +1,7 @@
 """The Keras tracking helper — and the import ordering it must not get wrong.
 
 Keras 3 reads ``KERAS_BACKEND`` at IMPORT time and defaults to ``tensorflow``, which
-``marainer[keras]`` deliberately does not install. A bare ``import keras`` here therefore died
+``matrainer[keras]`` deliberately does not install. A bare ``import keras`` here therefore died
 with ``ModuleNotFoundError: No module named 'tensorflow'`` whenever this callback was the FIRST
 keras import in a process — and ``require`` reported it as *"the 'keras' package is not
 installed"*, advice that fixes nothing because keras WAS installed. The fix routes the import
@@ -19,13 +19,13 @@ import textwrap
 
 import pytest
 
-from marainer._imports import require
+from matrainer._imports import require
 
 keras = pytest.importorskip("recordstream.keras").keras
 
 _BUILD_WITH_NO_BACKEND_CHOSEN = textwrap.dedent(
     """
-    from marainer.keras import keras_tracking_callback
+    from matrainer.keras import keras_tracking_callback
 
     callback = keras_tracking_callback([])
     import keras
@@ -68,7 +68,7 @@ def test_a_missing_keras_still_names_keras_not_the_shim() -> None:
         require("keras", "keras", feature="keras_tracking_callback", via="recordstream.keras_does_not_exist")
 
     message = str(excinfo.value)
-    assert "'keras'" in message and "marainer[keras]" in message
+    assert "'keras'" in message and "matrainer[keras]" in message
     assert "recordstream" not in message
 
 
@@ -84,12 +84,12 @@ def test_require_without_via_is_unchanged() -> None:
     """Every other caller (mlflow / wandb / lightning) must be untouched by the new parameter."""
     assert require("os", "keras").__name__ == "os"
 
-    with pytest.raises(ImportError, match=r"marainer\[mlflow\]"):
+    with pytest.raises(ImportError, match=r"matrainer\[mlflow\]"):
         require("no_such_module_xyz", "mlflow")
 
 
 def test_the_callback_is_a_keras_callback() -> None:
-    from marainer.keras import keras_tracking_callback
+    from matrainer.keras import keras_tracking_callback
 
     assert isinstance(keras_tracking_callback([]), keras.callbacks.Callback)
 

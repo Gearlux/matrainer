@@ -11,7 +11,12 @@ from typing import Any, List
 
 import pytest
 
-from marainer.tracking import per_class_vectors, render_matrix_as_table, render_vector_as_figure, render_vector_as_table
+from matrainer.tracking import (
+    per_class_vectors,
+    render_matrix_as_table,
+    render_vector_as_figure,
+    render_vector_as_table,
+)
 
 CLASSES = ["pet", "background", "boundary"]
 IOU = [0.81, 0.12, 0.55]

@@ -1,8 +1,8 @@
-"""Tests for marainer.run_names — the random slug plus the task→prefix mapping."""
+"""Tests for matrainer.run_names — the random slug plus the task→prefix mapping."""
 
 import pytest
 
-from marainer.run_names import generate_run_name, run_prefix
+from matrainer.run_names import generate_run_name, run_prefix
 
 
 def test_bare_slug_is_two_words() -> None:

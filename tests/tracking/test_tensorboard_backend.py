@@ -7,7 +7,7 @@ from typing import Any, List
 
 import pytest
 
-from marainer.tracking.tensorboard_backend import TensorBoardTracker
+from matrainer.tracking.tensorboard_backend import TensorBoardTracker
 
 
 class _FakeWriter:
@@ -49,11 +49,11 @@ def fake_tb(monkeypatch: pytest.MonkeyPatch) -> Any:
 
 def test_import_error_names_the_extra(monkeypatch: pytest.MonkeyPatch) -> None:
     def fake_require(module: str, extra: str, feature: str = "") -> Any:
-        raise ImportError(f"pip install marainer[{extra}]")
+        raise ImportError(f"pip install matrainer[{extra}]")
 
-    monkeypatch.setattr("marainer.tracking.tensorboard_backend.require", fake_require)
+    monkeypatch.setattr("matrainer.tracking.tensorboard_backend.require", fake_require)
     t = TensorBoardTracker()
-    with pytest.raises(ImportError, match=r"pip install marainer\[tensorboard\]"):
+    with pytest.raises(ImportError, match=r"pip install matrainer\[tensorboard\]"):
         _ = t.experiment
 
 
@@ -91,7 +91,7 @@ def test_log_dir_reported_before_writer(tmp_path: Path) -> None:
 
 def test_log_manifest_renders_the_manifest_into_the_text_tab(fake_tb: Any, tmp_path: Path) -> None:
     """TensorBoard has no artifact store — `add_text` is the only slot the UI will show."""
-    from marainer.tracking.manifest import RunManifest
+    from matrainer.tracking.manifest import RunManifest
 
     m = RunManifest(run_dir=tmp_path / "manifest-home", handle_interrupts=False)
     m.set("params", {"lr": 0.1})
@@ -118,7 +118,7 @@ def test_log_text_goes_to_the_text_tab_with_its_step(fake_tb: Any, tmp_path: Pat
 
 def test_log_manifest_still_copies_the_files_and_logs_hparams(fake_tb: Any, tmp_path: Path) -> None:
     """Native slots are ADDITIONAL — the artifact copy must not be replaced by add_text."""
-    from marainer.tracking.manifest import RunManifest
+    from matrainer.tracking.manifest import RunManifest
 
     m = RunManifest(run_dir=tmp_path / "manifest-home", handle_interrupts=False)
     m.set("params", {"lr": 0.1})

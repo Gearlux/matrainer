@@ -4,7 +4,7 @@ import csv
 import json
 from pathlib import Path
 
-from marainer.tracking.csv_backend import CsvTracker
+from matrainer.tracking.csv_backend import CsvTracker
 
 
 def _tracker(tmp_path: Path) -> CsvTracker:

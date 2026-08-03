@@ -5,14 +5,14 @@ from unittest.mock import MagicMock
 
 from pytorch_lightning.callbacks import ModelCheckpoint
 
-from marainer.checkpoints import SaveBest, SaveEveryEpoch, SaveLast
-from marainer.lightning.callbacks import (
+from matrainer.checkpoints import SaveBest, SaveEveryEpoch, SaveLast
+from matrainer.lightning.callbacks import (
     TrackingCallback,
     activate_for_lightning,
     build_checkpoint_callbacks,
     has_mlflow_logger,
 )
-from marainer.tracking.base import Tracker
+from matrainer.tracking.base import Tracker
 
 
 class _RecordingTracker(Tracker):
@@ -36,7 +36,7 @@ class _RecordingTracker(Tracker):
 
 
 def test_tracking_callback_logs_context_once(monkeypatch: Any) -> None:
-    from marainer.tracking import provenance
+    from matrainer.tracking import provenance
 
     monkeypatch.setattr(provenance, "get_git_commit_hash", lambda: "abc")
     monkeypatch.setattr(provenance, "config_script_path", lambda: None)
@@ -55,7 +55,7 @@ def test_tracking_callback_logs_context_once(monkeypatch: Any) -> None:
 
 def _quiet_provenance(monkeypatch: Any, tmp_path: Any) -> None:
     """Neutralise the ambient run context so a test sees only what it wired."""
-    from marainer.tracking import provenance
+    from matrainer.tracking import provenance
 
     monkeypatch.chdir(tmp_path)
     monkeypatch.setattr(provenance, "get_git_commit_hash", lambda: None)

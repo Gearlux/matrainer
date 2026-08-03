@@ -10,7 +10,7 @@ from typing import Any, List
 
 import pytest
 
-from marainer.tracking import render_matrix_as_figure, render_matrix_as_table
+from matrainer.tracking import render_matrix_as_figure, render_matrix_as_table
 
 
 class _FakeTensor:

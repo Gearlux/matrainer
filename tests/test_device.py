@@ -1,4 +1,4 @@
-"""Tests for :func:`marainer.torch.resolve_device` — the ``"auto"`` accelerator choice.
+"""Tests for :func:`matrainer.torch.resolve_device` — the ``"auto"`` accelerator choice.
 
 The point of the helper is that an EXPLICIT choice is honoured verbatim (so a
 CPU-vs-GPU benchmark cannot silently fall back) while ``"auto"`` walks one fixed
@@ -11,7 +11,7 @@ from typing import Any
 import pytest
 import torch
 
-from marainer.torch import Device, resolve_device
+from matrainer.torch import Device, resolve_device
 
 
 @pytest.fixture

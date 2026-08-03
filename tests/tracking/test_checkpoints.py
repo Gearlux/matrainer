@@ -1,6 +1,6 @@
 """Tests for the framework-neutral checkpoint policies."""
 
-from marainer.checkpoints import CheckpointPolicy, SaveBest, SaveEveryEpoch, SaveLast
+from matrainer.checkpoints import CheckpointPolicy, SaveBest, SaveEveryEpoch, SaveLast
 
 
 def test_all_zero_arg_constructible() -> None:
