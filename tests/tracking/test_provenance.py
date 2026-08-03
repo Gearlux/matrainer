@@ -250,7 +250,9 @@ def test_log_run_context_with_nothing_to_report(monkeypatch: pytest.MonkeyPatch,
     t = RecordingTracker()
     provenance.log_run_context([t])
     assert t.hparams == {} and t.set_tag_calls == {}
-    assert [d for _, d in t.artifacts] == ["", ""]  # only the two manifest files
+    # The two manifest files plus the package freeze — which is unconditional provenance:
+    # what is installed is a fact about the run even when nothing else could be gathered.
+    assert [d for _, d in t.artifacts] == ["", "", "environment"]
 
 
 def test_capture_log_file_empty_trackers_is_noop() -> None:
@@ -705,3 +707,518 @@ def test_a_runnable_without_a_task_leaves_it_unset(tmp_path: Path, monkeypatch: 
     monkeypatch.chdir(tmp_path)
     manifest = provenance.log_run_context([RecordingTracker()], capture_code=False)
     assert manifest is not None and manifest.section("run")["task"] is None
+
+
+# --- the pasteable command line ---------------------------------------------------------------
+
+
+def set_argv(monkeypatch: pytest.MonkeyPatch, argv: List[str], spec_name: Optional[str] = None) -> None:
+    """Stand a launch shape up: `sys.argv` plus `__main__.__spec__`, which is what tells them apart."""
+    monkeypatch.setattr(sys, "argv", argv)
+    main = types.ModuleType("__main__")
+    main.__spec__ = types.SimpleNamespace(name=spec_name) if spec_name else None  # type: ignore[assignment]
+    monkeypatch.setitem(sys.modules, "__main__", main)
+
+
+def test_a_module_launch_is_reconstructed_as_dash_m(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    """The case `argv` alone cannot express: argv[0] is the module's FILE, which does not re-run."""
+    monkeypatch.chdir(tmp_path)
+    set_argv(monkeypatch, ["/site-packages/recordstream/cli.py", "run", "cfg.yaml"], spec_name="recordstream.cli")
+    line = provenance.command_line()
+    assert line == f"cd {tmp_path} && {sys.executable} -m recordstream.cli run cfg.yaml"
+
+
+def test_a_package_launch_drops_the_dunder_main_suffix(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    """`python -m pkg` reports `pkg.__main__`, but `python -m pkg.__main__` is not how anyone types it."""
+    monkeypatch.chdir(tmp_path)
+    set_argv(monkeypatch, ["/site-packages/pkg/__main__.py", "-v"], spec_name="pkg.__main__")
+    assert provenance.command_line() == f"cd {tmp_path} && {sys.executable} -m pkg -v"
+
+
+def test_a_console_script_pastes_back_as_itself(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    """It carries its own `#!` interpreter, so putting one in front of it would be wrong."""
+    monkeypatch.chdir(tmp_path)
+    script = tmp_path / "sonair"
+    script.write_text("#!/usr/bin/env python\n")
+    script.chmod(0o755)
+    set_argv(monkeypatch, [str(script), "train", "cfg.yaml"])
+    assert provenance.command_line() == f"cd {tmp_path} && {script} train cfg.yaml"
+
+
+def test_a_plain_script_gets_the_interpreter_in_front(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    monkeypatch.chdir(tmp_path)
+    set_argv(monkeypatch, ["train.py", "--lr", "0.1"])
+    assert provenance.command_line() == f"cd {tmp_path} && {sys.executable} train.py --lr 0.1"
+
+
+def test_an_executable_dot_py_script_still_gets_the_interpreter(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """A `.py` suffix wins over the executable bit: `python x.py` is how it was actually launched."""
+    monkeypatch.chdir(tmp_path)
+    script = tmp_path / "train.py"
+    script.write_text("print(1)\n")
+    script.chmod(0o755)
+    set_argv(monkeypatch, [str(script)])
+    assert provenance.command_line() == f"cd {tmp_path} && {sys.executable} {script}"
+
+
+@pytest.mark.parametrize("argv0", provenance.UNREPRODUCIBLE_ARGV0)
+def test_an_unreproducible_launch_declines_rather_than_guessing(monkeypatch: pytest.MonkeyPatch, argv0: str) -> None:
+    """`python -c` keeps its code out of argv, and a REPL has no command at all."""
+    set_argv(monkeypatch, [argv0, "extra"])
+    assert provenance.command_line() is None
+
+
+def test_an_empty_argv_declines(monkeypatch: pytest.MonkeyPatch) -> None:
+    set_argv(monkeypatch, [])
+    assert provenance.command_line() is None
+
+
+def test_paths_and_arguments_with_spaces_are_quoted(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    """The whole point is pasting it; an unquoted space would silently become two arguments."""
+    workdir = tmp_path / "my runs"
+    workdir.mkdir()
+    monkeypatch.chdir(workdir)
+    set_argv(monkeypatch, ["/pkg/cli.py", "run", "my cfg.yaml"], spec_name="pkg.cli")
+    line = provenance.command_line()
+    assert line is not None
+    assert f"cd '{Path.cwd()}'" in line and "'my cfg.yaml'" in line
+
+
+def test_the_manifest_carries_the_pasteable_line_beside_the_raw_argv(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """Both stay: `argv` is what `primary_code` parses, `line` is what a person re-runs."""
+    from marainer.tracking.manifest import RunManifest
+
+    monkeypatch.chdir(tmp_path)
+    set_argv(monkeypatch, ["/pkg/cli.py", "run"], spec_name="pkg.cli")
+    m = RunManifest(run_dir=tmp_path / "run")
+    m.capture_environment()
+    command = m.section("command")
+    assert command["argv"] == ["/pkg/cli.py", "run"]
+    assert command["line"] == f"cd {tmp_path} && {sys.executable} -m pkg.cli run"
+
+
+def test_the_manifest_omits_the_line_when_there_is_no_honest_one(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    from marainer.tracking.manifest import RunManifest
+
+    set_argv(monkeypatch, ["-c"])
+    m = RunManifest(run_dir=tmp_path / "run")
+    m.capture_environment()
+    assert "line" not in m.section("command")
+
+
+# --- the installed-package freeze --------------------------------------------------------------
+
+
+def fake_run(results: Mapping[str, Any]) -> Any:
+    """A `subprocess.run` stand-in keyed by the program name, so each candidate can be steered."""
+
+    def run(command: List[str], **kwargs: Any) -> Any:
+        key = "uv" if Path(command[0]).name == "uv" else "pip"
+        outcome = results[key]
+        if isinstance(outcome, Exception):
+            raise outcome
+        return types.SimpleNamespace(stdout=outcome, returncode=0)
+
+    return run
+
+
+def test_the_freeze_prefers_uv_when_it_is_on_path(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Purely a speed choice, but a load-bearing one: this runs on every tracked run."""
+    monkeypatch.setattr(provenance.shutil, "which", lambda name: "/opt/bin/uv")
+    monkeypatch.setattr(provenance.subprocess, "run", fake_run({"uv": "a==1\nb==2\n", "pip": "wrong==0\n"}))
+    assert provenance.package_freeze() == ("a==1\nb==2\n", "uv")
+
+
+def test_the_freeze_pins_the_environment_rather_than_trusting_the_active_one(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """`--python <executable>` is what makes the answer independent of cwd and of activation."""
+    seen: List[List[str]] = []
+
+    def run(command: List[str], **kwargs: Any) -> Any:
+        seen.append(command)
+        return types.SimpleNamespace(stdout="a==1\n", returncode=0)
+
+    monkeypatch.setattr(provenance.shutil, "which", lambda name: "/opt/bin/uv")
+    monkeypatch.setattr(provenance.subprocess, "run", run)
+    provenance.package_freeze()
+    assert seen[0] == ["/opt/bin/uv", "pip", "freeze", "--python", sys.executable]
+
+
+def test_the_freeze_falls_back_to_pip_without_uv(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(provenance.shutil, "which", lambda name: None)
+    monkeypatch.setattr(provenance.subprocess, "run", fake_run({"pip": "a==1\n"}))
+    assert provenance.package_freeze() == ("a==1\n", "pip")
+
+
+def test_the_freeze_falls_through_to_pip_when_uv_fails(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(provenance.shutil, "which", lambda name: "/opt/bin/uv")
+    failure = subprocess.CalledProcessError(1, "uv")
+    monkeypatch.setattr(provenance.subprocess, "run", fake_run({"uv": failure, "pip": "a==1\n"}))
+    assert provenance.package_freeze() == ("a==1\n", "pip")
+
+
+def test_the_freeze_returns_none_when_no_program_works(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Tracking must never abort a run; an environment that cannot be listed is not fatal."""
+    monkeypatch.setattr(provenance.shutil, "which", lambda name: None)
+    monkeypatch.setattr(provenance.subprocess, "run", fake_run({"pip": OSError("no pip")}))
+    assert provenance.package_freeze() is None
+
+
+def test_a_timeout_is_survived(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(provenance.shutil, "which", lambda name: None)
+    monkeypatch.setattr(provenance.subprocess, "run", fake_run({"pip": subprocess.TimeoutExpired("pip", 1.0)}))
+    assert provenance.package_freeze() is None
+
+
+def test_empty_output_counts_as_no_freeze(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(provenance.shutil, "which", lambda name: None)
+    monkeypatch.setattr(provenance.subprocess, "run", fake_run({"pip": "   \n"}))
+    assert provenance.package_freeze() is None
+
+
+def test_the_real_environment_can_be_frozen() -> None:
+    """No mocks: whichever program this machine has must produce a real requirements list."""
+    result = provenance.package_freeze()
+    assert result is not None
+    text, tool = result
+    assert tool in {"uv", "pip"}
+    assert any("==" in line for line in text.splitlines())
+
+
+# --- datasets identified from the configuration ------------------------------------------------
+
+
+class ToySource:
+    """A source carrying the identity protocol, standing in for a real dataset source."""
+
+    def __init__(self, uri: Optional[str] = None, url: Optional[str] = None) -> None:
+        self.dataset_uri = uri
+        self.dataset_url = url
+
+
+def test_configured_datasets_derives_kind_name_and_split_from_the_uri() -> None:
+    """Nothing here knows what a Hugging Face dataset is — the URI carries all three."""
+    from confluid import configurable
+
+    @configurable
+    class Toy:
+        def __init__(self, train_set: Any = None) -> None:
+            self.train_set = train_set
+
+    source = ToySource("hf://datasets/ylecun/mnist?split=train", "https://huggingface.co/datasets/ylecun/mnist")
+    entries = provenance.configured_datasets(Toy(train_set=source))
+    assert len(entries) == 1
+    assert entries[0]["kind"] == "hf"
+    assert entries[0]["name"] == "ylecun/mnist"
+    assert entries[0]["split"] == "train"
+    assert entries[0]["uri"] == "hf://datasets/ylecun/mnist?split=train"
+    assert entries[0]["url"] == "https://huggingface.co/datasets/ylecun/mnist"
+    assert entries[0]["slot"].endswith("train_set")
+
+
+def test_a_file_uri_keeps_its_absolute_path_as_the_name() -> None:
+    from confluid import configurable
+
+    @configurable
+    class Toy:
+        def __init__(self, train_set: Any = None) -> None:
+            self.train_set = train_set
+
+    entries = provenance.configured_datasets(Toy(train_set=ToySource("file:///data/gert/imagefolder")))
+    assert entries[0] == {
+        "kind": "file",
+        "name": "/data/gert/imagefolder",
+        "uri": "file:///data/gert/imagefolder",
+        "url": None,
+        "split": None,
+        "slot": entries[0]["slot"],
+    }
+
+
+def test_one_dataset_reached_through_a_wrapper_is_recorded_once(tmp_path: Path) -> None:
+    """A trainer's slot wraps the real source; both name the same dataset, so it is ONE entry."""
+    from confluid import configurable
+
+    @configurable
+    class Wrapper:
+        def __init__(self, source: Any = None) -> None:
+            self.source = source
+
+    @configurable
+    class Toy:
+        def __init__(self, train_set: Any = None) -> None:
+            self.train_set = train_set
+
+    inner = ToySource("hf://datasets/a/b?split=train")
+    entries = provenance.configured_datasets(Toy(train_set=Wrapper(source=inner)))
+    assert [e["uri"] for e in entries] == ["hf://datasets/a/b?split=train"]
+    # The OUTER slot is kept — it is the one a reader of the config recognises.
+    assert entries[0]["slot"].endswith("train_set")
+
+
+def test_several_distinct_datasets_are_all_recorded() -> None:
+    from confluid import configurable
+
+    @configurable
+    class Toy:
+        def __init__(self, train_set: Any = None, test_set: Any = None) -> None:
+            self.train_set = train_set
+            self.test_set = test_set
+
+    toy = Toy(train_set=ToySource("hf://datasets/a/b?split=train"), test_set=ToySource("hf://datasets/a/b?split=test"))
+    assert len(provenance.configured_datasets(toy)) == 2
+
+
+def test_a_graph_with_no_identifiable_dataset_reports_nothing() -> None:
+    from confluid import configurable
+
+    @configurable
+    class Toy:
+        def __init__(self, lr: float = 0.1) -> None:
+            self.lr = lr
+
+    assert provenance.configured_datasets(Toy()) == []
+
+
+def test_configured_datasets_never_raises_on_an_unwalkable_object() -> None:
+    assert provenance.configured_datasets(object()) == []
+    assert provenance.configured_datasets(None) == []
+
+
+def test_log_run_context_records_the_datasets_without_the_consumer_asking(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The whole point of doing it here: ten consumers get it with no call of their own."""
+    from confluid import configurable
+
+    @configurable
+    class Toy:
+        def __init__(self, train_set: Any = None) -> None:
+            self.train_set = train_set
+
+    monkeypatch.chdir(tmp_path)
+    source = ToySource("hf://datasets/ylecun/mnist?split=train")
+    manifest = provenance.log_run_context([RecordingTracker()], runnable=Toy(train_set=source), capture_code=False)
+    assert manifest is not None
+    assert [d["uri"] for d in manifest.section("datasets")] == ["hf://datasets/ylecun/mnist?split=train"]
+
+
+# --- models identified from the configuration ---------------------------------------------------
+
+
+class ToyModel:
+    """A model wrapper carrying the identity protocol, standing in for a real one."""
+
+    def __init__(self, *refs: Any) -> None:
+        from marainer.uri import ModelRef
+
+        self.model_refs = [r if isinstance(r, ModelRef) else ModelRef(*r) for r in refs]
+
+
+def _model_toy() -> Any:
+    from confluid import configurable
+
+    @configurable
+    class ModelToy:
+        def __init__(self, model: Any = None, teacher: Any = None) -> None:
+            self.model = model
+            self.teacher = teacher
+
+    return ModelToy
+
+
+def test_configured_models_derives_kind_and_name_from_the_uri() -> None:
+    """Nothing here knows what a timm model is — the URI carries the classification."""
+    from marainer.uri import hf_model_ref
+
+    toy = _model_toy()(model=ToyModel(hf_model_ref("timm/resnet50.a1_in1k")))
+    entries = provenance.configured_models(toy)
+    assert len(entries) == 1
+    assert entries[0]["kind"] == "hf"
+    assert entries[0]["name"] == "timm/resnet50.a1_in1k"
+    assert entries[0]["uri"] == "hf://models/timm/resnet50.a1_in1k"
+    assert entries[0]["url"] == "https://huggingface.co/timm/resnet50.a1_in1k"
+    assert entries[0]["role"] == "pretrained"
+    assert entries[0]["slot"] == "model"
+
+
+def test_one_wrapper_may_contribute_several_entries_with_distinct_roles(tmp_path: Path) -> None:
+    """The reason the model protocol is plural: a fine-tuned backbone loaded TWO artifacts."""
+    from marainer.uri import file_model_ref, hf_model_ref
+
+    checkpoint = tmp_path / "last.ckpt"
+    toy = _model_toy()(model=ToyModel(hf_model_ref("timm/resnet50.a1_in1k"), file_model_ref(checkpoint)))
+    entries = provenance.configured_models(toy)
+    assert [e["role"] for e in entries] == ["pretrained", "checkpoint"]
+    assert [e["kind"] for e in entries] == ["hf", "file"]
+    # A file URI keeps its ABSOLUTE path as the name; an `hf://` one drops the authority separator.
+    assert entries[1]["name"] == str(checkpoint.resolve())
+    assert entries[1]["url"] is None
+
+
+def test_several_models_in_one_graph_are_all_recorded() -> None:
+    """A pipeline composing models is the same shape one level up."""
+    from marainer.uri import hf_model_ref
+
+    toy = _model_toy()(model=ToyModel(hf_model_ref("org/student")), teacher=ToyModel(hf_model_ref("org/teacher")))
+    assert sorted(e["name"] for e in provenance.configured_models(toy)) == ["org/student", "org/teacher"]
+
+
+def test_the_same_artifact_reached_twice_is_recorded_once() -> None:
+    from marainer.uri import hf_model_ref
+
+    shared = ToyModel(hf_model_ref("org/net"))
+    toy = _model_toy()(model=shared, teacher=ToyModel(hf_model_ref("org/net")))
+    assert len(provenance.configured_models(toy)) == 1
+
+
+def test_a_model_that_loaded_nothing_external_reports_nothing() -> None:
+    """Random weights referenced no artifact; the architecture is configuration, recorded there."""
+    assert provenance.configured_models(_model_toy()(model=ToyModel())) == []
+
+
+def test_configured_models_never_raises_on_an_unwalkable_object() -> None:
+    assert provenance.configured_models(object()) == []
+    assert provenance.configured_models(None) == []
+
+
+def test_log_run_context_records_the_models_without_the_consumer_asking(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from marainer.uri import hf_model_ref
+
+    monkeypatch.chdir(tmp_path)
+    toy = _model_toy()(model=ToyModel(hf_model_ref("timm/resnet50.a1_in1k")))
+    manifest = provenance.log_run_context([RecordingTracker()], runnable=toy, capture_code=False)
+    assert manifest is not None
+    assert [m["uri"] for m in manifest.section("models")] == ["hf://models/timm/resnet50.a1_in1k"]
+
+
+# --- portable paths ------------------------------------------------------------------------------
+
+
+@pytest.fixture
+def roots(monkeypatch: pytest.MonkeyPatch) -> dict:
+    """Configure the three roots, with MODEL_ROOT deliberately NESTED inside DATA_ROOT."""
+    values = {"PROJECT_ROOT": "/w/taidal", "DATA_ROOT": "/store", "MODEL_ROOT": "/store/models"}
+    for name, value in values.items():
+        monkeypatch.setenv(name, value)
+    return values
+
+
+def test_no_configured_root_means_no_contraction(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Opt-in by configuration: a machine that sets none sees absolute paths, as before."""
+    for name in provenance.PORTABLE_ROOT_VARS:
+        monkeypatch.delenv(name, raising=False)
+    assert provenance.configured_roots() == []
+    assert provenance.contract_roots("/store/mnist") == "/store/mnist"
+
+
+def test_an_empty_variable_is_not_a_root(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("DATA_ROOT", "   ")
+    assert [name for name, _ in provenance.configured_roots()] == []
+
+
+@pytest.mark.parametrize(
+    "original,expected",
+    [
+        ("/w/taidal/sonair/cfg.yaml", "$PROJECT_ROOT/sonair/cfg.yaml"),
+        ("/store/mnist/train", "$DATA_ROOT/mnist/train"),
+        ("file:///store/mnist", "file://$DATA_ROOT/mnist"),
+        ("/store", "$DATA_ROOT"),  # the root itself, with nothing after it
+    ],
+)
+def test_a_path_under_a_root_is_recorded_against_that_root(roots: dict, original: str, expected: str) -> None:
+    assert provenance.contract_roots(original) == expected
+
+
+def test_the_most_specific_root_wins(roots: dict) -> None:
+    """MODEL_ROOT sits inside DATA_ROOT; a model path must not contract to the outer one."""
+    assert provenance.contract_roots("/store/models/last.ckpt") == "$MODEL_ROOT/last.ckpt"
+
+
+@pytest.mark.parametrize("original", ["/storefront/x", "/store-old/x", "/w/taidal-old/y"])
+def test_a_lookalike_path_is_left_alone(roots: dict, original: str) -> None:
+    """The match is on a path BOUNDARY — `/store` must not swallow the start of `/storefront`."""
+    assert provenance.contract_roots(original) == original
+
+
+def test_several_occurrences_in_one_string_all_contract(roots: dict) -> None:
+    line = "cd /w/taidal/sonair && /w/taidal/.venv/bin/python train.py"
+    assert provenance.contract_roots(line) == "cd $PROJECT_ROOT/sonair && $PROJECT_ROOT/.venv/bin/python train.py"
+
+
+def test_expandvars_is_the_exact_inverse(roots: dict, monkeypatch: pytest.MonkeyPatch) -> None:
+    """The property that makes contracting a whole document safe: nothing is lost."""
+    import os as _os
+
+    for original in ("/w/taidal/a/b", "file:///store/models/x.ckpt", "cd /store && /w/taidal/run"):
+        assert _os.path.expandvars(provenance.contract_roots(original)) == original
+
+
+def test_contracting_is_idempotent(roots: dict) -> None:
+    once = provenance.contract_roots("/store/mnist")
+    assert provenance.contract_roots(once) == once
+
+
+def test_portable_walks_nested_structures(roots: dict) -> None:
+    document = {"a": ["/store/x", {"b": "/w/taidal/y"}], "c": 3, "d": None}
+    assert provenance.portable(document) == {"a": ["$DATA_ROOT/x", {"b": "$PROJECT_ROOT/y"}], "c": 3, "d": None}
+
+
+def test_portable_leaves_a_skipped_subtree_verbatim(roots: dict) -> None:
+    """`env.roots` holds the expansion table — contracting it would destroy the definitions."""
+    document = {"roots": {"DATA_ROOT": "/store"}, "path": "/store/x"}
+    assert provenance.portable(document, skip_keys=("roots",)) == {
+        "roots": {"DATA_ROOT": "/store"},
+        "path": "$DATA_ROOT/x",
+    }
+
+
+def test_the_pasteable_line_is_contracted_and_still_expands(
+    roots: dict, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    workdir = tmp_path / "proj"
+    workdir.mkdir()
+    monkeypatch.setenv("PROJECT_ROOT", str(tmp_path))
+    monkeypatch.chdir(workdir)
+    set_argv(monkeypatch, ["/pkg/cli.py", "run", "cfg.yaml"], spec_name="pkg.cli")
+    line = provenance.command_line()
+    # DOUBLE-quoted rather than bare: the expansion may contain a space on the reading machine.
+    assert line is not None and line.startswith('cd "$PROJECT_ROOT/proj" &&')
+
+
+def test_a_contracted_word_needing_quotes_stays_EXPANDABLE(
+    roots: dict, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """`shlex.quote` would SINGLE-quote it, and a single-quoted `$VAR` is a literal dollar sign.
+
+    That would silently turn a portable line into one that looks for a directory named `$PROJECT_ROOT`.
+    """
+    workdir = tmp_path / "my runs"
+    workdir.mkdir()
+    monkeypatch.setenv("PROJECT_ROOT", str(tmp_path))
+    monkeypatch.chdir(workdir)
+    set_argv(monkeypatch, ["/pkg/cli.py"], spec_name="pkg.cli")
+    line = provenance.command_line()
+    assert line is not None
+    assert line.startswith('cd "$PROJECT_ROOT/my runs"')  # DOUBLE quotes: the shell expands inside
+    assert "'$PROJECT_ROOT" not in line
+
+
+def test_a_word_with_no_variable_is_quoted_the_ordinary_way(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    for name in provenance.PORTABLE_ROOT_VARS:
+        monkeypatch.delenv(name, raising=False)
+    workdir = tmp_path / "my runs"
+    workdir.mkdir()
+    monkeypatch.chdir(workdir)
+    set_argv(monkeypatch, ["/pkg/cli.py"], spec_name="pkg.cli")
+    line = provenance.command_line()
+    assert line is not None and line.startswith(f"cd '{workdir}'")

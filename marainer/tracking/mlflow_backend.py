@@ -17,8 +17,9 @@ from __future__ import annotations
 
 import hashlib
 import json
+import re
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, Mapping, Optional, Union
+from typing import TYPE_CHECKING, Any, Dict, Mapping, Optional, Union
 
 from confluid import configurable
 from loggair import get_logger
@@ -30,6 +31,17 @@ if TYPE_CHECKING:  # type-only: `manifest` reaches `base`, so a runtime import w
     from marainer.tracking.manifest import RunManifest
 
 logger = get_logger(__name__)
+
+
+#: Characters MLflow rejects in a logged-model NAME (measured: `Invalid model name`). That is
+#: every separator a real model identifier uses, so the name is a sanitised LABEL and the exact
+#: identifier lives in the entity's `uri` tag.
+_UNSAFE_MODEL_NAME = re.compile(r"""[/:.%"']+""")
+
+
+def _logged_model_name(name: Any) -> str:
+    """A display name MLflow will accept for ``name``, never empty."""
+    return _UNSAFE_MODEL_NAME.sub("_", str(name or "")).strip("_") or "model"
 
 
 def _reference_digest(fields: Mapping[str, Any]) -> str:
@@ -75,7 +87,12 @@ class MlflowTracker(Tracker):
         self.tracking_uri = tracking_uri
         self.log_system_metrics = log_system_metrics
         self._client: Optional[Any] = None
+        self._experiment_id: Optional[str] = None
         self._run_id: Optional[str] = None
+        # URI -> logged-model id, for models already projected on THIS run. MLflow dedups a
+        # dataset input by digest but does NOT dedup a logged model, and `log_manifest` runs at
+        # least twice per run (start and end) — without this every model appears twice (measured).
+        self._logged_models: Dict[str, str] = {}
         self._system_monitor: Optional[Any] = None
         self._mps_sampler: Optional[Any] = None
 
@@ -96,6 +113,7 @@ class MlflowTracker(Tracker):
             exp_id = exp.experiment_id if exp is not None else client.create_experiment(self.experiment_name)
             run = client.create_run(experiment_id=exp_id, run_name=self.run_name, tags=self.tags or None)
             self._client = client
+            self._experiment_id = exp_id
             self._run_id = run.info.run_id
             logger.info(f"MLflow run started: {self.experiment_name}/{self.run_name} ({self._run_id})")
             if self.log_system_metrics:
@@ -172,6 +190,7 @@ class MlflowTracker(Tracker):
         super().log_manifest(manifest)
         self._project_source_tags(manifest)
         self._project_datasets(manifest)
+        self._project_models(manifest)
 
     def _project_source_tags(self, manifest: "RunManifest") -> None:
         """Fill MLflow's standard source/git tags from the manifest's command + code sections."""
@@ -247,6 +266,68 @@ class MlflowTracker(Tracker):
             client.log_inputs(self._run_id, inputs)
         except Exception as exc:  # pragma: no cover - defensive
             logger.debug(f"MLflow log_inputs failed: {exc}")
+
+    def _project_models(self, manifest: "RunManifest") -> None:
+        """Log the manifest's model artifacts as MLflow model INPUTS.
+
+        The counterpart of :meth:`_project_datasets`, and it needs one step more: a
+        ``LoggedModelInput`` takes a *logged-model id*, which only exists once an entity has been
+        created. ``create_logged_model`` makes that entity from metadata alone — no weights are
+        uploaded and the Model Registry is not touched — so what lands is a reference, exactly as
+        the manifest holds one. Every field rides along as a tag, so the run's UI shows which
+        weights it loaded and in which ``role``.
+
+        Two behaviours measured against mlflow 3.14, both of which read as bugs otherwise:
+
+        * **A logged model is NOT deduplicated.** MLflow dedups a dataset input by digest, but
+          creating the same logged model twice yields two entities and two inputs — and
+          :meth:`log_manifest` runs at least twice per run. Hence :attr:`_logged_models`.
+        * **The NAME is restricted** — ``/``, ``:``, ``.``, ``%`` and quotes are rejected outright
+          (``Invalid model name``), which is every separator a real model id uses. The name is
+          therefore sanitised for display and the exact identifier kept in the ``uri`` tag.
+
+        Reading it back, ``client.get_run(run_id).inputs.model_inputs`` is the query that works.
+        ``search_runs`` returns runs whose ``model_inputs`` is EMPTY while their ``dataset_inputs``
+        is populated — so verifying lineage that way shows datasets landing and models silently
+        missing, which is a convincing-looking bug in code that is doing the right thing.
+        """
+        entries = manifest.section("models")
+        if not entries:
+            return
+        try:
+            from mlflow.entities import LoggedModelInput
+        except ImportError as exc:  # pragma: no cover - defensive
+            logger.debug(f"MLflow logged-model entities unavailable: {exc}")
+            return
+
+        client = self.experiment
+        fresh = []
+        for entry in entries:
+            key = str(entry.get("uri") or json.dumps(entry, sort_keys=True, default=str))
+            if key in self._logged_models:
+                continue
+            try:
+                model = client.create_logged_model(
+                    experiment_id=self._experiment_id,
+                    name=_logged_model_name(entry.get("name")),
+                    source_run_id=self._run_id,
+                    tags={k: str(v) for k, v in entry.items() if v is not None},
+                    # `kind` is what `capture_models` writes and `source` is what the manual
+                    # `record_model` takes, so a section can hold either; read both rather than
+                    # silently typing a hand-recorded model as unknown.
+                    model_type=str(entry.get("kind") or entry.get("source") or "") or None,
+                )
+            except Exception as exc:  # pragma: no cover - backend-specific
+                logger.debug(f"MLflow create_logged_model failed for {key}: {exc}")
+                continue
+            self._logged_models[key] = model.model_id
+            fresh.append(LoggedModelInput(model.model_id))
+        if not fresh:
+            return
+        try:
+            client.log_inputs(self._run_id, models=fresh)
+        except Exception as exc:  # pragma: no cover - defensive
+            logger.debug(f"MLflow log_inputs(models=...) failed: {exc}")
 
     def finalize(self, status: str = "success") -> None:
         if self._mps_sampler is not None:

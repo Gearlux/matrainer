@@ -12,8 +12,9 @@ IS its upload channel — so the base class's ``.md`` file, written under
 
 from __future__ import annotations
 
+import re
 from pathlib import Path
-from typing import Any, Mapping, Optional, Union
+from typing import TYPE_CHECKING, Any, Mapping, Optional, Tuple, Union
 
 from confluid import configurable
 from loggair import get_logger
@@ -21,7 +22,26 @@ from loggair import get_logger
 from marainer._imports import require
 from marainer.tracking.base import Tracker
 
+if TYPE_CHECKING:  # type-only: `manifest` reaches `base`, so a runtime import would cycle.
+    from marainer.tracking.manifest import ManifestSection, RunManifest
+
 logger = get_logger(__name__)
+
+#: URI schemes ``wandb.Artifact.add_reference`` can address. A reference records WHERE the bytes
+#: live without uploading them, which is what a manifest holds — but only for a location W&B knows
+#: how to reach. A zoo's own scheme (``hf://``, ``smp://``, ``ultralytics://``) is not one, and is
+#: kept as metadata rather than forced into a reference the library would reject.
+REFERENCEABLE_SCHEMES: Tuple[str, ...] = ("file://", "http://", "https://", "s3://", "gs://", "az://")
+
+#: Characters W&B rejects in an artifact NAME — it allows alphanumerics, dashes, underscores and
+#: dots only, which excludes the ``/`` in every real dataset or model identifier. The name is
+#: therefore a sanitised LABEL, with the exact identifier kept in the artifact's metadata.
+_UNSAFE_ARTIFACT_NAME = re.compile(r"[^A-Za-z0-9._-]+")
+
+
+def _artifact_name(name: Any) -> str:
+    """A display name W&B will accept for ``name``, never empty."""
+    return _UNSAFE_ARTIFACT_NAME.sub("_", str(name or "")).strip("_") or "artifact"
 
 
 @configurable
@@ -103,6 +123,50 @@ class WandbTracker(Tracker):
             self.experiment.log({name: figure}, step=step)
         except Exception as exc:  # pragma: no cover - defensive
             logger.debug(f"wandb log figure failed for {name}: {exc}")
+
+    def log_manifest(self, manifest: "RunManifest") -> None:
+        """Artifact + hyperparameters (the default), PLUS W&B's artifact-lineage graph.
+
+        W&B's native home for "what went into this run" is an ``Artifact`` marked used, which is
+        what puts a run on the lineage graph and links every run that consumed the same data or
+        the same weights. Both are ADDITIONAL — the manifest artifact still carries everything,
+        per the union contract, so a run tracked here stays comparable with one tracked to a
+        local directory.
+        """
+        super().log_manifest(manifest)
+        self._project_inputs(manifest, "datasets", "dataset")
+        self._project_inputs(manifest, "models", "model")
+
+    def _project_inputs(self, manifest: "RunManifest", section: "ManifestSection", kind: str) -> None:
+        """Mark one manifest section's entries as used W&B artifacts of type ``kind``.
+
+        The artifact carries the entry's fields as metadata and, where the URI names a location
+        W&B can address, a REFERENCE to it — ``add_reference`` uploads nothing, it records where
+        the bytes live, which is exactly what a manifest holds. A scheme W&B does not know
+        (``hf://``, ``smp://``, a zoo's own) is left as metadata alone rather than being forced
+        into a reference the library would reject.
+
+        Names are sanitised because W&B's are restricted to alphanumerics, dashes, underscores and
+        dots, which excludes the ``/`` in every real dataset or model identifier; the exact
+        identifier stays in the metadata. Re-marking the same artifact is what makes a second
+        :meth:`log_manifest` harmless — W&B resolves an existing artifact by name rather than
+        creating a duplicate.
+        """
+        entries = manifest.section(section)
+        if not entries:
+            return
+        wandb = require("wandb", "wandb", feature="WandbTracker")
+        run = self.experiment
+        for entry in entries:
+            metadata = {k: v for k, v in entry.items() if v is not None}
+            try:
+                artifact = wandb.Artifact(_artifact_name(entry.get("name")), type=kind, metadata=metadata)
+                uri = str(entry.get("uri") or "")
+                if uri.startswith(REFERENCEABLE_SCHEMES):
+                    artifact.add_reference(uri)
+                run.use_artifact(artifact)
+            except Exception as exc:  # pragma: no cover - backend-specific
+                logger.debug(f"wandb use_artifact failed for {entry.get('uri') or entry.get('name')}: {exc}")
 
     def finalize(self, status: str = "success") -> None:
         if self._run is not None:

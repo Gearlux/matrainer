@@ -4,6 +4,12 @@ The one place that answers "what produced this run?" and pushes the answer to th
 tracking backends, independent of any training framework:
 
 * :func:`get_git_commit_hash` — ``git rev-parse HEAD`` (+ ``-dirty``) for the CWD.
+* :func:`command_line` — the invocation as a shell snippet someone can PASTE to run it
+  again. ``sys.argv`` alone is not that: the workspace's runner is launched with ``-m``,
+  whose ``argv[0]`` is the module's file path and does not re-execute.
+* :func:`package_freeze` — every installed distribution and its version, in pip's
+  ``requirements.txt`` format. The code state above covers the packages being *edited*;
+  a run also depends on the several hundred wheels around them.
 * :func:`git_state` / :func:`code_state` — the same question asked of a SPECIFIC
   directory, and then of every editable distribution in the environment. A run's
   behaviour is set by every package on ``sys.path``, not by whichever repository
@@ -11,6 +17,10 @@ tracking backends, independent of any training framework:
 * :func:`included_config_paths` — the entrypoint YAML + every transitively
   ``include:``-d file (from ``liquifai.context``), so the whole config tree is
   captured as an artifact.
+* :func:`configured_slots` — every OBJECT wired into a configured graph, as
+  ``(slot path, object)``. Deliberately different from the leaf-scalar walk below:
+  :func:`configured_datasets` and :func:`configured_models` need the objects, because
+  what identifies a dataset or a model is a source or a wrapper, not one of its settings.
 * :func:`config_params` — the flat ``{dotted-path: value}`` view of a configured
   object graph. It lives HERE rather than in each consumer, because two consumers
   deriving it themselves is two different answers to "what were the hyperparameters?".
@@ -36,10 +46,12 @@ import importlib.metadata
 import json
 import os
 import platform
+import shlex
+import shutil
 import subprocess
 import sys
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, Dict, List, Mapping, Optional, Sequence, Set, Tuple
+from typing import TYPE_CHECKING, Any, Dict, Iterator, List, Mapping, Optional, Sequence, Set, Tuple
 
 from loggair import get_logger
 
@@ -80,6 +92,96 @@ DEFAULT_ENV_PREFIXES: Tuple[str, ...] = (
 SECRET_MARKERS: Tuple[str, ...] = ("TOKEN", "KEY", "SECRET", "PASSWORD", "PASSWD", "CREDENTIAL", "AUTH")
 
 REDACTED = "***"
+
+#: ``argv[0]`` values that carry no re-executable entry point: an interactive interpreter
+#: (``""``), a script piped on stdin (``"-"``), and ``python -c`` — whose code lives in an
+#: argument the interpreter has already consumed and never puts in ``sys.argv``.
+UNREPRODUCIBLE_ARGV0: Tuple[str, ...] = ("", "-", "-c")
+
+#: How long the package freeze may take before it is abandoned. Generous for a subprocess
+#: measured in tenths of a second, and bounded because tracking must never hang a run.
+FREEZE_TIMEOUT_SECONDS = 120.0
+
+#: Environment variables naming the machine-specific roots a run's paths hang off. Where one is
+#: SET, absolute paths under it are recorded as ``$NAME/...`` instead, so a manifest read on a
+#: machine that keeps its code, data or models somewhere else still points at the right things.
+#: Ordered most-specific-first only for readability — :func:`configured_roots` sorts by length.
+PORTABLE_ROOT_VARS: Tuple[str, ...] = ("PROJECT_ROOT", "DATA_ROOT", "MODEL_ROOT")
+
+
+def configured_roots() -> List[Tuple[str, str]]:
+    """The set roots as ``(variable name, absolute path)``, LONGEST path first.
+
+    Longest first is what makes nesting work: with ``MODEL_ROOT`` inside ``DATA_ROOT``, a model
+    path must contract to the more specific of the two rather than to whichever was listed first.
+    An unset or empty variable contributes nothing — contraction is opt-in by configuration.
+    """
+    found = []
+    for name in PORTABLE_ROOT_VARS:
+        value = os.environ.get(name, "").strip()
+        if value:
+            found.append((name, os.path.abspath(os.path.expanduser(value)).rstrip("/")))
+    return sorted(found, key=lambda item: len(item[1]), reverse=True)
+
+
+def contract_roots(text: str, roots: Optional[Sequence[Tuple[str, str]]] = None) -> str:
+    """Replace any configured root PREFIX in ``text`` with its ``$NAME``.
+
+    Works on a bare path (``/data/set/x`` -> ``$DATA_ROOT/x``), on a ``file://`` URI
+    (``file:///data/set/x`` -> ``file://$DATA_ROOT/x``) and on a command line, because the
+    substitution is a literal one on a path BOUNDARY — every occurrence, wherever in the string it
+    sits, provided the next character is ``/`` or the match ends the segment. The boundary is what
+    keeps ``/data/setup`` from being read as ``$DATA_ROOT`` + ``up``.
+
+    **``os.path.expandvars`` is the exact inverse**, which is the property that makes this safe to
+    apply to a whole document: nothing is lost, and a reader who has the same variables set gets
+    the original string back. The manifest records the values it used under ``env.roots`` so a
+    reader who does NOT can still resolve them by hand.
+
+    Args:
+        text: The string to contract.
+        roots: Pre-computed roots; ``None`` reads them from the environment. Pass the result of
+            :func:`configured_roots` when contracting many strings, so the environment is read once.
+    """
+    for name, root in configured_roots() if roots is None else roots:
+        index = text.find(root)
+        while index != -1:
+            after = index + len(root)
+            if after == len(text) or text[after] == "/":
+                text = text[:index] + f"${name}" + text[after:]
+                index = text.find(root, index + len(name) + 1)
+            else:
+                index = text.find(root, after)
+    return text
+
+
+def portable(value: Any, skip_keys: Sequence[str] = ()) -> Any:
+    """Recursively contract every string in ``value`` against the configured roots.
+
+    Applied to the whole manifest document rather than at each capture site, so a section added
+    later is portable without anyone remembering to make it so — and so there is one answer to
+    "is this path absolute?" rather than one per section.
+
+    Args:
+        value: Any plain data structure (the manifest document, or one section of it).
+        skip_keys: Mapping keys whose subtree is left VERBATIM. ``env.roots`` uses this: it holds
+            the expansion table itself, and contracting ``/data/set`` to ``$DATA_ROOT`` there
+            would replace the definition with a reference to itself.
+    """
+    roots = configured_roots()
+    if not roots:
+        return value
+
+    def walk(node: Any) -> Any:
+        if isinstance(node, str):
+            return contract_roots(node, roots)
+        if isinstance(node, Mapping):
+            return {k: (v if k in skip_keys else walk(v)) for k, v in node.items()}
+        if isinstance(node, list):
+            return [walk(v) for v in node]
+        return node
+
+    return walk(value)
 
 
 def get_git_commit_hash() -> Optional[str]:
@@ -235,6 +337,172 @@ def config_params(obj: Any) -> Dict[str, Any]:
     return params
 
 
+#: How deep :func:`configured_slots` descends into an object graph. Dataset slots sit close
+#: to the runnable (``train_set``, ``train_set.source``); the cap is what keeps the walk from
+#: wandering into an arbitrarily deep model or optimizer state.
+MAX_SLOT_DEPTH = 4
+
+#: Values that are never a dataset and never contain one — skipped without inspection, so the
+#: walk does not pay for the scalars that make up most of a configuration.
+_LEAF_TYPES = (str, bytes, int, float, bool, complex, Path)
+
+
+def configured_slots(obj: Any, max_depth: int = MAX_SLOT_DEPTH) -> Iterator[Tuple[str, Any]]:
+    """Yield ``(slot path, object)`` for every object wired into a configured graph.
+
+    A deliberately different walk from the one :func:`config_params` uses: that one flattens a
+    graph into its LEAF values (the scalars that are hyperparameters), while this one needs the
+    OBJECTS themselves, because what identifies a dataset is a source object rather than any of
+    its settings.
+
+    Public attributes only — a leading underscore marks internal state, and descending into it
+    would reach a framework's private module/parameter dictionaries. Lists, tuples and dicts are
+    entered with an ``[index]`` / ``[key]`` suffix so a slot holding several sources names each
+    one. Cycle-safe by object identity, and depth-capped: a runnable holds a trained model, and
+    an unbounded walk of one is neither cheap nor meaningful.
+    """
+    seen: Set[int] = set()
+
+    def walk(node: Any, prefix: str, depth: int) -> Iterator[Tuple[str, Any]]:
+        if node is None or depth > max_depth or isinstance(node, _LEAF_TYPES):
+            return
+        if id(node) in seen:
+            return
+        seen.add(id(node))
+        if isinstance(node, Mapping):
+            for key, value in node.items():
+                yield from walk(value, f"{prefix}[{key}]", depth + 1)
+            return
+        if isinstance(node, (list, tuple, set)):
+            for index, value in enumerate(node):
+                yield from walk(value, f"{prefix}[{index}]", depth + 1)
+            return
+        attributes = getattr(node, "__dict__", None)
+        if not isinstance(attributes, dict):
+            return
+        for name, value in list(attributes.items()):
+            if name.startswith("_"):
+                continue
+            path = f"{prefix}.{name}" if prefix else name
+            yield path, value
+            yield from walk(value, path, depth + 1)
+
+    yield from walk(obj, "", 0)
+
+
+def configured_datasets(obj: Any) -> List[Dict[str, Any]]:
+    """Every dataset a configured object graph identifies, one entry each, deduplicated.
+
+    Walks the graph with :func:`configured_slots` and asks each wired object to name the data
+    it reads. An object that can (a dataset source, or a view wrapping one) contributes
+    ``kind`` / ``name`` / ``uri`` / ``url`` / ``split`` plus the ``slot`` it occupies; an
+    object that cannot contributes nothing.
+
+    ``kind``, ``name`` and ``split`` are DERIVED from the URI — its scheme, its path, its
+    ``split`` parameter — rather than read off the source, so this function knows nothing
+    about any particular kind of dataset and a new source type needs no change here.
+
+    Deduplication is by URI and keeps the FIRST occurrence, which is the outermost wiring: a
+    trainer's ``train_set`` typically wraps the real source in a stream or a split view and all
+    of them name the same dataset, so the outer slot is the one a reader of the config
+    recognises.
+
+    Returns ``[]`` for anything that cannot be walked; identifying datasets must never take
+    down a run.
+    """
+    from urllib.parse import parse_qs, urlparse
+
+    try:
+        from recordstream import dataset_uri, dataset_url
+
+        slots = list(configured_slots(obj))
+    except Exception as exc:
+        logger.debug(f"configured_datasets could not walk {type(obj).__name__}: {exc}")
+        return []
+
+    entries: List[Dict[str, Any]] = []
+    seen: Set[str] = set()
+    for path, value in slots:
+        try:
+            uri = dataset_uri(value)
+        except Exception as exc:  # pragma: no cover - a source whose identity property raises
+            logger.debug(f"configured_datasets skipped {path}: {exc}")
+            continue
+        if not uri or uri in seen:
+            continue
+        seen.add(uri)
+        parsed = urlparse(uri)
+        splits = parse_qs(parsed.query).get("split") or []
+        entries.append(
+            {
+                "kind": parsed.scheme or "unknown",
+                # A `file:` URI's path is absolute and must stay so; a scheme with an authority
+                # (`hf://datasets/<id>`) leaves a leading separator that is not part of the name.
+                "name": parsed.path if parsed.scheme == "file" else parsed.path.lstrip("/"),
+                "uri": uri,
+                "url": dataset_url(value),
+                "split": splits[0] if splits else None,
+                "slot": path,
+            }
+        )
+    return entries
+
+
+def configured_models(obj: Any) -> List[Dict[str, Any]]:
+    """Every model artifact a configured object graph loads, one entry each, deduplicated.
+
+    The model twin of :func:`configured_datasets`, over the same :func:`configured_slots` walk.
+    The difference is arity and it is deliberate: a source reads ONE dataset, while a model
+    wrapper composes artifacts — a pretrained backbone with a checkpoint over it used two — so a
+    wrapper reports a LIST of :class:`~marainer.uri.ModelRef`, each carrying the ``role`` it
+    played, and one slot may contribute several entries.
+
+    ``kind`` and ``name`` are DERIVED from the URI (its scheme, its path) exactly as on the dataset
+    side, so this function knows nothing about any particular zoo and a new model wrapper needs no
+    change here.
+
+    Deduplication is by URI across the whole graph, so two wrappers loading the same backbone
+    record it once. Returns ``[]`` for anything that cannot be walked; identifying models must
+    never take down a run.
+    """
+    from urllib.parse import urlparse
+
+    try:
+        from marainer.uri import model_refs
+
+        slots = list(configured_slots(obj))
+    except Exception as exc:
+        logger.debug(f"configured_models could not walk {type(obj).__name__}: {exc}")
+        return []
+
+    entries: List[Dict[str, Any]] = []
+    seen: Set[str] = set()
+    for path, value in slots:
+        try:
+            refs = model_refs(value)
+        except Exception as exc:  # pragma: no cover - a wrapper whose property raises
+            logger.debug(f"configured_models skipped {path}: {exc}")
+            continue
+        for ref in refs:
+            if ref.uri in seen:
+                continue
+            seen.add(ref.uri)
+            parsed = urlparse(ref.uri)
+            entries.append(
+                {
+                    "kind": parsed.scheme or "unknown",
+                    # A `file:` URI's path is absolute and must stay so; a scheme with an authority
+                    # (`hf://models/<id>`) leaves a leading separator that is not part of the name.
+                    "name": parsed.path if parsed.scheme == "file" else parsed.path.lstrip("/"),
+                    "uri": ref.uri,
+                    "url": ref.url,
+                    "role": ref.role,
+                    "slot": path,
+                }
+            )
+    return entries
+
+
 def environment_snapshot(
     prefixes: Optional[Sequence[str]] = None,
     names: Sequence[str] = (),
@@ -287,6 +555,114 @@ def platform_state() -> Dict[str, Any]:
         "machine": platform.machine(),
         "hostname": platform.node(),
     }
+
+
+def _entry_point_words() -> Optional[List[str]]:
+    """The leading words of the pasteable command — how this process was ENTERED.
+
+    Three launch shapes, each detected by the one fact that distinguishes it:
+
+    * ``python -m pkg.mod`` — ``__main__.__spec__`` is set (it is ``None`` for a plain
+      script and for a console script). ``argv[0]`` here is the module's *file* path, which
+      is why re-pasting ``argv`` verbatim does not work; the spec's ``name`` is the module.
+      A trailing ``.__main__`` is stripped, because ``python -m pkg`` reports ``pkg.__main__``
+      while ``python -m pkg.__main__`` is not how anyone types it.
+    * a console script (``.venv/bin/sonair``) — an executable file that is not ``.py``. It
+      carries its own ``#!`` interpreter, so it pastes back exactly as it stands.
+    * a plain script — needs the interpreter in front of it.
+
+    ``sys.executable`` is the absolute interpreter, so every form runs without activating
+    an environment first. ``None`` when there is no honest answer (see
+    :data:`UNREPRODUCIBLE_ARGV0`).
+    """
+    argv0 = sys.argv[0] if sys.argv else ""
+    if argv0 in UNREPRODUCIBLE_ARGV0:
+        return None
+    spec = getattr(sys.modules.get("__main__"), "__spec__", None)
+    module = getattr(spec, "name", None)
+    if module:
+        return [sys.executable, "-m", module[: -len(".__main__")] if module.endswith(".__main__") else module]
+    script = Path(argv0)
+    if script.suffix != ".py" and os.access(argv0, os.X_OK):
+        return [argv0]
+    return [sys.executable, argv0]
+
+
+def command_line() -> Optional[str]:
+    """This run's invocation as a shell snippet that can be PASTED to run it again.
+
+    The working directory is folded in, so the snippet reproduces the run from anywhere —
+    a config referenced by a relative path (the normal case) resolves the same way it did
+    originally. Every word is shell-quoted, so a path containing spaces survives.
+
+    Returns ``None`` for an invocation that cannot be reconstructed — an interactive
+    session, or ``python -c``, whose code the interpreter never puts in ``sys.argv``. The
+    raw ``argv`` is recorded beside this either way, so nothing is lost by declining.
+
+    Example::
+
+        'cd /w/sonair && /w/.venv/bin/python -m recordstream.cli run config.yaml'
+    """
+    words = _entry_point_words()
+    if words is None:
+        return None
+    roots = configured_roots()
+    parts = [_quote(contract_roots(word, roots)) for word in (str(Path.cwd()), *words, *sys.argv[1:])]
+    return f"cd {parts[0]} && {' '.join(parts[1:])}"
+
+
+def _quote(word: str) -> str:
+    """Shell-quote ``word``, keeping any ``$VAR`` in it EXPANDABLE.
+
+    ``shlex.quote`` wraps anything that needs quoting in SINGLE quotes, which is exactly right for
+    a literal — and exactly wrong here, because it would turn a contracted ``$PROJECT_ROOT/my
+    runs`` into a literal dollar sign and the pasted line would look for a directory that does not
+    exist. A word carrying a variable is therefore double-quoted instead (the shell expands inside
+    those), with the three characters double quotes do not neutralise escaped by hand.
+    """
+    if "$" not in word:
+        return shlex.quote(word)
+    # Always double-quoted, never bare: the expansion itself may contain a space, and a bare
+    # `$PROJECT_ROOT/x` would then split into two arguments on the machine where it does.
+    escaped = word.replace("\\", "\\\\").replace('"', '\\"').replace("`", "\\`")
+    return f'"{escaped}"'
+
+
+def package_freeze() -> Optional[Tuple[str, str]]:
+    """Every installed distribution and its version, in ``requirements.txt`` format.
+
+    Returns ``(text, tool)`` — the freeze output and the name of the program that produced
+    it — or ``None`` when neither program is usable.
+
+    ``uv`` is preferred when it is on ``PATH`` purely because it is fast: measured against
+    a 730-distribution environment, ``uv pip freeze`` took 0.06 s against ``pip freeze``'s
+    0.96 s, and this runs on every tracked run. ``--python`` pins the environment
+    explicitly, so the answer does not depend on the working directory or on which
+    environment happens to be active. Nothing is lost by preferring it: the two disagree
+    only on how they spell an editable install, and the git commit, branch and *dirty*
+    flag for every editable are already in the manifest's ``code`` section — which pip's
+    frozen commit cannot express, since it has no notion of uncommitted changes.
+
+    Every failure mode — no ``pip`` module in the environment, a non-zero exit, a hung
+    subprocess — is a debug log and ``None``. Tracking must never abort a run.
+    """
+    candidates: List[Tuple[str, List[str]]] = []
+    uv = shutil.which("uv")
+    if uv:
+        candidates.append(("uv", [uv, "pip", "freeze", "--python", sys.executable]))
+    candidates.append(("pip", [sys.executable, "-m", "pip", "freeze"]))
+
+    for tool, command in candidates:
+        try:
+            result = subprocess.run(command, capture_output=True, text=True, timeout=FREEZE_TIMEOUT_SECONDS, check=True)
+        except (subprocess.SubprocessError, OSError) as exc:
+            logger.debug(f"package_freeze: {tool} could not produce a freeze: {exc}")
+            continue
+        text = result.stdout.strip()
+        if text:
+            return text + "\n", tool
+        logger.debug(f"package_freeze: {tool} produced no output")
+    return None
 
 
 def included_config_paths() -> List[Path]:
@@ -347,8 +723,9 @@ def log_run_context(
     """Capture a run's whole context and push it — the ONE call at the start of a run.
 
     Fills a :class:`~marainer.tracking.manifest.RunManifest` (environment, code state,
-    configuration, hyperparameters) and projects it onto every tracker, plus the
-    marainer-native ``git.commit`` tag and the config tree as ``config/`` artifacts.
+    configuration, hyperparameters, installed packages, datasets) and projects it onto every
+    tracker, plus the marainer-native ``git.commit`` tag and the config tree as ``config/``
+    artifacts.
 
     Consumers previously had to choose between this function and driving a manifest
     themselves, which meant two overlapping answers to "what produced this run?". There
@@ -360,8 +737,9 @@ def log_run_context(
         params: Hyperparameters the caller knows. Merged OVER anything derived from
             ``runnable``, so an explicit value always wins. Only JSON scalars survive.
         runnable: The configured object about to run. Given one, the resolved
-            configuration is dumped and its hyperparameters derived — do not hand-build
-            a params dict for something this can read.
+            configuration is dumped, its hyperparameters derived, and every dataset its
+            sources identify recorded — do not hand-build a params dict, or a dataset
+            record, for something this can read.
         manifest: Reuse an existing manifest instead of building one. Without it, one is
             built from the FIRST tracker's identity and ``log_dir``, so the manifest lands
             beside that backend's own artifacts.
@@ -396,6 +774,9 @@ def log_run_context(
     if capture_code:
         manifest.capture_code()
     manifest.capture_config(runnable)
+    manifest.capture_packages()
+    manifest.capture_datasets(runnable)
+    manifest.capture_models(runnable)
 
     # Caller-supplied params merge over the derived ones; the git hash and config script
     # ride along as params too, which is where consumers have always read them.
@@ -483,14 +864,24 @@ def capture_log_file(
 
 __all__ = [
     "DEFAULT_ENV_PREFIXES",
+    "FREEZE_TIMEOUT_SECONDS",
     "GIT_COMMIT_TAG",
+    "MAX_SLOT_DEPTH",
+    "PORTABLE_ROOT_VARS",
     "REDACTED",
     "SECRET_MARKERS",
+    "UNREPRODUCIBLE_ARGV0",
     "accelerator_state",
     "capture_log_file",
     "code_state",
+    "command_line",
     "config_params",
     "config_script_path",
+    "configured_roots",
+    "contract_roots",
+    "configured_datasets",
+    "configured_models",
+    "configured_slots",
     "editable_source_paths",
     "environment_snapshot",
     "file_digest",
@@ -498,6 +889,8 @@ __all__ = [
     "git_state",
     "included_config_paths",
     "log_run_context",
+    "package_freeze",
     "platform_state",
+    "portable",
     "resolve_log_file",
 ]

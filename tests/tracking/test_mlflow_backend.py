@@ -31,6 +31,11 @@ class _FakeInputTag:
         self.key, self.value = key, value
 
 
+class _FakeLoggedModelInput:
+    def __init__(self, model_id: str) -> None:
+        self.model_id = model_id
+
+
 class _FakeDatasetInput:
     def __init__(self, dataset: Any, tags: Any = None) -> None:
         self.dataset, self.tags = dataset, tags
@@ -55,6 +60,8 @@ class _FakeClient:
         self.texts: List[tuple] = []
         self.terminated: Any = None
         self.inputs: List[Any] = []
+        self.model_inputs: List[Any] = []
+        self.logged_models: List[Any] = []
         _FakeClient.instances.append(self)
 
     def get_experiment_by_name(self, name: str) -> Any:
@@ -84,8 +91,30 @@ class _FakeClient:
     def set_terminated(self, run_id: str, status: str) -> None:
         self.terminated = status
 
-    def log_inputs(self, run_id: str, datasets: Any) -> None:
-        self.inputs.extend(datasets)
+    def log_inputs(self, run_id: str, datasets: Any = None, models: Any = None) -> None:
+        self.inputs.extend(datasets or [])
+        self.model_inputs.extend(models or [])
+
+    def create_logged_model(
+        self,
+        experiment_id: Any = None,
+        name: Any = None,
+        source_run_id: Any = None,
+        tags: Any = None,
+        model_type: Any = None,
+    ) -> Any:
+        # A fresh id every call, exactly like the real client — the tracker, not MLflow, is what
+        # keeps a second `log_manifest` from duplicating (measured against mlflow 3.14).
+        self.logged_models.append(
+            types.SimpleNamespace(
+                model_id=f"lm-{len(self.logged_models)}",
+                experiment_id=experiment_id,
+                name=name,
+                tags=dict(tags or {}),
+                model_type=model_type,
+            )
+        )
+        return self.logged_models[-1]
 
 
 @pytest.fixture
@@ -103,6 +132,7 @@ def fake_mlflow(monkeypatch: pytest.MonkeyPatch) -> Any:
     entities_mod.Dataset = _FakeDataset  # type: ignore[attr-defined]
     entities_mod.DatasetInput = _FakeDatasetInput  # type: ignore[attr-defined]
     entities_mod.InputTag = _FakeInputTag  # type: ignore[attr-defined]
+    entities_mod.LoggedModelInput = _FakeLoggedModelInput  # type: ignore[attr-defined]
     tags_mod = types.ModuleType("mlflow.utils.mlflow_tags")
     for _name, _value in _STANDARD_TAGS.items():
         setattr(tags_mod, _name, _value)
@@ -331,3 +361,78 @@ def test_projection_lands_in_a_real_mlflow_store(tmp_path: Any) -> None:
 
     tracker.log_manifest(build_manifest(tmp_path))  # idempotent: MLflow dedups on digest
     assert len(tracker.experiment.get_run(tracker.run_id).inputs.dataset_inputs) == 1
+
+
+# --- model lineage (log_inputs(models=...)) --------------------------------------------------
+
+
+def _manifest_with_models(tmp_path: Any) -> Any:
+    from marainer.tracking.manifest import RunManifest
+
+    m = RunManifest(run_dir=tmp_path / "run", handle_interrupts=False)
+    m.record_model(
+        source="hf",
+        name="timm/resnet50.a1_in1k",
+        uri="hf://models/timm/resnet50.a1_in1k",
+        url="https://huggingface.co/timm/resnet50.a1_in1k",
+        role="pretrained",
+    )
+    m.record_model(source="file", name="/w/last.ckpt", uri="file:///w/last.ckpt", role="checkpoint")
+    return m
+
+
+def test_models_become_logged_model_inputs(fake_mlflow: Any, tmp_path: Any) -> None:
+    """A `LoggedModelInput` needs a logged-model ID, so the entity is created first."""
+    MlflowTracker(log_system_metrics=False).log_manifest(_manifest_with_models(tmp_path))
+    client = fake_mlflow.instances[0]
+    assert [m.model_id for m in client.model_inputs] == ["lm-0", "lm-1"]
+    assert len(client.logged_models) == 2
+
+
+def test_every_manifest_field_rides_along_as_a_tag(fake_mlflow: Any, tmp_path: Any) -> None:
+    MlflowTracker(log_system_metrics=False).log_manifest(_manifest_with_models(tmp_path))
+    first = fake_mlflow.instances[0].logged_models[0]
+    assert first.tags["uri"] == "hf://models/timm/resnet50.a1_in1k"
+    assert first.tags["role"] == "pretrained"
+    assert first.tags["url"] == "https://huggingface.co/timm/resnet50.a1_in1k"
+    assert first.model_type == "hf"  # `source` here; `capture_models` writes `kind` — both read
+
+
+def test_the_logged_model_name_is_sanitized(fake_mlflow: Any, tmp_path: Any) -> None:
+    """MLflow rejects `/ : . %` and quotes in a model name — every separator a real id uses."""
+    MlflowTracker(log_system_metrics=False).log_manifest(_manifest_with_models(tmp_path))
+    names = [m.name for m in fake_mlflow.instances[0].logged_models]
+    assert names == ["timm_resnet50_a1_in1k", "w_last_ckpt"]
+
+
+def test_a_second_log_manifest_does_not_duplicate_the_models(fake_mlflow: Any, tmp_path: Any) -> None:
+    """`log_manifest` runs at least twice per run, and MLflow does NOT dedup a logged model."""
+    tracker = MlflowTracker(log_system_metrics=False)
+    manifest = _manifest_with_models(tmp_path)
+    tracker.log_manifest(manifest)
+    tracker.log_manifest(manifest)
+    client = fake_mlflow.instances[0]
+    assert len(client.logged_models) == 2
+    assert len(client.model_inputs) == 2
+
+
+def test_a_manifest_with_no_models_logs_nothing(fake_mlflow: Any, tmp_path: Any) -> None:
+    from marainer.tracking.manifest import RunManifest
+
+    MlflowTracker(log_system_metrics=False).log_manifest(RunManifest(run_dir=tmp_path / "run", handle_interrupts=False))
+    assert fake_mlflow.instances[0].logged_models == []
+
+
+def test_a_failing_create_logged_model_does_not_break_the_run(
+    fake_mlflow: Any, tmp_path: Any, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Tracking must never abort a run — a lost lineage link beats a dead training job."""
+    tracker = MlflowTracker(log_system_metrics=False)
+    client = tracker.experiment
+
+    def boom(**kwargs: Any) -> Any:
+        raise RuntimeError("server said no")
+
+    monkeypatch.setattr(client, "create_logged_model", boom)
+    tracker.log_manifest(_manifest_with_models(tmp_path))  # no raise
+    assert client.model_inputs == []
