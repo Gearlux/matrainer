@@ -5,7 +5,7 @@ from typing import Any, List, Mapping, Optional
 
 import pytest
 
-from marainer.tracking.base import Tracker, TrackerGroup, text_file_stem
+from matrainer.tracking.base import Tracker, TrackerGroup, text_file_stem
 
 
 class RecordingTracker(Tracker):
@@ -54,9 +54,9 @@ class TextRecordingTracker(RecordingTracker):
 
 def test_zero_arg_construction_draws_random_run_name() -> None:
     t = RecordingTracker()
-    assert t.experiment_name == "marainer"
+    assert t.experiment_name == "matrainer"
     assert t.run_name  # a random slug
-    assert t.name == "marainer"
+    assert t.name == "matrainer"
     assert t.version == t.run_name
 
 

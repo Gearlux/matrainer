@@ -4,7 +4,7 @@ import pytest
 from torchmetrics import Metric, MetricCollection
 from torchmetrics.classification import MulticlassAccuracy, MulticlassF1Score
 
-from marainer.torch.metrics import MetricPreset
+from matrainer.torch.metrics import MetricPreset
 
 # ---------------------------------------------------------------------------
 # MetricPreset tests
@@ -112,7 +112,7 @@ class TestMetricPreset:
 
 
 # NOTE: the training-loop integration tests (step functions / full-epoch fit) moved to the
-# consumer projects — marainer no longer owns a Lightning training class; its metrics module is
+# consumer projects — matrainer no longer owns a Lightning training class; its metrics module is
 # just the build_metric_collection + MetricPreset utilities tested here.
 
 
@@ -129,7 +129,7 @@ class TestBuildMetricCollection:
         from confluid import LazyClass
         from torchmetrics.classification import MulticlassConfusionMatrix
 
-        from marainer.torch.metrics import build_metric_collection
+        from matrainer.torch.metrics import build_metric_collection
 
         mc = build_metric_collection(LazyClass(MulticlassConfusionMatrix), num_classes=10)
         assert isinstance(mc, MetricCollection)
@@ -138,7 +138,7 @@ class TestBuildMetricCollection:
         assert mc["MulticlassConfusionMatrix"].num_classes == 10
 
     def test_single_live_metric_wraps(self) -> None:
-        from marainer.torch.metrics import build_metric_collection
+        from matrainer.torch.metrics import build_metric_collection
 
         mc = build_metric_collection(MulticlassAccuracy(num_classes=3), num_classes=3)
         assert list(mc.keys()) == ["MulticlassAccuracy"]
@@ -147,7 +147,7 @@ class TestBuildMetricCollection:
         from confluid import LazyClass
         from torchmetrics.classification import MulticlassConfusionMatrix
 
-        from marainer.torch.metrics import build_metric_collection
+        from matrainer.torch.metrics import build_metric_collection
 
         mc = build_metric_collection(
             [LazyClass(MulticlassAccuracy), LazyClass(MulticlassConfusionMatrix)], num_classes=4
@@ -157,7 +157,7 @@ class TestBuildMetricCollection:
     def test_dict_of_templates_still_flows(self) -> None:
         from confluid import LazyClass
 
-        from marainer.torch.metrics import build_metric_collection
+        from matrainer.torch.metrics import build_metric_collection
 
         mc = build_metric_collection(
             {"acc": LazyClass(MulticlassAccuracy), "f1": LazyClass(MulticlassF1Score, average="macro")},
@@ -166,7 +166,7 @@ class TestBuildMetricCollection:
         assert set(mc.keys()) == {"acc", "f1"}
 
     def test_ready_made_collection_passes_through_unchanged(self) -> None:
-        from marainer.torch.metrics import build_metric_collection
+        from matrainer.torch.metrics import build_metric_collection
 
         ready = MetricCollection({"acc": MulticlassAccuracy(num_classes=2)})
         assert build_metric_collection(ready, num_classes=2) is ready
@@ -176,7 +176,7 @@ class TestBuildMetricCollection:
         from confluid import LazyClass
         from torchmetrics.classification import MulticlassConfusionMatrix
 
-        from marainer.torch.metrics import build_metric_collection
+        from matrainer.torch.metrics import build_metric_collection
 
         mc = build_metric_collection(LazyClass(MulticlassConfusionMatrix), num_classes=5).clone(prefix="test/")
         assert list(mc.keys()) == ["test/MulticlassConfusionMatrix"]

@@ -1,12 +1,12 @@
 [project]
-name = "marainer"
+name = "matrainer"
 version = "0.1.0"
 description = "Experiment tracking for any training platform (MLflow / TensorBoard / CSV / W&B)."
 authors = [{name = "Taidal"}]
 license = {text = "MIT"}
 # LIGHT core: only the tracking library + framework-neutral checkpoint policies. The heavy
 # training frameworks (torch / pytorch-lightning / tensorflow) and the logger libraries live
-# behind the extras below; each backend imports its library lazily (marainer._imports.require).
+# behind the extras below; each backend imports its library lazily (matrainer._imports.require).
 dependencies = [
     "liquifai>=0.1.0",
     "loggair>=0.1.0",
@@ -14,9 +14,9 @@ dependencies = [
     "recordstream>=0.1.0",
     "numpy",
     # coolname generates the default random run names (e.g. ``train_funny_rabbit``) in
-    # marainer.run_names — offline adjective_noun slugs, no network.
+    # matrainer.run_names — offline adjective_noun slugs, no network.
     "coolname",
-    # marainer.tracking.manifest writes the run manifest as YAML (the readable artifact)
+    # matrainer.tracking.manifest writes the run manifest as YAML (the readable artifact)
     # beside its JSON twin. Declared explicitly rather than leaned on transitively via
     # confluid: a module that imports a package must depend on it.
     "pyyaml>=6.0",
@@ -24,19 +24,19 @@ dependencies = [
 requires-python = ">=3.12"
 
 [project.optional-dependencies]
-# Torch-only, Lightning-free helpers (marainer.torch: checkpoint + the metric helpers).
-# torchmetrics is here rather than in [lightning] since 2026-08-01: `marainer.torch.metrics`
+# Torch-only, Lightning-free helpers (matrainer.torch: checkpoint + the metric helpers).
+# torchmetrics is here rather than in [lightning] since 2026-08-01: `matrainer.torch.metrics`
 # builds `MetricCollection`s and never touches pytorch_lightning, so a consumer training on
-# plain torch needs it — see marainer/torch/metrics.py.
+# plain torch needs it — see matrainer/torch/metrics.py.
 torch = ["torch", "torchmetrics"]
-# PyTorch-Lightning tracking helpers (marainer.lightning: TrackingCallback / TrackerLogger + metric utils).
-lightning = ["marainer[torch]", "pytorch-lightning", "torchmetrics", "tabulate", "matplotlib"]
+# PyTorch-Lightning tracking helpers (matrainer.lightning: TrackingCallback / TrackerLogger + metric utils).
+lightning = ["matrainer[torch]", "pytorch-lightning", "torchmetrics", "tabulate", "matplotlib"]
 # Rendering a non-scalar run value (a confusion matrix) as a FIGURE for `Tracker.log_figure`.
 # The markdown-table form needs no extra beyond `tabulate`; only the heatmap needs matplotlib,
-# which is why it is opt-in — see marainer/tracking/render.py::render_matrix_as_figure.
+# which is why it is opt-in — see matrainer/tracking/render.py::render_matrix_as_figure.
 plot = ["matplotlib"]
 # The MlflowTracker backend + MLflow system metrics. pyobjc powers the inline IOAccelerator
-# reader (Apple-Silicon GPU utilisation, no sudo) in marainer.tracking.system.
+# reader (Apple-Silicon GPU utilisation, no sudo) in matrainer.tracking.system.
 mlflow = [
     "mlflow",
     "psutil",
@@ -44,7 +44,7 @@ mlflow = [
     "pyobjc-framework-Cocoa; sys_platform == 'darwin'",
 ]
 # The TensorBoardTracker backend uses torch.utils.tensorboard, so it implies [torch].
-tensorboard = ["marainer[torch]"]
+tensorboard = ["matrainer[torch]"]
 # The WandbTracker backend.
 wandb = ["wandb"]
 # The AimTracker backend. Aim is Apache-2.0 and fully self-hosted — runs land in a local
@@ -53,7 +53,7 @@ aim = ["aim>=3.29"]
 # The ClearMLTracker backend. Apache-2.0 with a self-hostable server (docker-compose);
 # `offline=True` records to local disk with no server and no credentials at all.
 clearml = ["clearml>=2.0"]
-# Keras tracking helper (marainer.keras.keras_tracking_callback). Keras 3 is standalone and
+# Keras tracking helper (matrainer.keras.keras_tracking_callback). Keras 3 is standalone and
 # picks its own compute backend (torch / tensorflow / jax) via KERAS_BACKEND, so this extra
 # must NOT drag TensorFlow in — a consumer on the torch backend never asked for it.
 # `recordstream[keras]` is declared because the callback imports keras THROUGH
@@ -61,9 +61,9 @@ clearml = ["clearml>=2.0"]
 # same `keras` named above; recordstream itself is already a hard dependency).
 keras = ["keras>=3.0", "recordstream[keras]>=0.1.0"]
 # Only for a consumer that genuinely wants the TensorFlow ENGINE underneath Keras 3.
-tensorflow = ["marainer[keras]", "tensorflow>=2.16"]
+tensorflow = ["matrainer[keras]", "tensorflow>=2.16"]
 # Everything a workspace install wants.
-all = ["marainer[lightning,mlflow,tensorboard,wandb,aim,clearml,keras,plot]"]
+all = ["matrainer[lightning,mlflow,tensorboard,wandb,aim,clearml,keras,plot]"]
 dev = [
     "black>=24.0.0,<25.0.0",
     "isort>=5.13.0,<6.0.0",
@@ -78,15 +78,15 @@ torpaido = [
 
 [project.entry-points."confluid.configurables"]
 # Light root: the tracking backends, run-name helper, and checkpoint policies.
-marainer = "marainer"
+matrainer = "matrainer"
 # The four Tracker backends + TrackerGroup (import-safe; each lazily imports its library).
-marainer-tracking = "marainer.tracking"
+matrainer-tracking = "matrainer.tracking"
 # (The predictions sink moved to recordstream 2026-07-29 — see `recordstream.predictions`, which
-# recordstream discovers through its own entry point; there is no marainer-sinks group any more.)
+# recordstream discovers through its own entry point; there is no matrainer-sinks group any more.)
 # The Lightning platform: registers the deferred runtime members (torch optimizers / DataLoader /
 # pl.Trainer) + stock Lightning loggers, and re-exports the tracking callbacks / MetricPreset. Imports
 # pytorch_lightning — discovery must warn-and-continue on a light install without the [lightning] extra.
-marainer-lightning = "marainer.lightning.configurables"
+matrainer-lightning = "matrainer.lightning.configurables"
 
 # Which of this project's extras belong to each aisland selection axis. Selecting a name here
 # is what makes `aisland setup` add the matching extra to this project's install.
@@ -95,7 +95,7 @@ marainer-lightning = "marainer.lightning.configurables"
 # `trackers` is where its results GO. They are unrelated choices, and folding the backends into
 # `frameworks` would install a tracking client because someone picked a training engine.
 #
-# `frameworks` lists the per-framework TRACKING helpers (marainer.lightning / .keras).
+# `frameworks` lists the per-framework TRACKING helpers (matrainer.lightning / .keras).
 # `trackers` lists the Tracker backends; `CsvTracker` is absent on purpose — it is stdlib-only,
 # always available, and has no extra to select.
 [tool.aisland]
@@ -104,16 +104,16 @@ trackers = ["mlflow", "tensorboard", "aim", "clearml", "wandb"]
 
 [tool.setuptools.packages.find]
 where = ["."]
-include = ["marainer*"]
+include = ["matrainer*"]
 
 [tool.setuptools.package-data]
-marainer = ["py.typed"]
+matrainer = ["py.typed"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 
 [tool.coverage.run]
-source = ["marainer"]
+source = ["matrainer"]
 branch = true
 # The discovery test writes a real backend module into the package directory and deletes it
 # again (mocking the scan would test the mock) — coverage records the file, then finds no source

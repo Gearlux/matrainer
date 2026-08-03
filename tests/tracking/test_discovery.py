@@ -11,9 +11,9 @@ from typing import Any, Iterator
 
 import pytest
 
-import marainer
-from marainer import tracking
-from marainer.tracking.base import Tracker
+import matrainer
+from matrainer import tracking
+from matrainer.tracking.base import Tracker
 
 #: Stem of the throwaway backend module the discovery test writes into the package directory.
 #: It is deleted again, so coverage records a file it can then find no source for — pyproject's
@@ -64,19 +64,19 @@ def test_the_base_classes_are_not_mistaken_for_backends() -> None:
     assert "Tracker" not in found and "TrackerGroup" not in found
 
 
-@pytest.mark.parametrize("module", [tracking, marainer])
+@pytest.mark.parametrize("module", [tracking, matrainer])
 def test_backends_resolve_as_attributes(module: Any) -> None:
     assert module.CsvTracker is tracking.discover_backends()["CsvTracker"]
-    assert module.AimTracker.__module__ == "marainer.tracking.aim_backend"
+    assert module.AimTracker.__module__ == "matrainer.tracking.aim_backend"
 
 
-@pytest.mark.parametrize("module", [tracking, marainer])
+@pytest.mark.parametrize("module", [tracking, matrainer])
 def test_all_and_dir_include_the_backends(module: Any) -> None:
     assert EXPECTED <= set(module.__all__)
     assert EXPECTED <= set(dir(module))
 
 
-@pytest.mark.parametrize("module", [tracking, marainer])
+@pytest.mark.parametrize("module", [tracking, matrainer])
 def test_an_unknown_attribute_still_raises(module: Any) -> None:
     with pytest.raises(AttributeError, match="has no attribute 'NopeTracker'"):
         getattr(module, "NopeTracker")
@@ -98,7 +98,7 @@ def test_a_new_backend_file_needs_no_edit_to_an_existing_file(fresh_scan: None) 
     new_module = package_dir / f"{TEMP_BACKEND_STEM}{tracking.BACKEND_SUFFIX}.py"
     new_module.write_text(
         "from typing import Any, Mapping, Optional\n"
-        "from marainer.tracking.base import Tracker\n"
+        "from matrainer.tracking.base import Tracker\n"
         "\n"
         "class ZzzTempTracker(Tracker):\n"
         "    @property\n"

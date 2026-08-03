@@ -1,6 +1,6 @@
-"""The light-core import contract: ``import marainer`` pulls in no heavy optional backend.
+"""The light-core import contract: ``import matrainer`` pulls in no heavy optional backend.
 
-Marainer is a tracking library with a deliberately light core (confluid / liquifai / loggair /
+Matrainer is a tracking library with a deliberately light core (confluid / liquifai / loggair /
 coolname / numpy). Every heavy library (torch, pytorch-lightning, mlflow, tensorboard, wandb,
 tensorflow) is behind an extra and imported lazily inside the backend that needs it — see
 ``docs/architecture.md`` record 2. This test guards that invariant.
@@ -39,21 +39,21 @@ def _import_and_report(import_stmt: str) -> set:
     return {m for m in line.split(",") if m}
 
 
-def test_import_marainer_is_light() -> None:
-    """``import marainer`` imports no torch / lightning / mlflow / wandb / tensorboard / tensorflow."""
-    assert _import_and_report("import marainer") == set()
+def test_import_matrainer_is_light() -> None:
+    """``import matrainer`` imports no torch / lightning / mlflow / wandb / tensorboard / tensorflow."""
+    assert _import_and_report("import matrainer") == set()
 
 
-def test_import_marainer_tracking_is_light() -> None:
-    """``import marainer.tracking`` (the four backends) stays import-safe — no backend library loaded."""
-    assert _import_and_report("import marainer.tracking") == set()
+def test_import_matrainer_tracking_is_light() -> None:
+    """``import matrainer.tracking`` (the four backends) stays import-safe — no backend library loaded."""
+    assert _import_and_report("import matrainer.tracking") == set()
 
 
 def test_csv_tracker_needs_no_backend_library() -> None:
     """Constructing + using the stdlib ``CsvTracker`` pulls in no heavy backend library."""
     stmt = (
-        "import marainer\n"
-        't = marainer.CsvTracker(save_dir="/tmp/marainer_light_test")\n'
+        "import matrainer\n"
+        't = matrainer.CsvTracker(save_dir="/tmp/matrainer_light_test")\n'
         't.log_hyperparams({"lr": 0.1})\n'
         't.log_metrics({"loss": 1.0}, step=0)\n'
         't.finalize("FINISHED")'

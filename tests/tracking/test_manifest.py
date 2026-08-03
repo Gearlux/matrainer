@@ -1,4 +1,4 @@
-"""Tests for :mod:`marainer.tracking.manifest` — the crash-safe run manifest.
+"""Tests for :mod:`matrainer.tracking.manifest` — the crash-safe run manifest.
 
 The three properties worth pinning, all easy to regress:
 
@@ -23,10 +23,10 @@ from typing import Any, Dict, List, Mapping, Optional, Tuple, get_args
 import pytest
 import yaml
 
-from marainer.tracking import CsvTracker, Tracker, TrackerGroup
-from marainer.tracking import manifest as manifest_module
-from marainer.tracking import provenance
-from marainer.tracking.manifest import (
+from matrainer.tracking import CsvTracker, Tracker, TrackerGroup
+from matrainer.tracking import manifest as manifest_module
+from matrainer.tracking import provenance
+from matrainer.tracking.manifest import (
     LIST_SECTIONS,
     MANIFEST_JSON,
     MANIFEST_VERSION,
@@ -179,7 +179,7 @@ def test_every_mutation_rewrites(tmp_path: Path) -> None:
     m = RunManifest(run_dir=tmp_path)
     m.set("env", {"python": "3.13"})
     assert read_yaml(m)["env"] == {"python": "3.13"}  # no explicit write() call
-    m.add("code", {"name": "marainer", "commit": "abc", "dirty": False})
+    m.add("code", {"name": "matrainer", "commit": "abc", "dirty": False})
     assert read_yaml(m)["code"][0]["commit"] == "abc"
 
 
@@ -434,7 +434,7 @@ def test_a_real_sigint_lands_as_interrupted_without_swallowing_ctrl_c(tmp_path: 
     out = tmp_path / "out"
     child.write_text(
         "import sys, time\n"
-        "from marainer.tracking import RunManifest\n"
+        "from matrainer.tracking import RunManifest\n"
         f"m = RunManifest(run_dir={str(out)!r}, run_name='r')\n"
         "m.set('params', {'lr': 0.1})\n"
         "print('READY', flush=True)\n"
@@ -1056,7 +1056,7 @@ def test_capture_datasets_with_nothing_identifiable_is_a_noop(tmp_path: Path) ->
 
 class _IdentifiedModel:
     def __init__(self, *refs: Any) -> None:
-        from marainer.uri import ModelRef
+        from matrainer.uri import ModelRef
 
         self.model_refs = [r if isinstance(r, ModelRef) else ModelRef(*r) for r in refs]
 
@@ -1064,7 +1064,7 @@ class _IdentifiedModel:
 def test_capture_models_records_what_the_configuration_loads(tmp_path: Path) -> None:
     from confluid import configurable
 
-    from marainer.uri import hf_model_ref
+    from matrainer.uri import hf_model_ref
 
     @configurable
     class ModelToy:
@@ -1082,7 +1082,7 @@ def test_capture_models_writes_the_whole_list_in_one_pass(tmp_path: Path) -> Non
     """One write for N artifacts — the same reason `capture_datasets` and `capture_code` do."""
     from confluid import configurable
 
-    from marainer.uri import file_model_ref, hf_model_ref
+    from matrainer.uri import file_model_ref, hf_model_ref
 
     @configurable
     class ModelToy:

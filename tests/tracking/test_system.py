@@ -6,7 +6,7 @@ from unittest.mock import MagicMock
 
 import pytest
 
-from marainer.tracking import system
+from matrainer.tracking import system
 
 
 def test_resolve_interval_explicit_wins(monkeypatch: pytest.MonkeyPatch) -> None:

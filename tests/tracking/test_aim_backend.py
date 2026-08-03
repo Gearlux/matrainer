@@ -7,7 +7,7 @@ from typing import Any, Dict, List, Optional
 
 import pytest
 
-from marainer.tracking.aim_backend import AIM_SYSTEM_INTERVAL, AimTracker
+from matrainer.tracking.aim_backend import AIM_SYSTEM_INTERVAL, AimTracker
 
 
 class _FakeRun:
@@ -63,10 +63,10 @@ def fake_aim(monkeypatch: pytest.MonkeyPatch) -> Any:
 
 def test_import_error_names_the_extra(monkeypatch: pytest.MonkeyPatch) -> None:
     def fake_require(module: str, extra: str, feature: str = "") -> Any:
-        raise ImportError(f"{feature} requires the '{module}' package. Install with: pip install marainer[{extra}]")
+        raise ImportError(f"{feature} requires the '{module}' package. Install with: pip install matrainer[{extra}]")
 
-    monkeypatch.setattr("marainer.tracking.aim_backend.require", fake_require)
-    with pytest.raises(ImportError, match=r"pip install marainer\[aim\]"):
+    monkeypatch.setattr("matrainer.tracking.aim_backend.require", fake_require)
+    with pytest.raises(ImportError, match=r"pip install matrainer\[aim\]"):
         _ = AimTracker().experiment
 
 
@@ -87,7 +87,7 @@ def test_system_tracking_follows_the_flag(fake_aim: Any, tmp_path: Path) -> None
 
 
 def test_terminal_capture_is_off_by_default(fake_aim: Any, tmp_path: Path) -> None:
-    """Aim's own default is True; loggair already writes the log marainer uploads."""
+    """Aim's own default is True; loggair already writes the log matrainer uploads."""
     assert AimTracker(save_dir=str(tmp_path)).experiment.kwargs["capture_terminal_logs"] is False
 
 
@@ -99,7 +99,7 @@ def test_version_is_the_run_hash(fake_aim: Any, tmp_path: Path) -> None:
 
 
 def test_log_hyperparams_merges_across_calls(fake_aim: Any, tmp_path: Path) -> None:
-    """Aim replaces `run["hparams"]` wholesale, but marainer's contract is to merge."""
+    """Aim replaces `run["hparams"]` wholesale, but matrainer's contract is to merge."""
     t = AimTracker(save_dir=str(tmp_path))
     t.log_hyperparams({"lr": 0.1})
     t.log_hyperparams({"epochs": 3})
@@ -202,7 +202,7 @@ def test_log_dir_is_none_so_the_manifest_is_uploaded(fake_aim: Any, tmp_path: Pa
 
 
 def test_manifest_reaches_aim_as_artifacts_and_hparams(fake_aim: Any, tmp_path: Path) -> None:
-    from marainer.tracking.manifest import RunManifest
+    from matrainer.tracking.manifest import RunManifest
 
     m = RunManifest(run_dir=tmp_path / "run", handle_interrupts=False)
     m.set("params", {"lr": 0.1})
@@ -252,7 +252,7 @@ def test_round_trip_against_real_aim(tmp_path: Path) -> None:
 
 def test_log_manifest_projects_the_sections_as_run_values(fake_aim: Any, tmp_path: Path) -> None:
     """Aim's native slot is a structured run value, which its UI can filter and compare."""
-    from marainer.tracking.manifest import RunManifest
+    from matrainer.tracking.manifest import RunManifest
 
     m = RunManifest(run_dir=tmp_path / "run", handle_interrupts=False)
     m.set("params", {"lr": 0.1})
@@ -269,7 +269,7 @@ def test_log_manifest_projects_the_sections_as_run_values(fake_aim: Any, tmp_pat
 
 def test_params_are_not_projected_twice(fake_aim: Any, tmp_path: Path) -> None:
     """`hparams` is Aim's own comparison slot; a second copy would only ever disagree."""
-    from marainer.tracking.manifest import RunManifest
+    from matrainer.tracking.manifest import RunManifest
 
     m = RunManifest(run_dir=tmp_path / "run", handle_interrupts=False)
     m.set("params", {"lr": 0.1})
@@ -280,7 +280,7 @@ def test_params_are_not_projected_twice(fake_aim: Any, tmp_path: Path) -> None:
 
 
 def test_empty_sections_are_skipped(fake_aim: Any, tmp_path: Path) -> None:
-    from marainer.tracking.manifest import RunManifest
+    from matrainer.tracking.manifest import RunManifest
 
     AimTracker(save_dir=str(tmp_path / "repo")).log_manifest(
         RunManifest(run_dir=tmp_path / "run", handle_interrupts=False)
@@ -295,7 +295,7 @@ def test_the_status_is_not_projected_at_log_time(fake_aim: Any, tmp_path: Path) 
     Measured against real Aim: `log_manifest` runs mid-run, so a status projected there is
     always `running` and a filter on it matches nothing.
     """
-    from marainer.tracking.manifest import RunManifest
+    from matrainer.tracking.manifest import RunManifest
 
     tracker = AimTracker(save_dir=str(tmp_path / "repo"))
     tracker.log_manifest(RunManifest(run_dir=tmp_path / "run", handle_interrupts=False))

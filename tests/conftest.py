@@ -6,7 +6,7 @@ depends on the shell it was launched from.
 
 import pytest
 
-from marainer.tracking.provenance import PORTABLE_ROOT_VARS
+from matrainer.tracking.provenance import PORTABLE_ROOT_VARS
 
 
 @pytest.fixture(autouse=True)

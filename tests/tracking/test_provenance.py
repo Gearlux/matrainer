@@ -9,8 +9,8 @@ from typing import Any, Dict, List, Mapping, Optional
 import pytest
 import yaml
 
-from marainer.tracking import CsvTracker, provenance
-from marainer.tracking.base import Tracker
+from matrainer.tracking import CsvTracker, provenance
+from matrainer.tracking.base import Tracker
 
 
 def make_repo(path: Path, dirty: bool = False) -> Path:
@@ -59,7 +59,7 @@ class RecordingTracker(Tracker):
 
 
 def test_get_git_commit_hash_in_repo() -> None:
-    # marainer is a git repo — expect a hash string (possibly '-dirty'), not None.
+    # matrainer is a git repo — expect a hash string (possibly '-dirty'), not None.
     h = provenance.get_git_commit_hash()
     assert h is None or isinstance(h, str)
 
@@ -144,7 +144,7 @@ def test_explicit_params_win_over_derived_ones(tmp_path: Path, monkeypatch: pyte
 
 
 def test_log_run_context_reuses_a_supplied_manifest(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    from marainer.tracking.manifest import RunManifest
+    from matrainer.tracking.manifest import RunManifest
 
     monkeypatch.chdir(tmp_path)
     mine = RunManifest(run_dir=tmp_path / "mine", run_name="chosen", handle_interrupts=False)
@@ -208,7 +208,7 @@ def test_the_run_is_ended_AFTER_the_artifacts_are_pushed(monkeypatch: pytest.Mon
     next access starts a NEW one — so an upload sequenced after the ending would land somewhere
     else entirely.
     """
-    from marainer.tracking.manifest import RunManifest
+    from matrainer.tracking.manifest import RunManifest
 
     log = tmp_path / "app.log"
     log.write_text("line")
@@ -261,7 +261,7 @@ def test_capture_log_file_empty_trackers_is_noop() -> None:
 
 def test_capture_log_file_finishes_and_reprojects_the_manifest(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     """The end-of-run half of the fold: what the backend holds matches what is on disk."""
-    from marainer.tracking.manifest import RunManifest
+    from matrainer.tracking.manifest import RunManifest
 
     monkeypatch.setattr(provenance, "resolve_log_file", lambda: None)
     m = RunManifest(run_dir=tmp_path, handle_interrupts=False)
@@ -275,7 +275,7 @@ def test_capture_log_file_finishes_and_reprojects_the_manifest(tmp_path: Path, m
 def test_capture_log_file_leaves_an_already_finished_manifest_alone(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    from marainer.tracking.manifest import RunManifest
+    from matrainer.tracking.manifest import RunManifest
 
     monkeypatch.setattr(provenance, "resolve_log_file", lambda: None)
     m = RunManifest(run_dir=tmp_path, handle_interrupts=False)
@@ -287,7 +287,7 @@ def test_capture_log_file_leaves_an_already_finished_manifest_alone(
 def test_capture_log_file_uploads_both_the_log_and_the_manifest(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    from marainer.tracking.manifest import RunManifest
+    from matrainer.tracking.manifest import RunManifest
 
     log = tmp_path / "run.log"
     log.write_text("line")
@@ -626,9 +626,9 @@ def test_environment_snapshot_honours_custom_prefixes(monkeypatch: pytest.Monkey
     A test that reads the ambient environment has to pick a name the ambient environment
     cannot supply.
     """
-    monkeypatch.setenv("MARAINER_TEST_DATA_ROOT", "/data")
+    monkeypatch.setenv("MATRAINER_TEST_DATA_ROOT", "/data")
     monkeypatch.setenv("MLFLOW_TRACKING_URI", "http://x")  # a default-prefix decoy the filter must drop
-    assert provenance.environment_snapshot(prefixes=["MARAINER_TEST_"]) == {"MARAINER_TEST_DATA_ROOT": "/data"}
+    assert provenance.environment_snapshot(prefixes=["MATRAINER_TEST_"]) == {"MATRAINER_TEST_DATA_ROOT": "/data"}
 
 
 def test_platform_state_reports_the_interpreter_and_machine() -> None:
@@ -790,7 +790,7 @@ def test_the_manifest_carries_the_pasteable_line_beside_the_raw_argv(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
     """Both stay: `argv` is what `primary_code` parses, `line` is what a person re-runs."""
-    from marainer.tracking.manifest import RunManifest
+    from matrainer.tracking.manifest import RunManifest
 
     monkeypatch.chdir(tmp_path)
     set_argv(monkeypatch, ["/pkg/cli.py", "run"], spec_name="pkg.cli")
@@ -804,7 +804,7 @@ def test_the_manifest_carries_the_pasteable_line_beside_the_raw_argv(
 def test_the_manifest_omits_the_line_when_there_is_no_honest_one(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
-    from marainer.tracking.manifest import RunManifest
+    from matrainer.tracking.manifest import RunManifest
 
     set_argv(monkeypatch, ["-c"])
     m = RunManifest(run_dir=tmp_path / "run")
@@ -1017,7 +1017,7 @@ class ToyModel:
     """A model wrapper carrying the identity protocol, standing in for a real one."""
 
     def __init__(self, *refs: Any) -> None:
-        from marainer.uri import ModelRef
+        from matrainer.uri import ModelRef
 
         self.model_refs = [r if isinstance(r, ModelRef) else ModelRef(*r) for r in refs]
 
@@ -1036,7 +1036,7 @@ def _model_toy() -> Any:
 
 def test_configured_models_derives_kind_and_name_from_the_uri() -> None:
     """Nothing here knows what a timm model is — the URI carries the classification."""
-    from marainer.uri import hf_model_ref
+    from matrainer.uri import hf_model_ref
 
     toy = _model_toy()(model=ToyModel(hf_model_ref("timm/resnet50.a1_in1k")))
     entries = provenance.configured_models(toy)
@@ -1051,7 +1051,7 @@ def test_configured_models_derives_kind_and_name_from_the_uri() -> None:
 
 def test_one_wrapper_may_contribute_several_entries_with_distinct_roles(tmp_path: Path) -> None:
     """The reason the model protocol is plural: a fine-tuned backbone loaded TWO artifacts."""
-    from marainer.uri import file_model_ref, hf_model_ref
+    from matrainer.uri import file_model_ref, hf_model_ref
 
     checkpoint = tmp_path / "last.ckpt"
     toy = _model_toy()(model=ToyModel(hf_model_ref("timm/resnet50.a1_in1k"), file_model_ref(checkpoint)))
@@ -1065,14 +1065,14 @@ def test_one_wrapper_may_contribute_several_entries_with_distinct_roles(tmp_path
 
 def test_several_models_in_one_graph_are_all_recorded() -> None:
     """A pipeline composing models is the same shape one level up."""
-    from marainer.uri import hf_model_ref
+    from matrainer.uri import hf_model_ref
 
     toy = _model_toy()(model=ToyModel(hf_model_ref("org/student")), teacher=ToyModel(hf_model_ref("org/teacher")))
     assert sorted(e["name"] for e in provenance.configured_models(toy)) == ["org/student", "org/teacher"]
 
 
 def test_the_same_artifact_reached_twice_is_recorded_once() -> None:
-    from marainer.uri import hf_model_ref
+    from matrainer.uri import hf_model_ref
 
     shared = ToyModel(hf_model_ref("org/net"))
     toy = _model_toy()(model=shared, teacher=ToyModel(hf_model_ref("org/net")))
@@ -1092,7 +1092,7 @@ def test_configured_models_never_raises_on_an_unwalkable_object() -> None:
 def test_log_run_context_records_the_models_without_the_consumer_asking(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    from marainer.uri import hf_model_ref
+    from matrainer.uri import hf_model_ref
 
     monkeypatch.chdir(tmp_path)
     toy = _model_toy()(model=ToyModel(hf_model_ref("timm/resnet50.a1_in1k")))
@@ -1258,7 +1258,7 @@ class _FakeModule:
 class _FakeBackbone(_FakeModule):
     @property
     def model_refs(self) -> List[Any]:
-        from marainer.uri import ModelRef
+        from matrainer.uri import ModelRef
 
         return [ModelRef(uri="hf://models/acme/net", url=None, role="pretrained")]
 
@@ -1357,7 +1357,7 @@ def test_a_checkpoint_model_carries_its_digest_into_the_manifest(tmp_path: Path)
     """End to end through the walk: a `file://` model ref gains size + digest."""
     from confluid import configurable
 
-    from marainer.uri import file_model_ref, hf_model_ref
+    from matrainer.uri import file_model_ref, hf_model_ref
 
     weights = tmp_path / "last.ckpt"
     weights.write_bytes(b"weights")

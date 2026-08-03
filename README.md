@@ -1,45 +1,54 @@
-# Marainer
+# Matrainer
 
 **Experiment-tracking library** for machine-learning runs — parameters, git provenance, log
 files, config artifacts, figures, metric values, and system metrics — logged to whichever backend
 you use (MLflow, TensorBoard, CSV, Weights & Biases), across whichever training platform you run
 (PyTorch Lightning, TensorFlow/Keras, Ultralytics, a bare training loop).
 
-Marainer holds **no training loop, no trainer/evaluator class, and no CLI.** A class that trains
-reads like a standard example for its framework and lives in *your* project; it reaches for Marainer
-only to *track* the run. The guiding invariant: **removing Marainer should cost only a couple of
+Matrainer holds **no training loop, no trainer/evaluator class, and no CLI.** A class that trains
+reads like a standard example for its framework and lives in *your* project; it reaches for Matrainer
+only to *track* the run. The guiding invariant: **removing Matrainer should cost only a couple of
 line changes** — the run keeps training (with loggair logging), it just loses the rich tracking.
+
+## The name
+
+**Matrainer** is a portmanteau of **mariner** — the one who keeps the log, recording every heading,
+every reading and every condition of the voyage — and **trainer**, the thing being logged. That is
+the whole job description: it does not steer the ship, it writes down where it went. A mariner's log
+is also why the [run manifest](#the-run-manifest) is the *union* of everything known about a run
+rather than whatever the current backend happens to have a field for — a logbook that only recorded
+what this port cares about would be useless at the next one.
 
 ## Installation
 
 ```bash
-pip install git+https://github.com/Gearlux/marainer.git@main
+pip install git+https://github.com/Gearlux/matrainer.git@main
 ```
 
 The core install is light — `confluid` / `liquifai` / `loggair` / `coolname` / `numpy` only.
-`import marainer` pulls in **no** torch, pytorch-lightning, mlflow, or wandb. Everything heavy is
+`import matrainer` pulls in **no** torch, pytorch-lightning, mlflow, or wandb. Everything heavy is
 behind an extra and lazily imported the first time you use its backend:
 
 | Extra | Pulls in | Enables |
 |---|---|---|
-| `marainer[torch]` | `torch`, `torchmetrics` | `marainer.torch` — checkpoint loading, the metric helpers, `resolve_device` |
-| `marainer[lightning]` | torch, `pytorch-lightning`, `torchmetrics`, `tabulate`, `matplotlib` | `marainer.lightning` — Lightning tracking callbacks |
-| `marainer[mlflow]` | `mlflow`, `psutil`, `pyobjc` (macOS) | `MlflowTracker` + system metrics |
-| `marainer[tensorboard]` | torch (`torch.utils.tensorboard`) | `TensorBoardTracker` |
-| `marainer[wandb]` | `wandb` | `WandbTracker` |
-| `marainer[aim]` | `aim` | `AimTracker` |
-| `marainer[clearml]` | `clearml` | `ClearMLTracker` |
-| `marainer[keras]` | `keras` | `marainer.keras.keras_tracking_callback` |
-| `marainer[plot]` | `matplotlib` | `render_matrix_as_figure` / `render_vector_as_figure` — a confusion matrix as a heatmap, a per-class metric as a bar chart, for `log_figure` |
-| `marainer[tensorflow]` | `marainer[keras]`, `tensorflow` | the same helper, with the TensorFlow engine underneath |
-| `marainer[all]` | every extra above | everything |
+| `matrainer[torch]` | `torch`, `torchmetrics` | `matrainer.torch` — checkpoint loading, the metric helpers, `resolve_device` |
+| `matrainer[lightning]` | torch, `pytorch-lightning`, `torchmetrics`, `tabulate`, `matplotlib` | `matrainer.lightning` — Lightning tracking callbacks |
+| `matrainer[mlflow]` | `mlflow`, `psutil`, `pyobjc` (macOS) | `MlflowTracker` + system metrics |
+| `matrainer[tensorboard]` | torch (`torch.utils.tensorboard`) | `TensorBoardTracker` |
+| `matrainer[wandb]` | `wandb` | `WandbTracker` |
+| `matrainer[aim]` | `aim` | `AimTracker` |
+| `matrainer[clearml]` | `clearml` | `ClearMLTracker` |
+| `matrainer[keras]` | `keras` | `matrainer.keras.keras_tracking_callback` |
+| `matrainer[plot]` | `matplotlib` | `render_matrix_as_figure` / `render_vector_as_figure` — a confusion matrix as a heatmap, a per-class metric as a bar chart, for `log_figure` |
+| `matrainer[tensorflow]` | `matrainer[keras]`, `tensorflow` | the same helper, with the TensorFlow engine underneath |
+| `matrainer[all]` | every extra above | everything |
 
-A missing backend library raises one clear error — e.g. `pip install marainer[mlflow]` — never a
+A missing backend library raises one clear error — e.g. `pip install matrainer[mlflow]` — never a
 bare `ModuleNotFoundError`.
 
 ## The `Tracker` — the one abstraction
 
-`marainer.Tracker` (in `marainer.tracking.base`) mirrors the `pytorch_lightning.loggers.Logger`
+`matrainer.Tracker` (in `matrainer.tracking.base`) mirrors the `pytorch_lightning.loggers.Logger`
 shape so it drops into any framework's logger slot, plus a few extensions:
 
 ```
@@ -65,8 +74,8 @@ one **zero-arg constructible** (the native handle is built on first `.experiment
 | `WandbTracker` | `wandb` | minimal, mock-tested |
 
 **Backends are discovered, not listed.** Adding one is a *single new file* — drop
-`marainer/tracking/<name>_backend.py` in with a `Tracker` subclass and it resolves by name from
-both `marainer.tracking` and `marainer`, appears in `dir()` and `__all__`, and needs no import
+`matrainer/tracking/<name>_backend.py` in with a `Tracker` subclass and it resolves by name from
+both `matrainer.tracking` and `matrainer`, appears in `dir()` and `__all__`, and needs no import
 line, no `__all__` entry, and no registry edit. `discover_backends()` returns the map if you want
 it. A backend shipped by a *different* distribution is discovered through the
 `confluid.configurables` entry point instead, with no change here at all.
@@ -74,7 +83,7 @@ it. A backend shipped by a *different* distribution is discovered through the
 `TrackerGroup([...])` fans one call out to several backends behind the same surface.
 
 ```python
-from marainer import CsvTracker, MlflowTracker, TrackerGroup
+from matrainer import CsvTracker, MlflowTracker, TrackerGroup
 
 tracker = TrackerGroup([CsvTracker(), MlflowTracker(experiment_name="drone-classify")])
 tracker.log_hyperparams({"lr": 1e-3, "batch_size": 32})
@@ -88,7 +97,7 @@ Trackers are `@configurable`, so they also wire straight from YAML.
 ## Choosing a backend
 
 The `Tracker` surface is the same everywhere, so the choice is about **where the results live** and
-**what it costs to run**, not about the API. Marainer's own selection criterion for what it
+**what it costs to run**, not about the API. Matrainer's own selection criterion for what it
 implements in-tree is *free and self-hostable* — you should be able to `pip install`, start a server
 on your own machine, and see your runs, with no account and no licence key.
 
@@ -142,8 +151,8 @@ than once per run and your backend cannot take a second ending (MLflow can; `Wan
 cannot, since its `finish()` drops the run handle).
 
 ```python
-from marainer import CsvTracker, MlflowTracker, log_run_context
-from marainer.tracking import capture_log_file
+from matrainer import CsvTracker, MlflowTracker, log_run_context
+from matrainer.tracking import capture_log_file
 
 trackers = [CsvTracker(), MlflowTracker(experiment_name="drone-classify")]
 
@@ -181,7 +190,7 @@ never an alternative. That is what keeps a run tracked to a server comparable wi
 tracked to a local directory.
 
 ```python
-from marainer import CsvTracker, RunManifest
+from matrainer import CsvTracker, RunManifest
 
 tracker = CsvTracker(experiment_name="drone-classify")
 manifest = RunManifest(
@@ -278,7 +287,7 @@ A mistyped section name raises rather than silently creating a key, and `set` on
 ### What the `capture_*` calls collect
 
 **`capture_environment()`** — `argv`, cwd, interpreter, platform, and the accelerator, read from
-the framework *already loaded* in the process (marainer never imports torch to find out). Plus the
+the framework *already loaded* in the process (matrainer never imports torch to find out). Plus the
 run-relevant environment variables, selected by prefix (`MLFLOW_`, `CUDA_`, `HF_`, `WANDB_`, …):
 
 ```python
@@ -319,7 +328,7 @@ every editable package on `sys.path`:
 ```yaml
 code:
 - {name: confluid,  path: /w/confluid,  commit: 3f9c0e09…, dirty: false, branch: dev/main, remote: …}
-- {name: marainer,  path: /w/marainer,  commit: db120840…, dirty: true,  branch: dev/main, remote: …}
+- {name: matrainer,  path: /w/matrainer,  commit: db120840…, dirty: true,  branch: dev/main, remote: …}
 ```
 
 `dirty` is `null`, not `false`, when the probe itself failed — "unknown" and "clean" are very
@@ -372,7 +381,7 @@ the canonical handle two runs are compared on; `url` is a link you can open, and
 with no web page. A run whose sources carry no identifier records nothing, which is not an error.
 
 **`capture_models(runnable)`** — the same walk for weights. A model wrapper reports the artifacts it
-loads (`marainer.uri.model_refs`), and **one wrapper may report several**, because a backbone
+loads (`matrainer.uri.model_refs`), and **one wrapper may report several**, because a backbone
 fine-tuned from a checkpoint used two:
 
 ```yaml
@@ -391,7 +400,7 @@ nothing; the architecture it used is configuration, and is already in `params`.
 **Making your own model wrapper report** is one property, and there is nothing to register:
 
 ```python
-from marainer.uri import ModelRef, file_model_ref, hf_model_ref
+from matrainer.uri import ModelRef, file_model_ref, hf_model_ref
 
 class MyModel:
     @property
@@ -477,7 +486,7 @@ than picking arbitrarily. An empty field sends you to the manifest; a wrong one 
 
 ## Three ways to hook tracking into PyTorch Lightning
 
-`marainer.lightning` (behind `[lightning]`) is **optional tracking helpers**, not a platform. Your
+`matrainer.lightning` (behind `[lightning]`) is **optional tracking helpers**, not a platform. Your
 `LightningModule` stays a standard one; pick whichever hookup fits — the choice is yours:
 
 **1. Plain functions** — call `log_run_context` / `capture_log_file` from your own run wrapper
@@ -488,8 +497,8 @@ finishes the manifest (plus the log file) on end:
 
 ```python
 import pytorch_lightning as pl
-from marainer import CsvTracker
-from marainer.lightning import TrackingCallback
+from matrainer import CsvTracker
+from matrainer.lightning import TrackingCallback
 
 trainer = pl.Trainer(
     max_epochs=10,
@@ -503,19 +512,19 @@ derived. The manifest is on the callback as `.manifest` from fit/test start onwa
 that raises is recorded as `failed` (or `interrupted` on Ctrl-C) rather than left to look
 successful.
 
-**3. The `TrackerLogger` bridge** — hand a Marainer `Tracker` to `Trainer(logger=…)` so it receives
+**3. The `TrackerLogger` bridge** — hand a Matrainer `Tracker` to `Trainer(logger=…)` so it receives
 per-step metrics like any pl logger:
 
 ```python
-from marainer.lightning import TrackerLogger
+from matrainer.lightning import TrackerLogger
 trainer = pl.Trainer(logger=TrackerLogger(MlflowTracker(experiment_name="exp")))
 ```
 
-Metrics may equally stay on stock `pytorch_lightning.loggers.*` — Marainer **uses** pl loggers,
+Metrics may equally stay on stock `pytorch_lightning.loggers.*` — Matrainer **uses** pl loggers,
 never reimplements them.
 
-`marainer.lightning` also re-exports the metric utilities (`build_metric_collection`,
-`MetricPreset`, `coerce_metric_value`, `scalar_metrics`) — they LIVE in `marainer.torch` since
+`matrainer.lightning` also re-exports the metric utilities (`build_metric_collection`,
+`MetricPreset`, `coerce_metric_value`, `scalar_metrics`) — they LIVE in `matrainer.torch` since
 2026-08-01, because none of them imports `pytorch_lightning`; both spellings work. It ships the
 progress bridge
 (`LightningProgressCallback` / `attach_lightning_progress`, mapping Lightning's per-batch hooks onto
@@ -523,13 +532,13 @@ progress bridge
 (`MlflowSystemMetricsCallback` / `MPSMetricsCallback` + `activate_for_lightning`), and
 `build_checkpoint_callbacks` (translates the checkpoint policies below into `ModelCheckpoint`s).
 
-For Keras, `marainer.keras.keras_tracking_callback` is the analogue. It requires `keras`, not
+For Keras, `matrainer.keras.keras_tracking_callback` is the analogue. It requires `keras`, not
 TensorFlow: Keras 3 is standalone and picks its own compute backend, so a consumer training
 on the torch backend is never asked to install a framework it did not choose.
 
 ## Framework-neutral checkpoint policies
 
-Declare *what* to checkpoint once; each framework translates it. `marainer.checkpoints` provides
+Declare *what* to checkpoint once; each framework translates it. `matrainer.checkpoints` provides
 zero-arg `@configurable` carriers:
 
 | Policy | Meaning |
@@ -539,8 +548,8 @@ zero-arg `@configurable` carriers:
 | `SaveBest(monitor, mode, top_k=1)` | keep the best `top_k` by a monitored metric |
 
 ```python
-from marainer.checkpoints import SaveBest, SaveLast
-from marainer.lightning import build_checkpoint_callbacks
+from matrainer.checkpoints import SaveBest, SaveLast
+from matrainer.lightning import build_checkpoint_callbacks
 
 callbacks = build_checkpoint_callbacks([SaveLast(), SaveBest(monitor="val/acc", mode="max")])
 trainer = pl.Trainer(callbacks=callbacks)   # -> pytorch_lightning ModelCheckpoint(s)
@@ -548,7 +557,7 @@ trainer = pl.Trainer(callbacks=callbacks)   # -> pytorch_lightning ModelCheckpoi
 
 No policy ⇒ the framework default. Add a policy here; translate it in the framework helper.
 
-## System metrics (`marainer.tracking.system`, framework-free)
+## System metrics (`matrainer.tracking.system`, framework-free)
 
 - `enable_mlflow_system_metrics()` — the process-wide MLflow enable for `mlflow.start_run` clients.
 - `start_system_metrics_monitor()` — CPU / RAM / disk (and NVIDIA GPU when `pynvml` is present).
@@ -558,11 +567,11 @@ No policy ⇒ the framework default. Add a policy here; translate it in the fram
   `mlflow` are imported lazily.
 
 A non-Lightning platform calls these directly; the Lightning `pl.Callback` wrappers live in
-`marainer.lightning.callbacks`. Tune the cadence with
+`matrainer.lightning.callbacks`. Tune the cadence with
 `MLFLOW_SYSTEM_METRICS_SAMPLING_INTERVAL` (seconds, default 10) or disable via
 `MLFLOW_ENABLE_SYSTEM_METRICS_LOGGING=false`.
 
-## Per-split metric slots (`marainer.metric_slots`, no extra needed)
+## Per-split metric slots (`matrainer.metric_slots`, no extra needed)
 
 A training runnable typically takes `metrics` (what **every** split measures) plus
 `train_metrics` / `val_metrics` / `test_metrics` (what **that** split measures on top), so an
@@ -572,7 +581,7 @@ lives here as two pure functions and is applied to whichever vocabulary your eng
 torchmetrics template mapping, a list of `keras.metrics` objects, a list of fastai function names).
 
 ```python
-from marainer.metric_slots import merge_metric_specs, union_metric_specs
+from matrainer.metric_slots import merge_metric_specs, union_metric_specs
 
 # merge — an engine whose loop you own: each split gets its own set
 merge_metric_specs({"acc": A}, {"confusion": C})   # {"acc": A, "confusion": C}   add
@@ -594,9 +603,9 @@ ignores — the alternative, dropping it, is a wired metric that silently report
 
 The module imports **nothing but the standard library**, so a deliberately framework-free training
 loop can use it without pulling torch. That is also why it sits at the top level rather than under
-`marainer.torch`.
+`matrainer.torch`.
 
-## `marainer.torch` — torch-only, Lightning-free helpers (`marainer[torch]`)
+## `matrainer.torch` — torch-only, Lightning-free helpers (`matrainer[torch]`)
 
 - `load_lightning_checkpoint(model, path, strict=False)` — loads a Lightning `.ckpt` (strips the
   `model.` prefix), an Ultralytics `.pt` (pulls the live module's `state_dict`), or a plain
@@ -608,7 +617,7 @@ loop can use it without pulling torch. That is also why it sits at the top level
 - `coerce_metric_value(value)` / `scalar_metrics(raw)` — JSON-safe coercion of a torchmetrics
   `compute()` result; `scalar_metrics` keeps only the scalars, so an `N×N` confusion matrix is
   dropped — those channels hold one number per name, and so is a `[C]` per-class vector. Report
-  such a metric separately with `marainer.tracking.render_matrix_as_table` /
+  such a metric separately with `matrainer.tracking.render_matrix_as_table` /
   `render_vector_as_table` (below).
 - `MetricPreset(category=…, task=…)` — instantiate every compatible torchmetrics metric in a
   category, for a config that wants "all the classification metrics" without naming them.
@@ -620,7 +629,7 @@ loop can use it without pulling torch. That is also why it sits at the top level
   has to make it itself, and every such loop was making it identically.
 
 ```python
-from marainer.torch import build_metric_collection, resolve_device, scalar_metrics
+from matrainer.torch import build_metric_collection, resolve_device, scalar_metrics
 
 device = resolve_device("auto")                   # cuda -> mps -> cpu, whichever is present
 
@@ -630,11 +639,11 @@ train_metrics, val_metrics = base.clone(prefix="train/"), base.clone(prefix="val
 final = scalar_metrics(val_metrics.compute())     # {"val/accuracy": 0.94}
 ```
 
-It all sits outside `marainer.lightning` so a non-Lightning platform — an Ultralytics loop, or a
-hand-written torch training loop — uses it via `marainer[torch]` without pulling
+It all sits outside `matrainer.lightning` so a non-Lightning platform — an Ultralytics loop, or a
+hand-written torch training loop — uses it via `matrainer[torch]` without pulling
 `pytorch_lightning`. The metric helpers moved here on 2026-08-01 for exactly that reason: they
 import only confluid, torch and torchmetrics, so their old home described their first consumer
-rather than their dependencies. `marainer.lightning` re-exports all four, unchanged.
+rather than their dependencies. `matrainer.lightning` re-exports all four, unchanged.
 
 ### Reporting a metric that is not a single number
 
@@ -647,7 +656,7 @@ and a channel gives each a home. There are **two shapes**, each with a table for
 | length-`C` — a **per-class metric** (`average=None`) | `render_vector_as_table` | `render_vector_as_figure` (bar chart) |
 
 The table form needs only `tabulate` and is readable in a plain log, so it is what a consumer sends
-by default; the figure form needs matplotlib (`marainer[plot]`) on every eval epoch, so it is
+by default; the figure form needs matplotlib (`matrainer[plot]`) on every eval epoch, so it is
 opt-in. All four are framework-free — a value only needs `.tolist()`, or `.detach().cpu().tolist()`
 — with their libraries imported lazily so the module stays in the light core.
 
@@ -657,7 +666,7 @@ it has one axis of meaning, its values share a scale, and what a reader wants fr
 renderers sort **worst-first** and draw the mean as a reference line.
 
 ```python
-from marainer.tracking import (
+from matrainer.tracking import (
     per_class_vectors, render_matrix_as_table, render_vector_as_figure, render_vector_as_table,
 )
 
@@ -722,15 +731,15 @@ once an epoch keeps its history on a backend whose native channel has no step ax
 
 ## Random run names
 
-`marainer.generate_run_name(prefix="train")` returns a friendly `adjective_noun` slug (`coolname`,
+`matrainer.generate_run_name(prefix="train")` returns a friendly `adjective_noun` slug (`coolname`,
 offline) — the default `Tracker.run_name`.
 
 `run_prefix(task)` supplies the prefix a runnable's task implies, so the two compose into the one
 line a merged train/evaluate/predict class writes:
 
 ```python
-from marainer import generate_run_name
-from marainer.run_names import run_prefix
+from matrainer import generate_run_name
+from matrainer.run_names import run_prefix
 
 generate_run_name(prefix=run_prefix("fit"))       # "train_funny_rabbit"
 run_prefix("test"), run_prefix("evaluate")        # ("evaluate", "evaluate")
@@ -744,7 +753,7 @@ refusing to produce one is never the right answer.
 
 ## What lives elsewhere
 
-The **runnable protocol** and **pipeline running** are *not* in Marainer — they moved to
+The **runnable protocol** and **pipeline running** are *not* in Matrainer — they moved to
 [RecordStream](https://github.com/Gearlux/recordstream):
 
 - `recordstream.runnable` — `TorchRunner`, `ProgressReporting`, and the `entrypoint` /
@@ -764,8 +773,8 @@ The **runnable protocol** and **pipeline running** are *not* in Marainer — the
 - `recordstream run <config.yaml>` — the generic runner. A config roots at a top-level `runnable:` key
   plus a `task:`; consumers may also ship their own CLI wrapping it.
 
-There is no `marainer.runner` / `marainer.progress` / `marainer.workflow` / `marainer.processing`
-and no marainer binary.
+There is no `matrainer.runner` / `matrainer.progress` / `matrainer.workflow` / `matrainer.processing`
+and no matrainer binary.
 
 ## Examples
 

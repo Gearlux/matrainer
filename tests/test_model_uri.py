@@ -1,4 +1,4 @@
-"""Model identity — ``marainer.uri``: the ``ModelRef`` vocabulary and the ``model_refs`` walk."""
+"""Model identity — ``matrainer.uri``: the ``ModelRef`` vocabulary and the ``model_refs`` walk."""
 
 import ast
 from pathlib import Path
@@ -6,7 +6,7 @@ from typing import Any, List, Optional, Sequence, Set
 
 import pytest
 
-from marainer.uri import MAX_WRAPPER_DEPTH, ModelRef, SupportsModelIdentity, file_model_ref, hf_model_ref, model_refs
+from matrainer.uri import MAX_WRAPPER_DEPTH, ModelRef, SupportsModelIdentity, file_model_ref, hf_model_ref, model_refs
 
 
 class _Wrapper:
@@ -192,12 +192,12 @@ def test_asking_a_live_model_does_not_run_its_solidify_hook() -> None:
 
 def test_the_module_imports_nothing_but_the_standard_library() -> None:
     """A framework-free model wrapper must name its weights without a tracking backend or a
-    framework entering its dependency graph — the same rule `marainer.metric_slots` obeys.
+    framework entering its dependency graph — the same rule `matrainer.metric_slots` obeys.
 
     Read from the SOURCE with `ast` so the check fails wherever the mistake is made, and so a
     body-local import (the confluid one inside `_materialize`) is judged by the same rule.
     """
-    import marainer.uri as module
+    import matrainer.uri as module
 
     source = ast.parse(Path(module.__file__).read_text())
     roots: Set[str] = set()
@@ -220,7 +220,7 @@ def test_the_module_imports_nothing_but_the_standard_library() -> None:
 def test_importing_model_identity_pulls_in_no_framework(forbidden: str) -> None:
     """A model wrapper naming its weights must not drag a framework in to do it.
 
-    Only the FRAMEWORKS are checked, not `marainer.tracking`: importing any submodule runs the
+    Only the FRAMEWORKS are checked, not `matrainer.tracking`: importing any submodule runs the
     package `__init__`, which is the tracking surface, so that one is not avoidable from here and
     claiming otherwise would be a test that lies. What this module genuinely owes — and what the
     source check above enforces — is adding no dependency of its own.
@@ -228,6 +228,6 @@ def test_importing_model_identity_pulls_in_no_framework(forbidden: str) -> None:
     import subprocess
     import sys
 
-    code = f"import marainer.uri, sys; assert {forbidden!r} not in sys.modules, {forbidden!r}"
+    code = f"import matrainer.uri, sys; assert {forbidden!r} not in sys.modules, {forbidden!r}"
     result = subprocess.run([sys.executable, "-c", code], capture_output=True, text=True)
     assert result.returncode == 0, result.stderr

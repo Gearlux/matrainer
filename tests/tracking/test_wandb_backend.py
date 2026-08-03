@@ -7,7 +7,7 @@ from typing import Any, List
 
 import pytest
 
-from marainer.tracking.wandb_backend import WandbTracker
+from matrainer.tracking.wandb_backend import WandbTracker
 
 
 class _FakeConfig:
@@ -93,11 +93,11 @@ def fake_wandb(monkeypatch: pytest.MonkeyPatch) -> Any:
 
 def test_import_error_names_the_extra(monkeypatch: pytest.MonkeyPatch) -> None:
     def fake_require(module: str, extra: str, feature: str = "") -> Any:
-        raise ImportError(f"pip install marainer[{extra}]")
+        raise ImportError(f"pip install matrainer[{extra}]")
 
-    monkeypatch.setattr("marainer.tracking.wandb_backend.require", fake_require)
+    monkeypatch.setattr("matrainer.tracking.wandb_backend.require", fake_require)
     t = WandbTracker()
-    with pytest.raises(ImportError, match=r"pip install marainer\[wandb\]"):
+    with pytest.raises(ImportError, match=r"pip install matrainer\[wandb\]"):
         _ = t.experiment
 
 
@@ -129,7 +129,7 @@ def test_finalize_finishes_run(fake_wandb: Any) -> None:
 
 
 def _manifest_with_lineage(tmp_path: Any) -> Any:
-    from marainer.tracking.manifest import RunManifest
+    from matrainer.tracking.manifest import RunManifest
 
     m = RunManifest(run_dir=tmp_path / "run", handle_interrupts=False)
     m.record_dataset(kind="hf", name="ylecun/mnist", uri="hf://datasets/ylecun/mnist?split=train", split="train")
@@ -178,7 +178,7 @@ def test_a_zoo_scheme_is_metadata_only_rather_than_a_rejected_reference(fake_wan
 
 
 def test_a_manifest_with_no_lineage_marks_nothing(fake_wandb: Any, tmp_path: Any) -> None:
-    from marainer.tracking.manifest import RunManifest
+    from matrainer.tracking.manifest import RunManifest
 
     WandbTracker().log_manifest(RunManifest(run_dir=tmp_path / "run", handle_interrupts=False))
     assert fake_wandb.runs[0].used == []
@@ -210,7 +210,7 @@ def test_an_unresolvable_reference_still_reaches_the_lineage_graph(fake_wandb: A
     `use_artifact`, so a checkpoint whose file had moved vanished from the lineage graph
     entirely instead of appearing as the metadata record it still is.
     """
-    from marainer.tracking.manifest import RunManifest
+    from matrainer.tracking.manifest import RunManifest
 
     m = RunManifest(run_dir=tmp_path / "run", handle_interrupts=False)
     m.record_model(source="file", name="gone.ckpt", uri="file:///nowhere/gone.ckpt", role="checkpoint")
@@ -233,7 +233,7 @@ def test_a_portable_uri_is_expanded_before_it_is_referenced(
     every machine that sets them. `expandvars` is the documented exact inverse, so the reference
     names the real file while the metadata keeps the portable spelling.
     """
-    from marainer.tracking.manifest import RunManifest
+    from matrainer.tracking.manifest import RunManifest
 
     root = Path(tmp_path) / "models"
     root.mkdir()

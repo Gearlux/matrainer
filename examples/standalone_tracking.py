@@ -12,8 +12,8 @@ import math
 import tempfile
 from pathlib import Path
 
-from marainer import CsvTracker, generate_run_name, log_run_context
-from marainer.tracking import capture_log_file
+from matrainer import CsvTracker, generate_run_name, log_run_context
+from matrainer.tracking import capture_log_file
 
 
 def main() -> None:
@@ -21,7 +21,7 @@ def main() -> None:
     tracker = CsvTracker(
         experiment_name="standalone-demo",
         run_name=generate_run_name(prefix="demo"),  # friendly adjective_noun slug
-        save_dir=tempfile.mkdtemp(prefix="marainer_demo_"),
+        save_dir=tempfile.mkdtemp(prefix="matrainer_demo_"),
     )
 
     # ONE call at the start of the run: captures how it was invoked, what code it runs, what

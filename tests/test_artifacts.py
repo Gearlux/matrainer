@@ -1,7 +1,7 @@
 """Run artifacts beside a checkpoint — the convention and the logging, not the format.
 
 The format is recordstream's (``LabelMap.save`` / ``.load``); three consumers had each
-hand-rolled that JSON. What marainer owns is WHERE a run artifact lands and that it gets
+hand-rolled that JSON. What matrainer owns is WHERE a run artifact lands and that it gets
 logged — which is why these take a plain directory and a plain path.
 """
 
@@ -12,8 +12,8 @@ from typing import Any, List, Union, cast
 import pytest
 from recordstream import LabelMap
 
-from marainer.artifacts import CLASS_NAMES_FILE, load_class_names, save_class_names, write_metrics_sidecar
-from marainer.tracking.base import Tracker
+from matrainer.artifacts import CLASS_NAMES_FILE, load_class_names, save_class_names, write_metrics_sidecar
+from matrainer.tracking.base import Tracker
 
 
 class _RecordingTracker:
