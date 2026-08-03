@@ -55,7 +55,10 @@ HPARAMS_SECTION = "hparams"
 #: ``file://<cwd>/hf:/models/timm/x`` — a local file that does not exist, pointing wherever the
 #: run happened to start. Every zoo scheme this workspace mints (``hf``/``smp``/``keras``/
 #: ``ultralytics``/``rfdetr``) hits that path, so they are kept OUT of ``import_model`` and stay
-#: in the comparable hyperparameter section instead. Measured against clearml 2.1; ``azure://``
+#: in the comparable hyperparameter section instead. Confirmed against a LIVE server, not only
+#: read from the source: ``import_model(weights_url="hf://models/timm/resnet50.a1_in1k")`` stored
+#: ``file:///<cwd>/hf:/models/timm/resnet50.a1_in1k`` — so the same config records a DIFFERENT
+#: wrong path depending on the directory the run was launched from. clearml 2.1; ``azure://``
 #: is addressable in principle and raises a configuration error without credentials, which the
 #: caller's ``except`` already reports — a loud miss, unlike the silent rewrite above.
 ADDRESSABLE_SCHEMES: Tuple[str, ...] = ("file://", "http://", "https://", "s3://", "gs://", "azure://")
