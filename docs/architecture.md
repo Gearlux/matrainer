@@ -292,6 +292,16 @@ which would make the manifest unreadable by a generic YAML tool.
 that project more of it. What you may *not* do: make a field native-only, embed another library's
 serialization format inside the manifest, or defer the write to run end.
 
+One native projection was evaluated and **deliberately not built** (2026-08-03), and it is worth
+recording so "new native projections" does not read as an open invitation to it: a `clearml.Dataset`
+for the manifest's datasets. ClearML addresses only `s3://` / `gs://` / `azure://` / `file://` /
+`http(s)://`, and it does not *reject* anything else — it resolves an unknown scheme as a relative
+path against the working directory, so a Hub reference would be registered as a local file that
+does not exist. The projection would therefore be an empty versioned entity holding wrong paths,
+strictly less informative than the comparable hyperparameter section it would sit beside. That is
+also why the model half gates on an addressable scheme rather than passing every URI through.
+See marainer's `AGENTS.md` for the full reasoning.
+
 ---
 
 ## 4. Backends are separately installable: tolerate, declare, select (2026-08-01)
