@@ -212,6 +212,15 @@ class Tracker(ABC):
         only implements the abstract surface still gets its hyperparameters where its UI
         expects them.
 
+        The manifest's SIDE ARTIFACTS go with it (:meth:`~marainer.tracking.manifest.RunManifest.artifacts`
+        — the resolved-configuration dump, the installed-package freeze). Those files hold
+        formats the manifest deliberately does not re-own, so it carries only a path and a
+        digest for each; uploading the manifest without them would leave a remote-only backend
+        holding references to files that exist on exactly one machine, which is rule 3 of the
+        contract (*no fact is ever native-only*) broken by omission. They are logged under
+        their own subdirectory so ``config/final.yaml`` and ``environment/requirements.txt``
+        stay apart on a backend that flattens artifact names.
+
         A file already inside this backend's own :attr:`log_dir` is skipped rather than
         copied next to itself — the common case, since the manifest is usually pointed at
         that directory in the first place.
@@ -225,6 +234,10 @@ class Tracker(ABC):
             if log_dir is not None and path.is_relative_to(log_dir):
                 continue
             self.log_artifact(path)
+        for path in manifest.artifacts():
+            if log_dir is not None and path.is_relative_to(log_dir):
+                continue
+            self.log_artifact(path, artifact_dir=path.parent.name)
 
     @property
     def log_dir(self) -> Optional[Path]:

@@ -62,6 +62,17 @@ MANIFEST_JSON = "manifest.json"
 CONFIG_DIR = "config"
 FINAL_CONFIG_FILE = "final.yaml"
 
+#: Where the installed-package snapshot lands, relative to the run directory. Separate for
+#: the same reason the config dump is: ``requirements.txt`` is pip's format, so the manifest
+#: references it by path and digest instead of re-owning it as YAML.
+ENVIRONMENT_DIR = "environment"
+REQUIREMENTS_FILE = "requirements.txt"
+
+#: Mapping keys whose subtree keeps its ABSOLUTE paths. ``env.roots`` is the expansion table for
+#: every ``$ROOT/...`` elsewhere in the document; contracting it would replace each definition with
+#: a reference to itself and destroy the only record of what the roots were.
+PORTABLE_SKIP_KEYS: Tuple[str, ...] = ("roots",)
+
 #: A run's terminal state. ``running`` until :meth:`RunManifest.finish` says otherwise.
 RunStatus = Literal["running", "success", "failed", "interrupted"]
 
@@ -194,6 +205,10 @@ class RunManifest:
         self._hooks_installed = False
         self._previous_handlers: Dict[int, Any] = {}
         self._write_failed = False
+        # Side artifacts written beside the manifest, as paths RELATIVE to the run directory
+        # (so they follow a copied run directory, and so `run_dir` staying re-assignable does
+        # not leave absolute paths behind). Read through :meth:`artifacts`.
+        self._artifacts: List[str] = []
 
     # -- location ---------------------------------------------------------------------------
 
@@ -213,6 +228,20 @@ class RunManifest:
     def json_path(self) -> Path:
         """Path of ``manifest.json`` — the same document, for tooling."""
         return self.directory / MANIFEST_JSON
+
+    def artifacts(self) -> List[Path]:
+        """The side files written beside the manifest — the resolved config, the package freeze.
+
+        These are part of the manifest, not decoration: the manifest references each by path
+        and digest precisely because their formats belong to other libraries. A backend that
+        holds the manifest must therefore be able to reach them too, so :meth:`Tracker.log_manifest
+        <marainer.tracking.base.Tracker.log_manifest>` uploads whatever this returns. Without it
+        a remote-only backend gets a manifest full of paths to files that exist on one machine.
+
+        Only files still on disk are returned, so a caller needs no existence guard.
+        """
+        directory = self.directory
+        return [path for path in (directory / relative for relative in self._artifacts) if path.exists()]
 
     # -- accumulation -----------------------------------------------------------------------
 
@@ -244,18 +273,28 @@ class RunManifest:
         self,
         kind: str,
         name: str,
+        uri: Optional[str] = None,
+        url: Optional[str] = None,
         revision: Optional[str] = None,
         split: Optional[str] = None,
         count: Optional[int] = None,
         digest: Optional[str] = None,
         **extra: Any,
     ) -> None:
-        """Record one dataset the run consumed (``kind`` = where it came from, e.g. ``hf``)."""
+        """Record one dataset the run consumed (``kind`` = where it came from, e.g. ``hf``).
+
+        ``uri`` and ``url`` are the two halves of a dataset's identity and are deliberately
+        separate fields: the URI is the canonical, machine-parseable handle two runs are
+        compared on, while the URL is a link a reader can open — and plenty of data (a
+        directory on disk, a mounted store) legitimately has the first and not the second.
+        """
         self.add(
             "datasets",
             {
                 "kind": kind,
                 "name": name,
+                "uri": uri,
+                "url": url,
                 "revision": revision,
                 "split": split,
                 "count": count,
@@ -268,12 +307,33 @@ class RunManifest:
         self,
         source: str,
         name: str,
+        uri: Optional[str] = None,
+        url: Optional[str] = None,
+        role: Optional[str] = None,
         revision: Optional[str] = None,
         digest: Optional[str] = None,
         **extra: Any,
     ) -> None:
-        """Record one model the run used (``source`` = zoo / checkpoint / registry / …)."""
-        self.add("models", {"source": source, "name": name, "revision": revision, "digest": digest, **extra})
+        """Record one model artifact the run used (``source`` = zoo / checkpoint / registry / …).
+
+        ``uri`` / ``url`` are the same pair :meth:`record_dataset` takes — the canonical handle and
+        the openable link. ``role`` says what the artifact CONTRIBUTED (``pretrained`` weights from
+        outside the run, or a ``checkpoint`` a previous run wrote), because one model routinely
+        loads both and the two are not interchangeable to a reader trying to reproduce it.
+        """
+        self.add(
+            "models",
+            {
+                "source": source,
+                "name": name,
+                "uri": uri,
+                "url": url,
+                "role": role,
+                "revision": revision,
+                "digest": digest,
+                **extra,
+            },
+        )
 
     def record_output(
         self,
@@ -300,12 +360,24 @@ class RunManifest:
                 are redacted whichever way they were selected — the manifest becomes an
                 uploaded artifact.
         """
-        self.set("command", {"argv": list(sys.argv), "cwd": str(Path.cwd()), "executable": sys.executable})
+        # `line` is the PASTEABLE form and `argv` the raw one; both stay, because they answer
+        # different questions. `argv` is what `primary_code()` reads and what a tool parses;
+        # `line` is what a person runs again, and reconstructing it from `argv` is not possible
+        # after the fact (a `-m` launch leaves the module's FILE path in argv[0]).
+        command: Dict[str, Any] = {"argv": list(sys.argv), "cwd": str(Path.cwd()), "executable": sys.executable}
+        line = provenance.command_line()
+        if line is not None:
+            command["line"] = line
+        self.set("command", command)
         self.set(
             "env",
             {
                 **provenance.platform_state(),
                 "accelerator": provenance.accelerator_state(),
+                # The expansion table for every `$ROOT/...` path elsewhere in the document. It is
+                # the ONE subtree left un-contracted (`PORTABLE_SKIP_KEYS`), because contracting a
+                # definition into a reference to itself would lose the value a reader needs.
+                "roots": dict(provenance.configured_roots()),
                 "variables": provenance.environment_snapshot(env_prefixes, env_names),
             },
         )
@@ -354,6 +426,93 @@ class RunManifest:
                 self.set("params", params)
         self.set("config", config)
 
+    def capture_packages(self) -> None:
+        """Fill ``env.packages`` — every installed distribution, as a ``requirements.txt`` artifact.
+
+        The ``code`` section records the git state of the packages being *edited*; this records
+        the several hundred wheels around them, which set a run's behaviour just as firmly. The
+        list goes to its OWN file rather than inline because ``requirements.txt`` is pip's
+        format — the same rule the resolved-configuration dump follows — so the manifest keeps
+        only the reference: path, digest, line count, and which program produced it.
+
+        A no-op when no freeze could be produced (see
+        :func:`~marainer.tracking.provenance.package_freeze`); an environment that cannot be
+        listed is not a reason to fail a run.
+        """
+        freeze = provenance.package_freeze()
+        if freeze is None:
+            return
+        text, tool = freeze
+        reference = self._write_artifact(Path(ENVIRONMENT_DIR) / REQUIREMENTS_FILE, text)
+        if reference is not None:
+            self.set("env", {"packages": {**reference, "count": len(text.splitlines()), "tool": tool}})
+
+    def capture_datasets(self, runnable: Any = None) -> None:
+        """Fill ``datasets`` — every dataset the configured object graph identifies.
+
+        Walks the live configuration for sources that can name what they read (a dataset
+        identifier and, where one exists, a browsable link) and records one entry each. It is
+        done HERE rather than in each consumer for the same reason the terminal status is: a
+        per-consumer call is one chance to forget per consumer, and every consumer already
+        reaches this module through
+        :func:`~marainer.tracking.provenance.log_run_context`.
+
+        A no-op without a ``runnable``, or when nothing in the graph identifies a dataset — a
+        run driven by code, or one reading from a source with no stable handle, is not an error.
+        """
+        entries = provenance.configured_datasets(runnable) if runnable is not None else []
+        if not entries:
+            return
+        # One write for the whole list, not one per entry — the same reason `capture_code`
+        # extends in a single shot.
+        with self._lock:
+            self._sections["datasets"].extend(entries)
+        self.write()
+
+    def capture_models(self, runnable: Any = None) -> None:
+        """Fill ``models`` — every model artifact the configured object graph loads.
+
+        The twin of :meth:`capture_datasets`, and here for the same reason: a per-consumer call is
+        one chance to forget per consumer, and every consumer already reaches
+        :func:`~marainer.tracking.provenance.log_run_context`.
+
+        One slot may contribute SEVERAL entries — a backbone fine-tuned from a checkpoint loaded
+        two artifacts, and each is recorded with the ``role`` it played.
+
+        A no-op without a ``runnable``, or when nothing in the graph loads an external artifact — a
+        model trained from scratch referenced none, and that is not an error.
+        """
+        entries = provenance.configured_models(runnable) if runnable is not None else []
+        if not entries:
+            return
+        with self._lock:
+            self._sections["models"].extend(entries)
+        self.write()
+
+    def _write_artifact(self, relative: Union[str, Path], text: str) -> Optional[Dict[str, Any]]:
+        """Write a side artifact beside the manifest; return its ``{path, sha256}`` reference.
+
+        The shared body of the resolved-configuration dump and the package freeze: both are
+        another library's format, so both land in their own file and are referenced from the
+        manifest by path and digest. The path in the reference is RELATIVE, so a run directory
+        stays portable when it is copied or archived.
+
+        Returns ``None`` — after a debug log — when the file cannot be written; a manifest that
+        loses one reference is far better than a run that dies writing one.
+        """
+        relative = Path(relative)
+        try:
+            directory = self.directory
+            target = directory / relative
+            target.parent.mkdir(parents=True, exist_ok=True)
+            _atomic_write(target, text)
+        except OSError as exc:
+            logger.debug(f"manifest artifact {relative} could not be written: {exc}")
+            return None
+        if str(relative) not in self._artifacts:
+            self._artifacts.append(str(relative))
+        return {"path": str(relative), "sha256": hashlib.sha256(text.encode()).hexdigest()}
+
     def _write_final_config(self, runnable: Any) -> Optional[Dict[str, Any]]:
         """Dump the resolved configuration beside the manifest; return its path + digest."""
         try:
@@ -363,16 +522,7 @@ class RunManifest:
         except Exception as exc:
             logger.debug(f"resolved-configuration dump failed for {type(runnable).__name__}: {exc}")
             return None
-        try:
-            directory = self.directory
-            target = directory / CONFIG_DIR / FINAL_CONFIG_FILE
-            target.parent.mkdir(parents=True, exist_ok=True)
-            _atomic_write(target, text)
-        except OSError as exc:
-            logger.debug(f"resolved-configuration dump could not be written: {exc}")
-            return None
-        # Relative, so a run directory stays portable when it is copied or archived.
-        return {"path": str(target.relative_to(directory)), "sha256": hashlib.sha256(text.encode()).hexdigest()}
+        return self._write_artifact(Path(CONFIG_DIR) / FINAL_CONFIG_FILE, text)
 
     # -- reading (what a native projection uses) --------------------------------------------
 
@@ -389,8 +539,8 @@ class RunManifest:
         with self._lock:
             value = self._sections[name]
             if name == "run":
-                return _plain({**self._identity(), **value})
-            return _plain(list(value) if isinstance(value, list) else dict(value))
+                return self._portable(_plain({**self._identity(), **value}))
+            return self._portable(_plain(list(value) if isinstance(value, list) else dict(value)))
 
     def primary_code(self) -> Optional[Dict[str, Any]]:
         """The one code record that best answers "which repository is THIS run's?".
@@ -459,7 +609,21 @@ class RunManifest:
                     doc[section] = list(value)
                 else:
                     doc[section] = dict(value)
-            return _plain(doc)  # type: ignore[no-any-return]
+            return self._portable(_plain(doc))  # type: ignore[no-any-return]
+
+    @staticmethod
+    def _portable(document: Any) -> Any:
+        """Contract every absolute path under a configured root into ``$ROOT/...``.
+
+        Applied HERE — to the whole document, on the way out — rather than at each capture site,
+        so a section added later is portable without anyone remembering, and so both readers get
+        the same answer: :meth:`to_dict` (what is written) and :meth:`section` (what a backend's
+        native projection reads). Without the second, a hosted backend's dataset field would hold
+        an absolute path while the artifact beside it held a portable one.
+
+        A no-op when no root is configured, so nothing changes for a machine that sets none.
+        """
+        return provenance.portable(document, skip_keys=PORTABLE_SKIP_KEYS)
 
     def _identity(self) -> Dict[str, Any]:
         return {

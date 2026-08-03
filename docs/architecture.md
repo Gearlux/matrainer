@@ -162,7 +162,43 @@ uses in `tracking/system.py`.
   choosing YAML. So the resolved configuration is written to its own `config/final.yaml` artifact and
   the manifest references it by path plus digest. This is the same rule `marainer.artifacts` already
   follows for the label vocabulary — persist it, log it, but never re-hand-roll someone else's
-  format.
+  format. The installed-package freeze (`environment/requirements.txt`) is the second application of
+  it: that is pip's format, so it too is a referenced artifact rather than an inlined list.
+- **A referenced artifact travels with the manifest** (added 2026-08-02). Because those files hold
+  formats the manifest deliberately does not own, it carries only a path and a digest for each — so
+  a backend that receives the manifest and *not* the files is holding references to data that
+  exists on exactly one machine, which is rule 3 broken by omission rather than by design.
+  `RunManifest.artifacts()` lists them and the default `log_manifest` uploads them, skipping any
+  already inside the backend's own `log_dir`. This was a live gap: `config/final.yaml` had been
+  written since the manifest landed and never uploaded, invisible on a file-backed backend (where
+  it happens to sit in the right tree) and missing on every remote-only one.
+- **Machine-specific roots are contracted on the way out** (added 2026-08-02). A manifest full of
+  absolute paths answers "what produced this run?" only on the machine that wrote it — the code,
+  the data and the models are all somewhere else on the next one. So where `PROJECT_ROOT` /
+  `DATA_ROOT` / `MODEL_ROOT` are set, paths under them are recorded as `$NAME/...`.
+
+  Three choices make that safe rather than lossy. It happens **once, over the whole document**
+  (`to_dict` *and* `section`, so what is written and what a native projection reads agree) rather
+  than at each capture site — otherwise a section added later is silently non-portable, and the
+  two readers disagree. **`os.path.expandvars` is the exact inverse**, so the contraction is a
+  reversible encoding rather than a lossy rewrite; the values used are recorded verbatim under
+  `env.roots`, which is the one subtree left alone, because contracting a definition into a
+  reference to itself would destroy the only record of what the root was. And the match is on a
+  path **boundary** with the most specific root winning, so `/store` cannot swallow the start of
+  `/storefront` and a `MODEL_ROOT` nested inside `DATA_ROOT` still resolves to the nearer of the
+  two.
+
+  The consequence worth stating: contraction reaches the pasteable `command.line`, which is a
+  *shell* string, so quoting had to change with it. A contracted word is double-quoted rather than
+  single-quoted, because `'$PROJECT_ROOT'` is a literal dollar sign — the line would have looked
+  correct and pointed at a directory that does not exist.
+- **The command line is recorded twice, deliberately** (added 2026-08-02). `command.argv` is the
+  raw list — what `primary_code()` parses and what a tool consumes — and `command.line` is a shell
+  snippet a person can paste to run it again, `cd` included so a config referenced by a relative
+  path resolves. One cannot be derived from the other after the fact: the workspace's runner is
+  launched with `-m`, whose `argv[0]` is the module's *file* path and does not re-execute. Where
+  there is no honest answer — an interactive session, or `python -c`, whose code never reaches
+  `sys.argv` — `line` is omitted rather than guessed.
 - **`pyyaml` becomes a declared core dependency.** It is currently reachable only transitively
   through the configuration library. A module that imports it directly must declare it.
 - **Code provenance becomes a list.** `get_git_commit_hash()` stays as the single-repo helper it is;
@@ -191,11 +227,48 @@ uses in `tracking/system.py`.
 
 ```python
 manifest = log_run_context(trackers, runnable=runnable)   # capture everything + project it
-manifest.record_dataset(kind="hf", name="org/set", split="train", count=12_000)
 manifest.record_output("epoch=3.ckpt", monitor="val/acc", value=0.91)
 # ... every call re-emitted manifest.yaml AND manifest.json atomically ...
 capture_log_file(trackers, manifest=manifest, status="success")   # Ctrl-C -> "interrupted"
 ```
+
+The datasets and models are *not* in that snippet, and their absence is the point (2026-08-02).
+Asking each consumer to call `record_dataset` / `record_model` is one chance to forget per
+consumer, and the ten runnables in this workspace all reach `log_run_context` already — so it
+walks the configured object graph itself and records every source that can name the data it reads
+and every wrapper that can name the weights it loads. The same argument put `Tracker.finalize`
+inside `capture_log_file`, and for the same reason: a fact every consumer owes the record should
+be gathered where every consumer already passes.
+
+The walk both use is deliberately *not* the one hyperparameter derivation uses. That one flattens
+the graph into its leaf scalars, because a hyperparameter is a value; this one needs the objects
+themselves, because what identifies a dataset or a model is a source or a wrapper. And both
+classify from the URI — the scheme is the kind, the path is the name — so this package learns
+nothing about any particular dataset registry or model zoo, and a new source or wrapper type needs
+no change here.
+
+**The two identity protocols have deliberately different shapes, and the asymmetry is not drift.**
+A dataset source exposes two plain strings (`dataset_uri` / `dataset_url`) because it reads *one*
+dataset; a concatenation is the exception and has its own plural helper. A model wrapper exposes a
+*list* (`model_refs`, in `marainer.uri`) because it routinely **composes** artifacts into one
+network: a pretrained backbone with a fine-tuned checkpoint loaded over it used two, and a run
+record that named only one of them would be wrong about how the weights were obtained. Each
+reference therefore carries the `role` it played — `pretrained` for weights from outside the run,
+`checkpoint` for weights a previous run wrote — and a pipeline composing several models is the
+same shape one level up. The shapes differ because the things differ.
+
+Two consequences of that protocol are load-bearing and easy to undo:
+
+- **Reporting an empty list is an answer, not a non-answer.** A model built from an architecture
+  with random weights loaded nothing external; that is recorded by recording nothing, because the
+  architecture is configuration and is already in `params`. The walk therefore stops at any object
+  that *implements* the protocol, empty result included — falling through would follow the wrapper
+  chain into `.model`, which on real wrappers is a property that builds the network.
+- **Asking never builds.** These properties read stored configuration only, so a run's provenance
+  can be recorded from a wrapper that has never been solidified. That is why the walk materializes
+  a *deferred marker* rather than calling `flow()` on whatever it is handed: `flow()` on a live
+  object runs the post-construction `solidify()` hook, which for a model wrapper downloads its
+  weights — and raises outright when the runnable has not injected `num_classes` yet.
 
 and a backend that has native slots widens the projection without narrowing the union:
 

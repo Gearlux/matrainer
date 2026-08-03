@@ -283,6 +283,8 @@ def test_record_dataset_entry_shape(tmp_path: Path) -> None:
     assert entry == {
         "kind": "hf",
         "name": "org/set",
+        "uri": None,
+        "url": None,
         "revision": "abc123",
         "split": "train",
         "count": 12,
@@ -293,12 +295,16 @@ def test_record_dataset_entry_shape(tmp_path: Path) -> None:
 
 def test_record_model_entry_shape(tmp_path: Path) -> None:
     m = RunManifest(run_dir=tmp_path)
-    m.record_model(source="zoo", name="efficientvit_b0", revision="v1")
+    m.record_model(source="zoo", name="org/net", uri="hf://models/org/net", role="pretrained", note="smoke")
     assert read_yaml(m)["models"][0] == {
         "source": "zoo",
-        "name": "efficientvit_b0",
-        "revision": "v1",
+        "name": "org/net",
+        "uri": "hf://models/org/net",
+        "url": None,
+        "role": "pretrained",
+        "revision": None,
         "digest": None,
+        "note": "smoke",
     }
 
 
@@ -726,6 +732,36 @@ def test_log_manifest_uploads_when_the_manifest_lives_elsewhere(tmp_path: Path) 
     assert len(tracker.artifacts) == 2
 
 
+def test_log_manifest_uploads_the_side_artifacts_too(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """The manifest references these by path + digest — a remote backend must receive them.
+
+    Without this a run tracked to a remote-only backend holds a manifest full of paths to
+    files that exist on exactly one machine, which is the union contract broken by omission.
+    """
+    monkeypatch.setattr(provenance, "package_freeze", lambda: ("a==1\n", "uv"))
+    m = RunManifest(run_dir=tmp_path / "run", handle_interrupts=False)
+    m.capture_packages()
+    tracker = RecordingTracker()
+    tracker.log_manifest(m)
+    assert [(Path(p).name, d) for p, d in tracker.artifacts] == [
+        (MANIFEST_YAML, ""),
+        (MANIFEST_JSON, ""),
+        ("requirements.txt", "environment"),
+    ]
+
+
+def test_side_artifacts_inside_the_backends_own_tree_are_not_copied(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The same rule the manifest pair follows — a file-backed backend must not duplicate them."""
+    monkeypatch.setattr(provenance, "package_freeze", lambda: ("a==1\n", "uv"))
+    m = RunManifest(run_dir=tmp_path, handle_interrupts=False)
+    m.capture_packages()
+    tracker = RecordingTracker(log_dir=tmp_path)
+    tracker.log_manifest(m)
+    assert tracker.artifacts == []
+
+
 def test_tracker_group_fans_the_manifest_out(tmp_path: Path) -> None:
     m = RunManifest(run_dir=tmp_path / "run", handle_interrupts=False)
     a, b = RecordingTracker(), RecordingTracker()
@@ -847,3 +883,241 @@ def test_a_set_survives_the_round_trip(tmp_path: Path) -> None:
     m = RunManifest(run_dir=tmp_path)
     m.set("env", {"flags": {"b", "a"}})
     assert sorted(read_yaml(m)["env"]["flags"]) == ["a", "b"]
+
+
+# --- the installed-package freeze ---------------------------------------------------------------
+
+
+def test_capture_packages_writes_the_freeze_beside_the_manifest(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """pip's format goes to its OWN file; the manifest keeps only a reference to it."""
+    monkeypatch.setattr(provenance, "package_freeze", lambda: ("a==1\nb==2\n", "uv"))
+    m = RunManifest(run_dir=tmp_path)
+    m.capture_packages()
+
+    written = tmp_path / "environment" / "requirements.txt"
+    assert written.read_text() == "a==1\nb==2\n"
+    packages = read_yaml(m)["env"]["packages"]
+    assert packages["path"] == "environment/requirements.txt"  # RELATIVE — a run directory travels
+    assert packages["sha256"] == hashlib.sha256(b"a==1\nb==2\n").hexdigest()
+    assert packages["count"] == 2
+    assert packages["tool"] == "uv"
+
+
+def test_capture_packages_is_a_noop_when_nothing_can_be_frozen(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(provenance, "package_freeze", lambda: None)
+    m = RunManifest(run_dir=tmp_path)
+    m.capture_packages()
+    # `section` rather than the file: a no-op writes nothing at all, which is the point.
+    assert "packages" not in m.section("env")
+    assert not (tmp_path / "environment").exists()
+
+
+def test_capture_packages_leaves_the_rest_of_env_alone(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """`set` merges, so the freeze reference must not displace the platform/accelerator facts."""
+    monkeypatch.setattr(provenance, "package_freeze", lambda: ("a==1\n", "pip"))
+    m = RunManifest(run_dir=tmp_path)
+    m.capture_environment()
+    m.capture_packages()
+    env = read_yaml(m)["env"]
+    assert env["packages"]["tool"] == "pip"
+    assert "python" in env and "variables" in env
+
+
+# --- side artifacts ------------------------------------------------------------------------------
+
+
+def test_artifacts_lists_the_side_files_the_manifest_references(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The manifest points at these by path + digest, so a backend holding it must reach them."""
+    from confluid import configurable
+
+    @configurable
+    class ArtifactToy:
+        def __init__(self, lr: float = 0.1) -> None:
+            self.lr = lr
+
+    monkeypatch.setattr(provenance, "package_freeze", lambda: ("a==1\n", "uv"))
+    m = RunManifest(run_dir=tmp_path)
+    m.capture_config(ArtifactToy())
+    m.capture_packages()
+    assert sorted(p.relative_to(tmp_path).as_posix() for p in m.artifacts()) == [
+        "config/final.yaml",
+        "environment/requirements.txt",
+    ]
+
+
+def test_artifacts_is_empty_before_anything_is_captured(tmp_path: Path) -> None:
+    assert RunManifest(run_dir=tmp_path).artifacts() == []
+
+
+def test_artifacts_skips_a_file_that_has_been_removed(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """A caller must need no existence guard, so a deleted artifact simply drops out."""
+    monkeypatch.setattr(provenance, "package_freeze", lambda: ("a==1\n", "uv"))
+    m = RunManifest(run_dir=tmp_path)
+    m.capture_packages()
+    (tmp_path / "environment" / "requirements.txt").unlink()
+    assert m.artifacts() == []
+
+
+def test_rewriting_an_artifact_does_not_duplicate_it(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(provenance, "package_freeze", lambda: ("a==1\n", "uv"))
+    m = RunManifest(run_dir=tmp_path)
+    m.capture_packages()
+    m.capture_packages()
+    assert len(m.artifacts()) == 1
+
+
+def test_an_unwritable_artifact_is_survived(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """Tracking must never abort a run — a lost reference beats a dead training job."""
+
+    def boom(path: Path, text: str) -> None:
+        raise OSError("read-only file system")
+
+    monkeypatch.setattr(provenance, "package_freeze", lambda: ("a==1\n", "uv"))
+    monkeypatch.setattr(manifest_module, "_atomic_write", boom)
+    m = RunManifest(run_dir=tmp_path)
+    m.capture_packages()  # no raise
+    assert m.artifacts() == []
+
+
+# --- datasets ------------------------------------------------------------------------------------
+
+
+class _IdentifiedSource:
+    def __init__(self, uri: str, url: Optional[str] = None) -> None:
+        self.dataset_uri = uri
+        self.dataset_url = url
+
+
+def test_capture_datasets_records_what_the_configuration_identifies(tmp_path: Path) -> None:
+    from confluid import configurable
+
+    @configurable
+    class DataToy:
+        def __init__(self, train_set: Any = None) -> None:
+            self.train_set = train_set
+
+    m = RunManifest(run_dir=tmp_path)
+    m.capture_datasets(DataToy(train_set=_IdentifiedSource("hf://datasets/a/b?split=train")))
+    datasets = read_yaml(m)["datasets"]
+    assert [d["uri"] for d in datasets] == ["hf://datasets/a/b?split=train"]
+    assert datasets[0]["kind"] == "hf" and datasets[0]["name"] == "a/b" and datasets[0]["split"] == "train"
+
+
+def test_capture_datasets_writes_the_whole_list_in_one_pass(tmp_path: Path) -> None:
+    """One write for N datasets, the same reason `capture_code` extends in a single shot."""
+    from confluid import configurable
+
+    @configurable
+    class DataToy:
+        def __init__(self, train_set: Any = None, test_set: Any = None) -> None:
+            self.train_set = train_set
+            self.test_set = test_set
+
+    writes: List[int] = []
+    m = RunManifest(run_dir=tmp_path)
+    original = m.write
+
+    def counting_write() -> None:
+        writes.append(1)
+        original()
+
+    m.write = counting_write  # type: ignore[method-assign]
+    m.capture_datasets(DataToy(_IdentifiedSource("hf://datasets/a/b"), _IdentifiedSource("hf://datasets/c/d")))
+    assert len(writes) == 1
+    assert len(read_yaml(m)["datasets"]) == 2
+
+
+def test_capture_datasets_without_a_runnable_is_a_noop(tmp_path: Path) -> None:
+    m = RunManifest(run_dir=tmp_path)
+    m.capture_datasets()
+    assert m.section("datasets") == []
+
+
+def test_capture_datasets_with_nothing_identifiable_is_a_noop(tmp_path: Path) -> None:
+    """A run reading from a source with no stable handle is not an error."""
+    from confluid import configurable
+
+    @configurable
+    class PlainToy:
+        def __init__(self, lr: float = 0.1) -> None:
+            self.lr = lr
+
+    m = RunManifest(run_dir=tmp_path)
+    m.capture_datasets(PlainToy())
+    assert m.section("datasets") == []
+
+
+# --- models ---------------------------------------------------------------------------------------
+
+
+class _IdentifiedModel:
+    def __init__(self, *refs: Any) -> None:
+        from marainer.uri import ModelRef
+
+        self.model_refs = [r if isinstance(r, ModelRef) else ModelRef(*r) for r in refs]
+
+
+def test_capture_models_records_what_the_configuration_loads(tmp_path: Path) -> None:
+    from confluid import configurable
+
+    from marainer.uri import hf_model_ref
+
+    @configurable
+    class ModelToy:
+        def __init__(self, model: Any = None) -> None:
+            self.model = model
+
+    m = RunManifest(run_dir=tmp_path)
+    m.capture_models(ModelToy(model=_IdentifiedModel(hf_model_ref("timm/resnet50.a1_in1k"))))
+    models = read_yaml(m)["models"]
+    assert [x["uri"] for x in models] == ["hf://models/timm/resnet50.a1_in1k"]
+    assert models[0]["kind"] == "hf" and models[0]["role"] == "pretrained" and models[0]["slot"] == "model"
+
+
+def test_capture_models_writes_the_whole_list_in_one_pass(tmp_path: Path) -> None:
+    """One write for N artifacts — the same reason `capture_datasets` and `capture_code` do."""
+    from confluid import configurable
+
+    from marainer.uri import file_model_ref, hf_model_ref
+
+    @configurable
+    class ModelToy:
+        def __init__(self, model: Any = None) -> None:
+            self.model = model
+
+    writes: List[int] = []
+    m = RunManifest(run_dir=tmp_path)
+    original = m.write
+
+    def counting_write() -> None:
+        writes.append(1)
+        original()
+
+    m.write = counting_write  # type: ignore[method-assign]
+    m.capture_models(ModelToy(model=_IdentifiedModel(hf_model_ref("org/net"), file_model_ref(tmp_path / "a.ckpt"))))
+    assert len(writes) == 1
+    assert len(read_yaml(m)["models"]) == 2
+
+
+def test_capture_models_without_a_runnable_is_a_noop(tmp_path: Path) -> None:
+    m = RunManifest(run_dir=tmp_path)
+    m.capture_models()
+    assert m.section("models") == []
+
+
+def test_capture_models_with_nothing_loaded_is_a_noop(tmp_path: Path) -> None:
+    """A model trained from scratch referenced no artifact, which is not an error."""
+    from confluid import configurable
+
+    @configurable
+    class ScratchToy:
+        def __init__(self, model: Any = None) -> None:
+            self.model = model
+
+    m = RunManifest(run_dir=tmp_path)
+    m.capture_models(ScratchToy(model=_IdentifiedModel()))
+    assert m.section("models") == []
