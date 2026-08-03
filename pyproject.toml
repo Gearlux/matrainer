@@ -115,6 +115,11 @@ testpaths = ["tests"]
 [tool.coverage.run]
 source = ["marainer"]
 branch = true
+# The discovery test writes a real backend module into the package directory and deletes it
+# again (mocking the scan would test the mock) — coverage records the file, then finds no source
+# for it and warns on every run. The stem is `TEMP_BACKEND_STEM` in tests/tracking/test_discovery.py;
+# rename the two together.
+omit = ["*/zzztemp_backend.py"]
 
 [tool.coverage.report]
 show_missing = true

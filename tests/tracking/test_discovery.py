@@ -15,6 +15,12 @@ import marainer
 from marainer import tracking
 from marainer.tracking.base import Tracker
 
+#: Stem of the throwaway backend module the discovery test writes into the package directory.
+#: It is deleted again, so coverage records a file it can then find no source for — pyproject's
+#: ``[tool.coverage.run] omit`` names ``zzztemp_backend.py`` to keep that warning off every run.
+#: Rename this and the omit entry together.
+TEMP_BACKEND_STEM = "zzztemp"
+
 EXPECTED = {
     "AimTracker",
     "ClearMLTracker",
@@ -89,7 +95,7 @@ def test_a_new_backend_file_needs_no_edit_to_an_existing_file(fresh_scan: None) 
     layout.
     """
     package_dir = Path(tracking.__file__).parent
-    new_module = package_dir / f"zzztemp{tracking.BACKEND_SUFFIX}.py"
+    new_module = package_dir / f"{TEMP_BACKEND_STEM}{tracking.BACKEND_SUFFIX}.py"
     new_module.write_text(
         "from typing import Any, Mapping, Optional\n"
         "from marainer.tracking.base import Tracker\n"
