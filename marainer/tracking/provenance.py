@@ -346,6 +346,40 @@ MAX_SLOT_DEPTH = 4
 #: walk does not pay for the scalars that make up most of a configuration.
 _LEAF_TYPES = (str, bytes, int, float, bool, complex, Path)
 
+#: Private ``__dict__`` entries that are really a registry of PUBLICLY-named children.
+#: ``torch.nn.Module.__setattr__`` diverts every Module-valued assignment into ``_modules``
+#: keyed by the attribute name the caller used, so ``self.model = TimmModel(...)`` leaves
+#: ``model`` absent from ``__dict__`` entirely — and a walk that reads only public
+#: ``__dict__`` keys cannot see the model of ANY torch-based runnable.
+_CHILD_REGISTRIES = ("_modules",)
+
+
+def _public_slots(attributes: Dict[str, Any]) -> Iterator[Tuple[str, Any]]:
+    """The public attributes of one object, including framework-held child objects.
+
+    Underscore-prefixed names are internal state and stay skipped — descending into them
+    reaches a framework's parameter and buffer dictionaries, which is neither cheap nor
+    meaningful. The exception is a CHILD REGISTRY (:data:`_CHILD_REGISTRIES`): a private
+    mapping whose KEYS are the public attribute names the caller assigned. Its public entries
+    are yielded under those names, so a slot reads the same whether the framework kept it in
+    ``__dict__`` or diverted it.
+
+    Detected STRUCTURALLY — a `_modules` attribute that is a Mapping — rather than by an
+    ``isinstance`` check against ``torch.nn.Module``, because that would make a light tracking
+    call import a framework the process may deliberately not have chosen (the same rule
+    :func:`accelerator_state` follows).
+    """
+    for name, value in list(attributes.items()):
+        if not name.startswith("_"):
+            yield name, value
+    for registry in _CHILD_REGISTRIES:
+        children = attributes.get(registry)
+        if not isinstance(children, Mapping):
+            continue
+        for name, value in list(children.items()):
+            if isinstance(name, str) and not name.startswith("_") and name not in attributes:
+                yield name, value
+
 
 def configured_slots(obj: Any, max_depth: int = MAX_SLOT_DEPTH) -> Iterator[Tuple[str, Any]]:
     """Yield ``(slot path, object)`` for every object wired into a configured graph.
@@ -380,9 +414,7 @@ def configured_slots(obj: Any, max_depth: int = MAX_SLOT_DEPTH) -> Iterator[Tupl
         attributes = getattr(node, "__dict__", None)
         if not isinstance(attributes, dict):
             return
-        for name, value in list(attributes.items()):
-            if name.startswith("_"):
-                continue
+        for name, value in list(_public_slots(attributes)):
             path = f"{prefix}.{name}" if prefix else name
             yield path, value
             yield from walk(value, path, depth + 1)
