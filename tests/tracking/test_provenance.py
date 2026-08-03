@@ -1307,3 +1307,71 @@ def test_a_public_attribute_wins_over_a_same_named_child() -> None:
 
     slots = [(path, value) for path, value in provenance.configured_slots(runnable) if path == "model"]
     assert slots == [("model", "the plain attribute")]
+
+
+# --- local-file facts (size + digest) -------------------------------------------------------------
+
+
+def test_a_local_file_gets_its_size_and_digest(tmp_path: Path) -> None:
+    """The question this answers: is the checkpoint on disk the one the run loaded?"""
+    import hashlib
+
+    weights = tmp_path / "epoch=3.ckpt"
+    weights.write_bytes(b"weights")
+    facts = provenance.local_file_facts(weights.as_uri())
+    assert facts == {"size": 7, "digest": hashlib.sha256(b"weights").hexdigest()}
+
+
+def test_a_directory_contributes_nothing(tmp_path: Path) -> None:
+    """A SavedModel or an imagefolder has no single content hash, and walking one to invent a
+    composite would be unbounded work at the start of every run."""
+    assert provenance.local_file_facts(tmp_path.as_uri()) == {}
+
+
+@pytest.mark.parametrize("uri", ["hf://models/timm/resnet50.a1_in1k", "s3://bucket/x.ckpt", "ultralytics://yolo26n"])
+def test_a_remote_reference_is_not_fetched_to_fingerprint_it(uri: str) -> None:
+    assert provenance.local_file_facts(uri) == {}
+
+
+def test_a_missing_file_yields_nothing_rather_than_raising() -> None:
+    assert provenance.local_file_facts("file:///nowhere/gone.ckpt") == {}
+
+
+def test_a_file_over_the_cap_keeps_its_size_and_skips_the_digest(tmp_path: Path) -> None:
+    """Above the cap the size still distinguishes most 'is this the same file?' cases."""
+    weights = tmp_path / "huge.ckpt"
+    weights.write_bytes(b"x" * 100)
+    facts = provenance.local_file_facts(weights.as_uri(), max_digest_bytes=10)
+    assert facts == {"size": 100}
+
+
+def test_a_percent_encoded_path_is_decoded(tmp_path: Path) -> None:
+    """`Path.as_uri()` percent-encodes `=`, which every Lightning checkpoint name contains."""
+    weights = tmp_path / "epoch=3.ckpt"
+    weights.write_bytes(b"w")
+    assert "%3D" in weights.as_uri()
+    assert provenance.local_file_facts(weights.as_uri())["size"] == 1
+
+
+def test_a_checkpoint_model_carries_its_digest_into_the_manifest(tmp_path: Path) -> None:
+    """End to end through the walk: a `file://` model ref gains size + digest."""
+    from confluid import configurable
+
+    from marainer.uri import file_model_ref, hf_model_ref
+
+    weights = tmp_path / "last.ckpt"
+    weights.write_bytes(b"weights")
+
+    class Wrapper:
+        def __init__(self) -> None:
+            self.model_refs = [hf_model_ref("timm/resnet50.a1_in1k"), file_model_ref(weights)]
+
+    @configurable
+    class ModelToy:
+        def __init__(self, model: Any = None) -> None:
+            self.model = model
+
+    entries = provenance.configured_models(ModelToy(model=Wrapper()))
+    remote, local = entries
+    assert "digest" not in remote and "size" not in remote  # a Hub reference is not fetched
+    assert local["size"] == 7 and len(local["digest"]) == 64

@@ -3,7 +3,7 @@
 import sys
 import types
 from pathlib import Path
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Mapping, Optional
 
 import pytest
 
@@ -27,6 +27,7 @@ class _FakeTask:
 
     instances: List["_FakeTask"] = []
     offline_calls: List[bool] = []
+    offline: bool = False
 
     def __init__(self, **kw: Any) -> None:
         self.kwargs = kw
@@ -50,9 +51,15 @@ class _FakeTask:
     def set_offline(cls, value: bool) -> None:
         cls.offline_calls.append(value)
 
+    @classmethod
+    def is_offline(cls) -> bool:
+        return cls.offline
+
     # -- the instance surface -------------------------------------------------------------
     def connect(self, mutable: Any, name: Optional[str] = None) -> Any:
-        self.connected[str(name)] = dict(mutable)
+        # The real `Task.connect` takes an OBJECT as readily as a mapping (an InputModel is the
+        # case that matters here), so the fake must not assume it can be dict()-ed.
+        self.connected[str(name)] = dict(mutable) if isinstance(mutable, Mapping) else mutable
         return mutable
 
     def connect_configuration(self, configuration: Any, name: Optional[str] = None) -> Any:
@@ -78,12 +85,31 @@ class _FakeTask:
         self.closed = True
 
 
+class _FakeInputModel:
+    """Stands in for ``clearml.InputModel``; records what a server would have registered."""
+
+    imported: List[Dict[str, Any]] = []
+
+    def __init__(self, **kw: Any) -> None:
+        self.id = f"model-{len(_FakeInputModel.imported)}"
+        self.kwargs = kw
+
+    @classmethod
+    def import_model(cls, **kw: Any) -> "_FakeInputModel":
+        model = cls(**kw)
+        cls.imported.append(kw)
+        return model
+
+
 @pytest.fixture
 def fake_clearml(monkeypatch: pytest.MonkeyPatch) -> Any:
     _FakeTask.instances = []
     _FakeTask.offline_calls = []
+    _FakeTask.offline = False
+    _FakeInputModel.imported = []
     mod = types.ModuleType("clearml")
     mod.Task = _FakeTask  # type: ignore[attr-defined]
+    mod.InputModel = _FakeInputModel  # type: ignore[attr-defined]
     monkeypatch.setitem(sys.modules, "clearml", mod)
     return _FakeTask
 
@@ -306,3 +332,144 @@ def test_round_trip_against_real_clearml_offline(tmp_path: Path, monkeypatch: py
     tracker.log_manifest(build_manifest(tmp_path))
     assert tracker.version and tracker.version.startswith("offline-")
     tracker.finalize("success")
+
+
+# --- model lineage (InputModel) ------------------------------------------------------------------
+
+
+def _manifest_with_models(tmp_path: Any) -> Any:
+    from marainer.tracking.manifest import RunManifest
+
+    m = RunManifest(run_dir=tmp_path / "run", handle_interrupts=False)
+    m.add(
+        "models",
+        {
+            "kind": "hf",
+            "name": "timm/resnet50.a1_in1k",
+            "uri": "hf://models/timm/resnet50.a1_in1k",
+            "role": "pretrained",
+            "slot": "model",
+        },
+    )
+    m.add(
+        "models",
+        {"kind": "file", "name": "/w/last.ckpt", "uri": "file:///w/last.ckpt", "role": "checkpoint", "slot": "model"},
+    )
+    return m
+
+
+def test_models_are_registered_as_input_models(fake_clearml: Any, tmp_path: Any) -> None:
+    """The Models tab and the lineage graph, which a flat key/value section cannot reach."""
+    ClearMLTracker(log_system_metrics=False).log_manifest(_manifest_with_models(tmp_path))
+    imported = _FakeInputModel.imported
+    # The `hf://` entry is deliberately absent — ClearML cannot address that scheme and would
+    # store a CWD-relative path for it (see the zoo-URI test below).
+    assert [m["weights_url"] for m in imported] == ["file:///w/last.ckpt"]
+    assert imported[0]["name"] == "/w/last.ckpt"
+    assert imported[0]["framework"] == "file"  # `kind`; the manual `record_model` writes `source`
+    assert imported[0]["tags"] == ["checkpoint"]
+    assert imported[0]["comment"] == "checkpoint"
+
+
+def test_the_import_is_by_url_so_no_weights_are_uploaded(fake_clearml: Any, tmp_path: Any) -> None:
+    ClearMLTracker(log_system_metrics=False).log_manifest(_manifest_with_models(tmp_path))
+    assert all("weights_url" in m for m in _FakeInputModel.imported)
+    assert not any("weights" in m and m.get("weights") for m in _FakeInputModel.imported)
+
+
+def test_a_second_log_manifest_does_not_register_the_models_twice(fake_clearml: Any, tmp_path: Any) -> None:
+    """`log_manifest` runs at least twice per run; a re-import would be a second entry."""
+    tracker = ClearMLTracker(log_system_metrics=False)
+    manifest = _manifest_with_models(tmp_path)
+    tracker.log_manifest(manifest)
+    tracker.log_manifest(manifest)
+    assert len(_FakeInputModel.imported) == 1  # the addressable one, registered once
+
+
+def test_offline_skips_registration_but_keeps_the_comparable_section(fake_clearml: Any, tmp_path: Any) -> None:
+    """`import_model` needs a server — measured: it dies offline with an AttributeError.
+
+    So the flat hyperparameter section is not merely a fallback, it is the ONLY projection an
+    offline run gets, which is why it stays rather than being replaced.
+    """
+    _FakeTask.offline = True
+    tracker = ClearMLTracker(offline=True, log_system_metrics=False)
+    tracker.log_manifest(_manifest_with_models(tmp_path))
+    assert _FakeInputModel.imported == []
+    assert "models" in _FakeTask.instances[0].connected  # the section still landed
+
+
+def test_a_manifest_with_no_models_registers_nothing(fake_clearml: Any, tmp_path: Any) -> None:
+    from marainer.tracking.manifest import RunManifest
+
+    ClearMLTracker(log_system_metrics=False).log_manifest(
+        RunManifest(run_dir=tmp_path / "run", handle_interrupts=False)
+    )
+    assert _FakeInputModel.imported == []
+
+
+def test_a_failing_registration_does_not_break_the_run(
+    fake_clearml: Any, tmp_path: Any, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Tracking must never abort a run — a lost lineage link beats a dead training job."""
+
+    def boom(**kwargs: Any) -> Any:
+        raise RuntimeError("server said no")
+
+    monkeypatch.setattr(_FakeInputModel, "import_model", boom)
+    ClearMLTracker(log_system_metrics=False).log_manifest(_manifest_with_models(tmp_path))  # no raise
+
+
+def test_the_weights_url_is_expanded_so_it_can_actually_resolve(
+    fake_clearml: Any, tmp_path: Any, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """`manifest.section` returns the PORTABLE spelling — `file://$MODEL_ROOT/last.ckpt`.
+
+    A tag may stay portable (a person reads it), but `weights_url` is meant to RESOLVE, so it
+    needs the bytes on this disk. Without the expansion ClearML would be handed a path containing
+    a literal `$MODEL_ROOT`, which exists nowhere — the same defect the W&B reference had.
+    """
+    from marainer.tracking.manifest import RunManifest
+
+    weights = tmp_path / "last.ckpt"
+    weights.write_text("w")
+    monkeypatch.setenv("MODEL_ROOT", str(tmp_path))
+
+    m = RunManifest(run_dir=tmp_path / "run", handle_interrupts=False)
+    m.add("models", {"kind": "file", "name": str(weights), "uri": weights.as_uri(), "role": "checkpoint"})
+    assert "$MODEL_ROOT" in m.section("models")[0]["uri"]  # the section really is contracted
+
+    ClearMLTracker(log_system_metrics=False).log_manifest(m)
+    imported = _FakeInputModel.imported[0]
+    assert "$MODEL_ROOT" not in imported["weights_url"]
+    assert imported["weights_url"] == weights.as_uri()
+    # The TAG keeps the portable spelling — that is the whole point of contracting it.
+    assert "$MODEL_ROOT" in str(_FakeTask.instances[0].connected["models"]["0.uri"])
+
+
+def test_a_zoo_uri_is_not_registered_as_an_input_model(fake_clearml: Any, tmp_path: Any) -> None:
+    """ClearML REWRITES an unaddressable scheme instead of rejecting it — so it must not see one.
+
+    Measured against a live clearml 2.1 server: `StorageHelper.conform_url` treats an unknown
+    scheme as a relative path and resolves it against the CWD, so `hf://models/timm/x` was
+    registered with `url=file://<cwd>/hf:/models/timm/x` — a local file that does not exist,
+    pointing wherever the run happened to start. A broken link in the Models tab is worse than
+    no link: it looks like a right answer.
+
+    The model is not lost. It stays in the `models` hyperparameter section, which is exactly why
+    that section is kept beside this registration rather than replaced by it.
+    """
+    from marainer.tracking.manifest import RunManifest
+
+    weights = tmp_path / "last.ckpt"
+    weights.write_text("w")
+    m = RunManifest(run_dir=tmp_path / "run", handle_interrupts=False)
+    m.record_model(source="hf", name="timm/x.r224", uri="hf://models/timm/x.r224", role="pretrained")
+    m.record_model(source="file", name=str(weights), uri=weights.as_uri(), role="checkpoint")
+
+    ClearMLTracker(log_system_metrics=False).log_manifest(m)
+
+    assert [i["weights_url"] for i in _FakeInputModel.imported] == [weights.as_uri()]
+    section = _FakeTask.instances[0].connected["models"]
+    assert section["0.uri"] == "hf://models/timm/x.r224", "the zoo model must stay in the section"
+    assert section["1.uri"] == weights.as_uri()

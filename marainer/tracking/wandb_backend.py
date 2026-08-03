@@ -12,6 +12,7 @@ IS its upload channel — so the base class's ``.md`` file, written under
 
 from __future__ import annotations
 
+import os
 import re
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Mapping, Optional, Tuple, Union
@@ -161,12 +162,36 @@ class WandbTracker(Tracker):
             metadata = {k: v for k, v in entry.items() if v is not None}
             try:
                 artifact = wandb.Artifact(_artifact_name(entry.get("name")), type=kind, metadata=metadata)
-                uri = str(entry.get("uri") or "")
-                if uri.startswith(REFERENCEABLE_SCHEMES):
-                    artifact.add_reference(uri)
+                self._add_reference(artifact, str(entry.get("uri") or ""))
                 run.use_artifact(artifact)
             except Exception as exc:  # pragma: no cover - backend-specific
                 logger.debug(f"wandb use_artifact failed for {entry.get('uri') or entry.get('name')}: {exc}")
+
+    @staticmethod
+    def _add_reference(artifact: Any, uri: str) -> None:
+        """Attach ``uri`` as a reference when W&B can address it — never fatal.
+
+        Two reasons this cannot share the caller's ``try``, both MEASURED against wandb 0.28:
+        ``add_reference`` VALIDATES eagerly, raising ``ValueError`` for a ``file://`` path that
+        is not on this disk and issuing a live request for ``http(s)://`` (a 404 raises
+        ``HTTPError``). Sharing the block meant a reference failure skipped ``use_artifact``
+        too, so the entry vanished from the lineage graph entirely rather than degrading to the
+        metadata-only form a zoo URI already gets — the artifact is still the record, the
+        reference is only an optimisation on top of it.
+
+        The path is EXPANDED first because the manifest is PORTABLE: with ``$MODEL_ROOT`` set,
+        a checkpoint's URI is stored as ``file://$MODEL_ROOT/last.ckpt``, which is deliberately
+        not a path on any machine. ``os.path.expandvars`` is the documented exact inverse of
+        that contraction, so the reference names the bytes on THIS disk while the metadata keeps
+        the portable spelling. Without it a checkpoint reference could never resolve on a
+        machine that has the roots configured, which is every machine that sets them.
+        """
+        if not uri.startswith(REFERENCEABLE_SCHEMES):
+            return  # a zoo scheme W&B does not know — metadata alone, deliberately
+        try:
+            artifact.add_reference(os.path.expandvars(uri))
+        except Exception as exc:
+            logger.debug(f"wandb add_reference skipped for {uri}: {exc}")
 
     def finalize(self, status: str = "success") -> None:
         if self._run is not None:

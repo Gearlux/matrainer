@@ -474,10 +474,60 @@ def configured_datasets(obj: Any) -> List[Dict[str, Any]]:
                 "uri": uri,
                 "url": dataset_url(value),
                 "split": splits[0] if splits else None,
+                # Size + digest for a LOCAL file, so a reader can tell whether what is on disk is
+                # what ran. A remote or directory reference contributes nothing (see the helper).
+                **local_file_facts(uri),
                 "slot": path,
             }
         )
     return entries
+
+
+#: Largest file the manifest will SHA-256. Measured at ~1790 MB/s on this workspace's disk, so the
+#: default costs at most ~1.2 s — worth it for a checkpoint, not worth it for a multi-tens-of-GB
+#: one on a network filesystem, where the read alone could take minutes. Above the cap the size is
+#: still recorded, which already distinguishes most "is this the same file?" cases.
+MAX_DIGEST_BYTES = 2 * 1024**3
+
+
+def local_file_facts(uri: str, max_digest_bytes: int = MAX_DIGEST_BYTES) -> Dict[str, Any]:
+    """``{size, digest}`` for a ``file://`` URI pointing at a regular file; ``{}`` otherwise.
+
+    This is what lets a later reader tell whether the checkpoint still on disk is the one the run
+    loaded — the same question :func:`file_digest` answers for the configuration tree, asked of a
+    weights file. A remote artifact (``hf://``, ``s3://``) contributes nothing: it is identified by
+    its URI and revision, and fetching gigabytes to fingerprint it would be absurd.
+
+    A DIRECTORY also contributes nothing. A SavedModel or an imagefolder has no single content
+    hash, and walking one to invent a composite would be an unbounded amount of work at the start
+    of every run — the size and digest fields stay absent rather than guessed at.
+
+    ``size`` is free (one ``stat``) and is recorded even when the digest is skipped, so a file over
+    ``max_digest_bytes`` is still distinguishable from a different one. Any failure — the file
+    moved between the run reading it and this call, a permission error — yields ``{}`` rather than
+    raising; provenance must never take down a run.
+    """
+    from urllib.parse import unquote, urlparse
+
+    parsed = urlparse(uri)
+    if parsed.scheme != "file":
+        return {}
+    try:
+        path = Path(unquote(parsed.path))
+        if not path.is_file():
+            return {}
+        size = path.stat().st_size
+    except OSError as exc:
+        logger.debug(f"local_file_facts could not stat {uri}: {exc}")
+        return {}
+    facts: Dict[str, Any] = {"size": size}
+    if size <= max_digest_bytes:
+        digest = file_digest(path)
+        if digest is not None:
+            facts["digest"] = digest
+    else:
+        logger.debug(f"local_file_facts: {path} is {size} bytes, above the digest cap; recording size only")
+    return facts
 
 
 def configured_models(obj: Any) -> List[Dict[str, Any]]:
@@ -529,6 +579,7 @@ def configured_models(obj: Any) -> List[Dict[str, Any]]:
                     "uri": ref.uri,
                     "url": ref.url,
                     "role": ref.role,
+                    **local_file_facts(ref.uri),
                     "slot": path,
                 }
             )
@@ -898,6 +949,7 @@ __all__ = [
     "DEFAULT_ENV_PREFIXES",
     "FREEZE_TIMEOUT_SECONDS",
     "GIT_COMMIT_TAG",
+    "MAX_DIGEST_BYTES",
     "MAX_SLOT_DEPTH",
     "PORTABLE_ROOT_VARS",
     "REDACTED",
@@ -920,6 +972,7 @@ __all__ = [
     "get_git_commit_hash",
     "git_state",
     "included_config_paths",
+    "local_file_facts",
     "log_run_context",
     "package_freeze",
     "platform_state",
