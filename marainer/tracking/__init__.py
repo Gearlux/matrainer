@@ -12,6 +12,10 @@ training platform.
 * :mod:`~marainer.tracking.provenance` — git / config / environment capture plus
   :func:`~marainer.tracking.provenance.log_run_context`, the one call at run start.
 * :mod:`~marainer.tracking.system` — framework-free system-metric sampling.
+* :func:`~marainer.tracking.render.per_class_vectors` — the per-class VECTORS in a metrics
+  result, selected by shape, each rendered by
+  :func:`~marainer.tracking.render.render_vector_as_table` (a worst-first markdown table) or
+  :func:`~marainer.tracking.render.render_vector_as_figure` (a sorted bar chart).
 * :func:`~marainer.tracking.render.render_matrix_as_table` /
   :func:`~marainer.tracking.render.render_matrix_as_figure` — a confusion matrix as a
   markdown table (for ``log_text``) or a heatmap (for ``log_figure``).
@@ -41,7 +45,13 @@ from marainer.tracking.provenance import (
     log_run_context,
     resolve_log_file,
 )
-from marainer.tracking.render import render_matrix_as_figure, render_matrix_as_table
+from marainer.tracking.render import (
+    per_class_vectors,
+    render_matrix_as_figure,
+    render_matrix_as_table,
+    render_vector_as_figure,
+    render_vector_as_table,
+)
 from marainer.tracking.system import MpsMetricsSampler, enable_mlflow_system_metrics, start_system_metrics_monitor
 
 #: Suffix marking a module in this package as holding a backend.
@@ -64,8 +74,11 @@ __all__ = [
     "included_config_paths",
     "log_run_context",
     "resolve_log_file",
+    "per_class_vectors",
     "render_matrix_as_figure",
     "render_matrix_as_table",
+    "render_vector_as_figure",
+    "render_vector_as_table",
 ]
 
 #: Snapshot of the names that exist independent of backend discovery.

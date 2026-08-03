@@ -30,7 +30,7 @@ behind an extra and lazily imported the first time you use its backend:
 | `marainer[aim]` | `aim` | `AimTracker` |
 | `marainer[clearml]` | `clearml` | `ClearMLTracker` |
 | `marainer[keras]` | `keras` | `marainer.keras.keras_tracking_callback` |
-| `marainer[plot]` | `matplotlib` | `render_matrix_as_figure` — a confusion matrix as a heatmap for `log_figure` |
+| `marainer[plot]` | `matplotlib` | `render_matrix_as_figure` / `render_vector_as_figure` — a confusion matrix as a heatmap, a per-class metric as a bar chart, for `log_figure` |
 | `marainer[tensorflow]` | `marainer[keras]`, `tensorflow` | the same helper, with the TensorFlow engine underneath |
 | `marainer[all]` | every extra above | everything |
 
@@ -607,8 +607,9 @@ loop can use it without pulling torch. That is also why it sits at the top level
   per split, flowing each template with the sizing kwarg (`num_classes=` / `num_labels=`).
 - `coerce_metric_value(value)` / `scalar_metrics(raw)` — JSON-safe coercion of a torchmetrics
   `compute()` result; `scalar_metrics` keeps only the scalars, so an `N×N` confusion matrix is
-  dropped — those channels hold one number per name. Report such a metric separately with
-  `marainer.tracking.render_matrix_as_table` (below).
+  dropped — those channels hold one number per name, and so is a `[C]` per-class vector. Report
+  such a metric separately with `marainer.tracking.render_matrix_as_table` /
+  `render_vector_as_table` (below).
 - `MetricPreset(category=…, task=…)` — instantiate every compatible torchmetrics metric in a
   category, for a config that wants "all the classification metrics" without naming them.
 - `resolve_device(choice="auto")` + the closed `Device` literal (`"auto"`/`"cpu"`/`"cuda"`/`"mps"`)
@@ -637,29 +638,61 @@ rather than their dependencies. `marainer.lightning` re-exports all four, unchan
 
 ### Reporting a metric that is not a single number
 
-`scalar_metrics` drops what a `{name: float}` channel cannot hold. Two renderers put such a value
-back, and a channel gives each a home:
+`scalar_metrics` drops what a `{name: float}` channel cannot hold. Renderers put such a value back,
+and a channel gives each a home. There are **two shapes**, each with a table form and a figure form:
 
-| | renderer | channel | cost |
-|---|---|---|---|
-| **table** | `render_matrix_as_table` | `log_text` | `tabulate`; readable in a plain log |
-| **figure** | `render_matrix_as_figure` | `log_figure` | matplotlib (`marainer[plot]`); glanceable, and the only readable form at many classes |
+| shape | table (`log_text`) | figure (`log_figure`) |
+|---|---|---|
+| square `N×N` — a **confusion matrix** | `render_matrix_as_table` | `render_matrix_as_figure` (heatmap) |
+| length-`C` — a **per-class metric** (`average=None`) | `render_vector_as_table` | `render_vector_as_figure` (bar chart) |
 
-Both take a square 2-D matrix — a confusion matrix: rows true classes, columns predicted — and
-both are framework-free (the matrix only needs `.tolist()`, or `.detach().cpu().tolist()`), with
-their libraries imported lazily so this module stays in the light core.
+The table form needs only `tabulate` and is readable in a plain log, so it is what a consumer sends
+by default; the figure form needs matplotlib (`marainer[plot]`) on every eval epoch, so it is
+opt-in. All four are framework-free — a value only needs `.tolist()`, or `.detach().cpu().tolist()`
+— with their libraries imported lazily so the module stays in the light core.
+
+**The two shapes get different renderings on purpose.** A per-class IoU is not a degenerate matrix:
+it has one axis of meaning, its values share a scale, and what a reader wants from it is a *ranking*
+— which class the model is worst at. A heatmap of a `1×C` strip answers that badly, so the vector
+renderers sort **worst-first** and draw the mean as a reference line.
 
 ```python
-from marainer.tracking import render_matrix_as_figure, render_matrix_as_table
+from marainer.tracking import (
+    per_class_vectors, render_matrix_as_table, render_vector_as_figure, render_vector_as_table,
+)
 
-values = val_metrics.compute()
+values = val_metrics.compute()          # scalars, vectors and matrices, together
+
 table = render_matrix_as_table("val/confusion", values["val/confusion"], ["cat", "dog"])
-logger.info(table)
 tracker.log_text("val/confusion", table, step=epoch)
 
-# opt in when a picture is worth it
-tracker.log_figure("val/confusion", render_matrix_as_figure("val/confusion", values["val/confusion"], ["cat", "dog"]))
+# `per_class_vectors` finds the VECTORS by SHAPE, so a runnable needs no naming convention
+for payload in per_class_vectors(values, class_names=["pet", "background", "boundary"]):
+    table = render_vector_as_table(payload["name"], payload["values"], payload["class_names"])
+    logger.info(table)
+    tracker.log_text(payload["name"], table, step=epoch)
+    # opt in when a picture is worth it
+    tracker.log_figure(
+        payload["name"],
+        render_vector_as_figure(payload["name"], payload["values"], payload["class_names"]),
+        step=epoch,
+    )
 ```
+
+```
+val/iou_per_class (mean 0.7509):
+
+| class      |   iou_per_class |
+|------------|-----------------|
+| boundary   |          0.4827 |
+| pet        |          0.8549 |
+| background |          0.9150 |
+```
+
+`per_class_vectors` selects **by shape, not by metric name** (a flat numeric sequence of length ≥ 2):
+a runnable emits scalars, vectors and matrices in one mapping with no knowledge of which is which,
+so a name-based rule would need a convention nothing enforces. Scalars and matrices fall through,
+which is what lets the same mapping be passed to both selection rules.
 
 `render_matrix_as_figure` builds a `matplotlib.figure.Figure` **directly**, never through
 `pyplot` — a pyplot figure is registered in a process-global manager and lives until someone
