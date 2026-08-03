@@ -2,6 +2,7 @@
 
 import sys
 import types
+from pathlib import Path
 from typing import Any, List
 
 import pytest
@@ -62,6 +63,13 @@ class _FakeArtifact:
         # must never reach here with one (measured against wandb 0.28).
         if not uri.startswith(("file://", "http://", "https://", "s3://", "gs://", "az://")):
             raise ValueError("You must pass name=... when tracking references with unknown schemes.")
+        # It also VALIDATES eagerly: a `file://` path not on this disk raises `ValueError`
+        # ("Path ... must be a valid file or directory path"). The fake enforces that because
+        # not enforcing it is what let a real defect ship — a failed reference used to skip
+        # `use_artifact` too, dropping the entry from the lineage graph entirely, and a fake
+        # that accepted any path could never notice.
+        if uri.startswith("file://") and not Path(uri[len("file://") :]).exists():
+            raise ValueError(f"Path '{uri}' must be a valid file or directory path")
         self.references.append(uri)
         return []
 
@@ -128,7 +136,9 @@ def _manifest_with_lineage(tmp_path: Any) -> Any:
     m.record_model(
         source="hf", name="timm/resnet50.a1_in1k", uri="hf://models/timm/resnet50.a1_in1k", role="pretrained"
     )
-    m.record_model(source="file", name="/w/last.ckpt", uri="file:///w/last.ckpt", role="checkpoint")
+    ckpt = Path(tmp_path) / "last.ckpt"
+    ckpt.write_text("weights")
+    m.record_model(source="file", name=str(ckpt), uri=f"file://{ckpt}", role="checkpoint")
     return m
 
 
@@ -136,11 +146,11 @@ def test_datasets_and_models_are_marked_used_with_their_own_types(fake_wandb: An
     """Marking an artifact USED is what puts the run on W&B's lineage graph."""
     WandbTracker().log_manifest(_manifest_with_lineage(tmp_path))
     used = fake_wandb.runs[0].used
-    assert [(a.name, a.type) for a in used] == [
-        ("ylecun_mnist", "dataset"),
-        ("timm_resnet50.a1_in1k", "model"),
-        ("w_last.ckpt", "model"),
-    ]
+    assert [a.type for a in used] == ["dataset", "model", "model"]
+    assert [a.name for a in used][:2] == ["ylecun_mnist", "timm_resnet50.a1_in1k"]
+    # The checkpoint's name derives from its absolute path, so assert the SHAPE rather than a
+    # tmp-dir literal: sanitised, and still ending in the file it names.
+    assert used[2].name.endswith("last.ckpt") and "/" not in used[2].name
 
 
 def test_the_artifact_name_is_sanitized_but_the_identity_survives_in_metadata(fake_wandb: Any, tmp_path: Any) -> None:
@@ -156,7 +166,7 @@ def test_an_addressable_uri_becomes_a_reference(fake_wandb: Any, tmp_path: Any) 
     """A reference records WHERE the bytes live without uploading them."""
     WandbTracker().log_manifest(_manifest_with_lineage(tmp_path))
     checkpoint = fake_wandb.runs[0].used[2]
-    assert checkpoint.references == ["file:///w/last.ckpt"]
+    assert checkpoint.references == [f"file://{Path(tmp_path) / 'last.ckpt'}"]
 
 
 def test_a_zoo_scheme_is_metadata_only_rather_than_a_rejected_reference(fake_wandb: Any, tmp_path: Any) -> None:
@@ -190,3 +200,50 @@ def test_the_manifest_artifact_is_still_uploaded(fake_wandb: Any, tmp_path: Any)
     manifest = _manifest_with_lineage(tmp_path)
     WandbTracker().log_manifest(manifest)
     assert any(name.endswith("manifest.yaml") for name in fake_wandb.runs[0].saved)
+
+
+def test_an_unresolvable_reference_still_reaches_the_lineage_graph(fake_wandb: Any, tmp_path: Any) -> None:
+    """A failed `add_reference` must degrade to metadata-only, never drop the artifact.
+
+    `add_reference` VALIDATES eagerly — a `file://` path not on this disk raises, and an
+    `http(s)://` URI is fetched (a 404 raises). That call used to share the caller's `try` with
+    `use_artifact`, so a checkpoint whose file had moved vanished from the lineage graph
+    entirely instead of appearing as the metadata record it still is.
+    """
+    from marainer.tracking.manifest import RunManifest
+
+    m = RunManifest(run_dir=tmp_path / "run", handle_interrupts=False)
+    m.record_model(source="file", name="gone.ckpt", uri="file:///nowhere/gone.ckpt", role="checkpoint")
+    WandbTracker().log_manifest(m)
+
+    used = fake_wandb.runs[0].used
+    assert [a.name for a in used] == ["gone.ckpt"], "the entry was dropped instead of degrading"
+    assert used[0].references == []
+    assert used[0].metadata["uri"] == "file:///nowhere/gone.ckpt"
+
+
+def test_a_portable_uri_is_expanded_before_it_is_referenced(
+    fake_wandb: Any, tmp_path: Any, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """`file://$MODEL_ROOT/...` must resolve to the bytes on THIS disk.
+
+    The manifest is portable: with `MODEL_ROOT` set, `section()` contracts a checkpoint's URI to
+    `file://$MODEL_ROOT/last.ckpt`, which is deliberately not a path anywhere. Referencing it
+    verbatim could therefore NEVER resolve on a machine that has the roots configured — which is
+    every machine that sets them. `expandvars` is the documented exact inverse, so the reference
+    names the real file while the metadata keeps the portable spelling.
+    """
+    from marainer.tracking.manifest import RunManifest
+
+    root = Path(tmp_path) / "models"
+    root.mkdir()
+    (root / "last.ckpt").write_text("weights")
+    monkeypatch.setenv("MODEL_ROOT", str(root))
+
+    m = RunManifest(run_dir=tmp_path / "run", handle_interrupts=False)
+    m.record_model(source="file", name="last.ckpt", uri=f"file://{root}/last.ckpt", role="checkpoint")
+    WandbTracker().log_manifest(m)
+
+    artifact = fake_wandb.runs[0].used[0]
+    assert artifact.metadata["uri"] == "file://$MODEL_ROOT/last.ckpt", "the manifest must stay portable"
+    assert artifact.references == [f"file://{root}/last.ckpt"], "the reference must name the real file"

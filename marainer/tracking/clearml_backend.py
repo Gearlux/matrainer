@@ -31,8 +31,9 @@ Two constructor choices differ from ClearML's defaults, both deliberately:
 
 from __future__ import annotations
 
+import os
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, Dict, Mapping, Optional, Union
+from typing import TYPE_CHECKING, Any, Dict, Mapping, Optional, Tuple, Union
 
 from confluid import configurable
 from loggair import get_logger
@@ -47,6 +48,17 @@ logger = get_logger(__name__)
 
 #: The ClearML "section" the hyperparameters are connected under.
 HPARAMS_SECTION = "hparams"
+
+#: Schemes ClearML's storage layer can actually address. Anything else it REWRITES rather than
+#: rejecting: ``StorageHelper.conform_url`` treats an unknown scheme as a relative path and
+#: resolves it against the CWD, so ``hf://models/timm/x`` is registered as
+#: ``file://<cwd>/hf:/models/timm/x`` — a local file that does not exist, pointing wherever the
+#: run happened to start. Every zoo scheme this workspace mints (``hf``/``smp``/``keras``/
+#: ``ultralytics``/``rfdetr``) hits that path, so they are kept OUT of ``import_model`` and stay
+#: in the comparable hyperparameter section instead. Measured against clearml 2.1; ``azure://``
+#: is addressable in principle and raises a configuration error without credentials, which the
+#: caller's ``except`` already reports — a loud miss, unlike the silent rewrite above.
+ADDRESSABLE_SCHEMES: Tuple[str, ...] = ("file://", "http://", "https://", "s3://", "gs://", "azure://")
 
 
 @configurable
@@ -84,6 +96,9 @@ class ClearMLTracker(Tracker):
         self.offline = offline
         self.log_system_metrics = log_system_metrics
         self._task: Optional[Any] = None
+        # URI -> InputModel id, for models already registered on THIS task. `log_manifest` runs at
+        # least twice per run, and a second `import_model` of the same weights is a second entry.
+        self._input_models: Dict[str, str] = {}
         # ClearML replaces a connected dict wholesale, but `log_hyperparams` must MERGE
         # across calls, so the accumulated dict is kept here and re-connected each time.
         self._hparams: Dict[str, Any] = {}
@@ -208,6 +223,76 @@ class ClearMLTracker(Tracker):
                 task.connect(flat, name=section)
             except Exception as exc:  # pragma: no cover - defensive
                 logger.debug(f"ClearML connect({section}) failed: {exc}")
+        self._project_input_models(manifest)
+
+    def _project_input_models(self, manifest: "RunManifest") -> None:
+        """Register the manifest's models as ClearML ``InputModel``s — a SERVER-ONLY enrichment.
+
+        The hyperparameter section above is comparable across runs but is still just key/value
+        text. ``InputModel.import_model`` registers each artifact as a first-class model the task
+        links to, which is what puts it in the task's **Models** tab and on ClearML's lineage
+        graph. It imports by URL — no weights are uploaded, matching what the manifest holds.
+
+        **It needs a server, and that is why the flat section stays rather than being replaced.**
+        Measured against clearml 2.1 in offline mode: ``import_model`` dies with
+        ``AttributeError: 'NoneType' object has no attribute 'response'``, because the backend
+        call it makes has no backend to answer it. So an offline run — the mode that needs no
+        server and no credentials at all — would otherwise log a failure per model per
+        :meth:`log_manifest`. Detecting it once up front is cheaper and quieter, and leaves the
+        offline run with exactly the projection it had before.
+
+        Models are remembered per URI for the same reason MLflow's are: :meth:`log_manifest` runs
+        at least twice per run, and a second registration of the same weights would be a second
+        entry rather than the same one.
+        """
+        entries = manifest.section("models")
+        if not entries:
+            return
+        clearml = require("clearml", "clearml", feature="ClearMLTracker")
+        if self.offline or clearml.Task.is_offline():
+            logger.debug(
+                "ClearML is offline: skipping InputModel registration, which needs a server. "
+                "The models are still connected as a comparable hyperparameter section."
+            )
+            return
+        task = self.experiment
+        for entry in entries:
+            uri = str(entry.get("uri") or "")
+            if not uri or uri in self._input_models:
+                continue
+            weights_url = os.path.expandvars(uri)
+            if not weights_url.startswith(ADDRESSABLE_SCHEMES):
+                # A zoo scheme — registering it would store a CWD-relative path that resolves
+                # nowhere (see ADDRESSABLE_SCHEMES). The model is already in the `models`
+                # section, which is the whole reason that section is kept beside this.
+                logger.debug(f"ClearML cannot address {uri}; left in the models section only.")
+                continue
+            try:
+                model = clearml.InputModel.import_model(
+                    # EXPANDED, unlike the tags beside it: `manifest.section` returns the portable
+                    # spelling, so a checkpoint's URI reads `file://$MODEL_ROOT/last.ckpt`, which
+                    # is deliberately not a path on any machine. A tag may stay portable — it is
+                    # read by a person — but `weights_url` is meant to RESOLVE, so it needs the
+                    # bytes on this disk. `os.path.expandvars` is the documented exact inverse.
+                    weights_url=weights_url,
+                    name=str(entry.get("name") or uri),
+                    # `kind` is what `capture_models` writes; `source` is what the manual
+                    # `record_model` takes — a section can hold either.
+                    framework=str(entry.get("kind") or entry.get("source") or "") or None,
+                    comment=str(entry.get("role") or ""),
+                    tags=[str(entry["role"])] if entry.get("role") else None,
+                )
+            except Exception as exc:  # pragma: no cover - server-specific
+                logger.debug(f"ClearML InputModel registration failed for {uri}: {exc}")
+                continue
+            # Memoised the moment the REGISTRATION succeeds, before the link is attempted: it is
+            # the registration that would duplicate on a retry, so a failure to link must not send
+            # the next `log_manifest` back to `import_model` for weights the server already has.
+            self._input_models[uri] = getattr(model, "id", uri)
+            try:
+                task.connect(model, name=f"model:{entry.get('role') or 'input'}")
+            except Exception as exc:  # pragma: no cover - server-specific
+                logger.debug(f"ClearML could not link the input model for {uri}: {exc}")
 
     def finalize(self, status: str = "success") -> None:
         if self._task is None:

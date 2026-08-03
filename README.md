@@ -359,6 +359,13 @@ datasets:
    split: train, slot: train_set}
 ```
 
+A **local** file also carries its `size` and SHA-256 `digest`, so a later reader can tell whether
+the checkpoint still on disk is the one the run loaded — the same question `capture_config` answers
+for the YAML tree. A remote reference (`hf://`, `s3://`) carries neither: it is identified by its
+URI and revision, and fetching gigabytes to fingerprint it would be absurd. A *directory* carries
+neither either — a SavedModel or an imagefolder has no single content hash. Hashing runs at roughly
+1.8 GB/s, and files above `MAX_DIGEST_BYTES` (2 GiB) keep their size and skip the digest.
+
 `kind`, `name` and `split` are derived from the URI rather than read off the source, so this needs
 no knowledge of any particular kind of dataset and a new source type needs no change here. `uri` is
 the canonical handle two runs are compared on; `url` is a link you can open, and is `null` for data
@@ -448,10 +455,12 @@ comparable across backends:
 |---|---|
 | `MlflowTracker` | the `mlflow.source.*` standard tags (name, type, git commit / branch / repoURL / dirty); datasets as real **dataset inputs** and models as **logged-model inputs** via `log_inputs`, so MLflow links every run that shares one |
 | `TensorBoardTracker` | the manifest as YAML in the **Text** tab (`add_text`) — TensorBoard has no artifact store, so a copied file would never be visible |
-| `ClearMLTracker` | the manifest in the **Configuration** tab (`connect_configuration`), readable and diffable between tasks; datasets and models as named **Hyperparameter** sections ClearML can compare across runs |
-| `AimTracker` | each section as a structured **run value** (`run["code"]`, `run["env"]`, `run["datasets"]`, …), which Aim's UI filters and compares across runs rather than leaving inside a file |
+| `ClearMLTracker` | the manifest in the **Configuration** tab (`connect_configuration`), readable and diffable between tasks; datasets and models as named **Hyperparameter** sections ClearML can compare across runs; and — **with a server** — each model as a first-class `InputModel`, which puts it in the task's Models tab and on ClearML's lineage graph |
+| `AimTracker` | each section as a structured **run value** (`run["code"]`, `run["env"]`, `run["datasets"]`, `run["models"]`, …), which Aim's UI filters and compares across runs rather than leaving inside a file — and that is Aim's *most* native slot: it has sequences (metrics, text, images) but no artifact, dataset or model entity to register into |
 | `WandbTracker` | datasets and models as used **Artifacts** (`use_artifact`, typed `dataset` / `model`), which is what puts the run on W&B's lineage graph; an addressable URI also becomes an artifact **reference**, recording where the bytes live without uploading them |
 | `CsvTracker` | the default: both files plus `log_hyperparams` |
+
+**A server-only slot degrades rather than replacing.** ClearML's `InputModel` needs a server — measured, it dies in offline mode with `AttributeError: 'NoneType' object has no attribute 'response'` — so `offline=True`, the mode that needs no server and no credentials at all, skips it once with a debug note and keeps the hyperparameter section, which is then the only projection it has. That is why the section stays rather than being replaced by the richer slot.
 
 **Two things a native slot cannot do for itself**, both measured rather than assumed. MLflow does
 *not* deduplicate a logged model the way it deduplicates a dataset input by digest — and
