@@ -4,7 +4,7 @@ import subprocess
 import sys
 import types
 from pathlib import Path
-from typing import Any, List, Mapping, Optional
+from typing import Any, Dict, List, Mapping, Optional
 
 import pytest
 import yaml
@@ -1222,3 +1222,88 @@ def test_a_word_with_no_variable_is_quoted_the_ordinary_way(monkeypatch: pytest.
     set_argv(monkeypatch, ["/pkg/cli.py"], spec_name="pkg.cli")
     line = provenance.command_line()
     assert line is not None and line.startswith(f"cd '{workdir}'")
+
+
+# ---------------------------------------------------------------------------
+# Framework-held child objects (torch's `_modules`)
+# ---------------------------------------------------------------------------
+
+
+class _FakeModule:
+    """The shape of `torch.nn.Module` that matters here, with no torch dependency.
+
+    Assigning a child diverts it into `_modules` and leaves `__dict__` without the name —
+    which is exactly what made every torch-based runnable's model invisible to the walk.
+    """
+
+    #: Annotated so mypy types the registry; `__getattr__` below otherwise widens it to `object`.
+    _modules: Dict[str, "_FakeModule"]
+
+    def __init__(self) -> None:
+        object.__setattr__(self, "_modules", {})
+
+    def __setattr__(self, name: str, value: object) -> None:
+        if isinstance(value, _FakeModule):
+            self._modules[name] = value
+        else:
+            object.__setattr__(self, name, value)
+
+    def __getattr__(self, name: str) -> object:
+        try:
+            return self._modules[name]
+        except KeyError:
+            raise AttributeError(name) from None
+
+
+class _FakeBackbone(_FakeModule):
+    @property
+    def model_refs(self) -> List[Any]:
+        from marainer.uri import ModelRef
+
+        return [ModelRef(uri="hf://models/acme/net", url=None, role="pretrained")]
+
+
+def test_a_child_object_a_framework_diverts_is_still_a_slot() -> None:
+    """A model held in `_modules` must be walked — it is the normal case, not an edge one.
+
+    `torch.nn.Module.__setattr__` routes every Module-valued assignment into `_modules`, so
+    `self.model = TimmModel(...)` leaves `model` absent from `__dict__`. Reading only public
+    `__dict__` keys therefore missed the model of EVERY torch-based runnable, and the manifest
+    recorded an empty `models` section while `datasets` (a plain attribute) filled correctly —
+    green tests, complete-looking run, no weights named. Found by reading a real run's manifest.
+    """
+    runnable = _FakeModule()
+    runnable.train_set = "a plain attribute"  # type: ignore[assignment]
+    runnable.model = _FakeBackbone()  # type: ignore[assignment]
+
+    slots = dict(provenance.configured_slots(runnable))
+    assert "model" in slots, f"the diverted child is invisible: {sorted(slots)}"
+    assert "train_set" in slots, "a plain public attribute must still be walked"
+
+    entries = provenance.configured_models(runnable)
+    assert [e["uri"] for e in entries] == ["hf://models/acme/net"]
+    assert entries[0]["slot"] == "model"
+
+
+def test_the_registry_itself_is_not_walked_as_a_private_attribute() -> None:
+    """`_modules` is read for its CHILDREN, never yielded as a slot of its own.
+
+    The underscore rule still holds: descending into private state reaches a framework's
+    parameter and buffer dictionaries. This registry is the one exception, and only because
+    its KEYS are the public names the caller assigned.
+    """
+    runnable = _FakeModule()
+    runnable.model = _FakeBackbone()  # type: ignore[assignment]
+
+    paths = [path for path, _ in provenance.configured_slots(runnable)]
+    assert not any(path.startswith("_") or "._" in path for path in paths), paths
+
+
+def test_a_public_attribute_wins_over_a_same_named_child() -> None:
+    """No slot is ever yielded twice; the real attribute is authoritative."""
+    runnable = _FakeModule()
+    object.__setattr__(runnable, "model", "the plain attribute")
+    runnable._modules["model"] = _FakeBackbone()
+
+    slots = [(path, value) for path, value in provenance.configured_slots(runnable) if path == "model"]
+    assert slots == [("model", "the plain attribute")]
