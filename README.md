@@ -605,6 +605,87 @@ The module imports **nothing but the standard library**, so a deliberately frame
 loop can use it without pulling torch. That is also why it sits at the top level rather than under
 `matrainer.torch`.
 
+## Metrics a hand-written loop cannot average (`matrainer.metric_functions`, no extra needed)
+
+If your engine owns the loop, you get stateful metrics for free — it accumulates across batches
+and reduces once. If **you** own the loop you see one batch at a time, and the obvious move is to
+score each batch and average. For accuracy that is very nearly right. For a macro-averaged F1 it
+is not:
+
+| | global macro-F1 | batch-averaged |
+| --- | --- | --- |
+| accuracy ≈ 0.9, 10 classes, batch 32 | 0.9182 | 0.8849 |
+| accuracy ≈ 0.3, 10 classes, batch 32 | 0.3486 | 0.3032 |
+
+Three to five points, always downward, and worse the more classes a batch is missing — a class
+absent from a batch scores 0 for that batch and drags the mean. Accumulate a confusion matrix
+instead: one `C×C` integer array whose size does not grow with the dataset.
+
+```python
+from matrainer.metric_functions import accumulate_confusion, macro_f1, zero_confusion
+
+matrix = zero_confusion(num_classes)
+for logits, targets in batches:            # logits are argmaxed; raw or softmaxed, same answer
+    accumulate_confusion(matrix, logits, targets)
+print(macro_f1(matrix))
+```
+
+`macro_f1` matches `sklearn.metrics.f1_score(..., average="macro", zero_division=0)` and
+`torchmetrics.classification.MulticlassF1Score(average="macro")` exactly — which is the point: a
+number from your loop is comparable with one from a framework that computed it for you. numpy is
+the only import, so a deliberately framework-free loop can use it. Single-label targets only; a
+multi-hot row has no single cell to land in.
+
+## What a metric is CALLED (`matrainer.metric_names`, no extra needed)
+
+Every tracker records the key it is handed, verbatim. So a run recorded under one engine and the
+same run under another land in different columns: Keras writes `loss` / `val_loss`, fastai
+`train_loss` / `valid_loss` plus **unprefixed validation** metrics, a `transformers.Trainer`
+`train_*` / `eval_*`, a `LightningModule` whatever it logs. `MetricNames` translates between those
+vocabularies, in either direction:
+
+```python
+from matrainer import MetricNames
+
+names = MetricNames()                                     # default target: matrainer's own
+names({"loss": 0.5, "val_loss": 0.4}, source="keras")     # {'train/loss': 0.5, 'val/loss': 0.4}
+names({"accuracy": 0.9}, source="fastai")                 # {'val/accuracy': 0.9}  ← see below
+names({"eval_accuracy": 0.9}, source="huggingface")       # {'val/accuracy': 0.9}
+
+MetricNames(target="keras")({"val/loss": 0.4})            # {'val_loss': 0.4}  ...and back out
+```
+
+The canonical vocabulary is `<split>/<name>` with `split` one of `train` / `val` / `test` — what
+`build_metric_collection(...).clone(prefix="val/")` already produces, and what TensorBoard and
+ClearML group their curves on. `epoch` and `step` pass through untouched: they are the x-axis, not
+a measurement. Translation is idempotent, so a loop that already names things canonically can
+declare its real `source` and pass through unchanged.
+
+**`source` is the caller's, `target` and `renames` are config's.** Only the code doing the
+reporting knows which engine produced the names — and whether an unprefixed `accuracy` was
+measured on train (Keras) or on validation (fastai's `Recorder` computes its metrics on the
+validation pass and prefixes none of them). Everything a *user* chooses is on the object, so one
+YAML key can reach several differently-sourced backends and mean the right thing in each:
+
+```yaml
+metric_names: !class:matrainer.MetricNames
+  target: keras                       # record this run in Keras spelling instead
+  renames: {top_k_accuracy: accuracy_top5}   # align a metric this module cannot know about
+```
+
+`renames` applies to the parsed **base** name, after the source's own aliases resolve
+(`sparse_categorical_accuracy` → `accuracy`) and before the target's spelling is applied, so one
+entry reads the same whatever the two vocabularies are.
+
+Where it is already applied for you: `keras_tracking_callback` (`source="keras"`) and
+`TrackerLogger` (`source="lightning"`) both take a `metric_names=` argument and default to the
+canonical translation. A hand-written loop calls `as_metric_names(self.metric_names)` — one line
+that turns an unwired slot, a live object or a deferred YAML marker into a usable translator.
+
+What is **not** translated is what the engine hands its own callbacks: a
+`keras.callbacks.EarlyStopping(monitor="val_loss")` must keep finding the name Keras gave it, so
+only the copy on its way to a tracker is renamed.
+
 ## `matrainer.torch` — torch-only, Lightning-free helpers (`matrainer[torch]`)
 
 - `load_lightning_checkpoint(model, path, strict=False)` — loads a Lightning `.ckpt` (strips the

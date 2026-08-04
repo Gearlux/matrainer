@@ -94,5 +94,48 @@ def test_the_callback_is_a_keras_callback() -> None:
     assert isinstance(keras_tracking_callback([]), keras.callbacks.Callback)
 
 
+class _RecordingTracker:
+    """The one method `on_epoch_end` uses. Not a `Tracker` subclass — nothing else is called."""
+
+    def __init__(self) -> None:
+        self.calls: list = []
+
+    def log_metrics(self, metrics: dict, step: int = None) -> None:  # type: ignore[assignment]
+        self.calls.append((dict(metrics), step))
+
+
+def test_epoch_logs_reach_the_trackers_in_the_canonical_vocabulary() -> None:
+    """Keras' own spelling is what its callbacks see; the trackers get `<split>/<name>`.
+
+    Without this a sweep across engines records the same quantity under `val_loss` here and
+    `val/loss` from every torch backend, and no tracker can plot them together.
+    """
+    from matrainer.keras import keras_tracking_callback
+
+    tracker = _RecordingTracker()
+    callback = keras_tracking_callback([tracker])  # type: ignore[list-item]
+
+    logs = {"loss": 0.5, "sparse_categorical_accuracy": 0.8, "val_loss": 0.4, "val_accuracy": 0.9}
+    callback.on_epoch_end(2, logs)
+
+    assert tracker.calls == [({"train/loss": 0.5, "train/accuracy": 0.8, "val/loss": 0.4, "val/accuracy": 0.9}, 2)]
+    # The dict Keras hands to the callbacks after this one is untouched — `EarlyStopping`
+    # monitors `val_loss`, and renaming it in place would silently stop it triggering.
+    assert set(logs) == {"loss", "sparse_categorical_accuracy", "val_loss", "val_accuracy"}
+
+
+def test_a_wired_metric_names_overrides_the_vocabulary() -> None:
+    """`metric_names:` is config's knob — here, keep recording in Keras' own spelling."""
+    from matrainer import MetricNames
+    from matrainer.keras import keras_tracking_callback
+
+    tracker = _RecordingTracker()
+    callback = keras_tracking_callback([tracker], metric_names=MetricNames(target="keras"))  # type: ignore[list-item]
+
+    callback.on_epoch_end(0, {"val_sparse_categorical_accuracy": 0.9})
+
+    assert tracker.calls == [({"val_accuracy": 0.9}, 0)]
+
+
 if __name__ == "__main__":
     pytest.main([__file__, "-v"])

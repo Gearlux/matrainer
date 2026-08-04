@@ -3,6 +3,7 @@
 from typing import Any, List, Mapping, Optional
 
 from matrainer.lightning.trackers import TrackerLogger
+from matrainer.metric_names import MetricNames
 from matrainer.tracking.base import Tracker
 
 
@@ -38,10 +39,32 @@ def test_tracker_logger_delegates_to_tracker() -> None:
     tl.log_hyperparams({"lr": 0.1})
     tl.save()
     tl.finalize("success")
-    assert t.metrics == [{"step": 1, "loss": 0.5}]
+    # `train/loss`, not `loss`: the adapter names what it forwards (see `MetricNames`), so a
+    # Lightning run's curves can be read beside a Keras or fastai run's.
+    assert t.metrics == [{"step": 1, "train/loss": 0.5}]
     assert t.hparams == {"lr": 0.1}
     assert t.saved is True
     assert t.finalized == "success"
+
+
+def test_the_adapter_names_what_it_forwards() -> None:
+    """A ``LightningModule``'s own keys, whichever of the two shapes it logs, land canonical."""
+    t = _RecordingTracker()
+
+    TrackerLogger(t).log_metrics({"val/loss": 0.4, "val_accuracy": 0.9, "epoch": 2.0}, step=7)
+
+    # `val/loss` passes through untouched, `val_accuracy` is read as the val metric it is, and
+    # `epoch` is an AXIS — prefixing it would invent a second series for the x-value.
+    assert t.metrics == [{"step": 7, "val/loss": 0.4, "val/accuracy": 0.9, "epoch": 2.0}]
+
+
+def test_a_wired_metric_names_records_in_another_engines_spelling() -> None:
+    """The `metric_names:` knob reaching the Lightning path — the same object a config wires."""
+    t = _RecordingTracker()
+
+    TrackerLogger(t, metric_names=MetricNames(target="keras")).log_metrics({"val/loss": 0.4}, step=1)
+
+    assert t.metrics == [{"step": 1, "val_loss": 0.4}]
 
 
 def test_tracker_logger_name_and_version_from_tracker() -> None:

@@ -33,6 +33,7 @@ from __future__ import annotations
 from typing import Any, Dict, Mapping, Optional, Sequence
 
 from matrainer._imports import require
+from matrainer.metric_names import MetricNames, as_metric_names
 from matrainer.tracking import provenance
 from matrainer.tracking.base import Tracker
 
@@ -42,6 +43,7 @@ def keras_tracking_callback(
     params: Optional[Mapping[str, Any]] = None,
     runnable: Any = None,
     capture_log: bool = True,
+    metric_names: Optional[MetricNames] = None,
 ) -> Any:
     """Build a ``keras.callbacks.Callback`` that forwards run tracking to matrainer trackers.
 
@@ -58,11 +60,19 @@ def keras_tracking_callback(
             derived and its resolved configuration dumped — hand it the object rather than
             building a params dict, so that answer comes from one implementation.
         capture_log: Upload the loggair log file as an artifact on train end.
+        metric_names: How the epoch logs are named on the way to the trackers. ``None`` (default)
+            uses :class:`~matrainer.metric_names.MetricNames`, which renders Keras' own spelling
+            (``loss`` / ``val_sparse_categorical_accuracy``) as the canonical ``train/loss`` /
+            ``val/accuracy`` — so a run recorded here is comparable with one from any other
+            engine. The translation happens HERE and not to the ``logs`` dict itself: Keras hands
+            that same dict to the user's own callbacks, where ``EarlyStopping(monitor="val_loss")``
+            must keep finding the name it was given.
     """
     # `via=` so KERAS_BACKEND is set before keras loads (see the module docstring), while the
     # error an operator without the extra sees still names `keras` — the thing they must install.
     keras = require("keras", "keras", feature="keras_tracking_callback", via="recordstream.keras").keras
     members = list(trackers)
+    names = as_metric_names(metric_names)
 
     class _KerasTrackingCallback(keras.callbacks.Callback):  # type: ignore[misc, name-defined]
         #: The run manifest, available from train begin onward (``None`` before that).
@@ -72,8 +82,12 @@ def keras_tracking_callback(
             self.manifest = provenance.log_run_context(members, params, runnable=runnable)
 
         def on_epoch_end(self, epoch: int, logs: Optional[Dict[str, float]] = None) -> None:
+            # `source="keras"`: the keys arriving here are Keras', whatever engine it runs on —
+            # bare training keys, `val_`-prefixed validation ones. Translated for the trackers
+            # only; `logs` itself stays untouched for the callbacks after this one.
+            reported = names(dict(logs or {}), source="keras")
             for tracker in members:
-                tracker.log_metrics(dict(logs or {}), step=epoch)
+                tracker.log_metrics(reported, step=epoch)
 
         def on_train_end(self, logs: Optional[Dict[str, float]] = None) -> None:
             # Finishing is not optional once a manifest exists: left at `running`, matrainer's
