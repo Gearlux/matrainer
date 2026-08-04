@@ -20,6 +20,7 @@ from typing import Any, Mapping, Optional
 import pytorch_lightning as L
 from confluid import register
 
+from matrainer.metric_names import MetricNames, as_metric_names
 from matrainer.tracking.base import Tracker
 
 
@@ -28,11 +29,16 @@ class TrackerLogger(L.loggers.Logger):
 
     Args:
         tracker: The matrainer tracker to expose as a Lightning logger.
+        metric_names: How the metric keys Lightning emits are named on the way to the tracker —
+            see :class:`~matrainer.metric_names.MetricNames`. A ``LightningModule`` that logs
+            ``train/loss`` is already writing the canonical vocabulary, so the default translates
+            nothing; the knob is what lets a run record in another engine's spelling.
     """
 
-    def __init__(self, tracker: Tracker) -> None:
+    def __init__(self, tracker: Tracker, metric_names: Optional[MetricNames] = None) -> None:
         super().__init__()
         self.tracker = tracker
+        self.metric_names = as_metric_names(metric_names)
 
     @property
     def name(self) -> str:
@@ -51,7 +57,7 @@ class TrackerLogger(L.loggers.Logger):
         self.tracker.log_hyperparams(mapping)
 
     def log_metrics(self, metrics: Mapping[str, float], step: Optional[int] = None) -> None:
-        self.tracker.log_metrics(metrics, step)
+        self.tracker.log_metrics(self.metric_names(metrics, source="lightning"), step)
 
     def save(self) -> None:
         self.tracker.save()

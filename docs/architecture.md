@@ -439,3 +439,156 @@ dependencies — check with `python -c "import <module>; import sys; print('pyto
 rather than by reading the imports, since a package `__init__` can require what the
 module itself does not. Keep the re-export when you do: a consumer's import path is
 not yours to break for tidiness.
+
+## 6. Metric names are a PAIR of vocabularies, not a canonicaliser (2026-08-04)
+
+**Context.** A `Tracker` records the key it is handed, verbatim — every backend does
+(`mlflow_backend.log_metrics` calls `client.log_metric(str(key), …)`, the CSV backend makes it a
+column, ClearML's `rpartition("/")` splits it into a graph title but renames nothing). So the
+names in a tracker are whatever the training engine called them, and eight engines call the same
+three quantities eight ways. Measured from one sweep that trains ONE config on every backend, the
+header line of each run's `metrics.csv`:
+
+```
+lightning     train/loss_epoch  train/loss_step  train/accuracy_top1  val/loss  val/accuracy_top1
+torch         train/loss        train/accuracy_top1                   val/loss  val/accuracy_top1
+fastai        train_loss        valid_loss       accuracy             top_k_accuracy
+keras         loss              accuracy         val_loss             val_accuracy
+tensorflow    loss              sparse_categorical_accuracy  val_loss  val_sparse_categorical_accuracy
+huggingface   train_loss        eval_loss        eval_accuracy        train_runtime  …
+jax / mlx     loss              val_loss         val_accuracy
+```
+
+Nothing here is a bug in any backend — each is spelling its own engine's convention — but the
+comparison the sweep exists to make is impossible: one quantity occupies four columns and every
+row is mostly blank.
+
+**Decision.** `matrainer/metric_names.py` holds a `MetricVocabulary` per framework (its
+separator, how it writes each split, what an unprefixed key means, the base names it has its own
+word for) and translates by PARSING with the source's vocabulary and RENDERING with the target's.
+`matrainer`'s own vocabulary — `<split>/<name>`, `split ∈ {train, val, test}` — is one entry in
+that table, not a privileged destination.
+
+A one-way canonicaliser was the obvious smaller design and was rejected for two reasons, both
+concrete. **It cannot parse.** "Which split is a bare `accuracy` from?" has no universal answer:
+Keras' unprefixed keys are training metrics, fastai's are VALIDATION metrics (its `Recorder`
+computes them on the validation pass and prefixes none of them), so a canonicaliser without a
+per-engine table silently files fastai's val accuracy in the train column — a wrong number that
+looks right. **And a consumer legitimately wants the other direction**: a team whose dashboards,
+alerts and saved queries are written against `val_loss` can set `target: keras` and get every
+backend, including the torch ones, recording that spelling. Both directions are the same table
+read the other way round, so the pair costs one function more than the one-way version.
+
+The split of duties across the arguments is what makes ONE config key work for eight backends:
+`source` is passed per CALL by the code reporting (only it knows which engine produced the names
+and which split it is reporting), while `target` and `renames` live on the `@configurable`
+object, which a top-level `metric_names:` key broadcasts into every runnable at once.
+
+**Consequences.**
+
+- Parsing recognises the canonical `<split>/<name>` form whatever the source vocabulary, so
+  translation is idempotent and a loop that already names things canonically may declare its real
+  `source` and pass through untouched. Without that, a helper applied at two seams would produce
+  `train/train/loss`.
+- Rendering does NOT invert the base-name aliases: translating into Keras gives `val_accuracy`,
+  not `val_sparse_categorical_accuracy`. Those four spellings are what `compile()` expanded
+  `"accuracy"` into — compile-time artefacts, not names anyone writes — so a vocabulary decides
+  how the SPLIT is spelled and the base name stays canonical.
+- `epoch` and `step` are axis keys and pass through: prefixing `epoch` with `train/` would invent
+  a second series for the x-value of every other one.
+- An unknown framework raises rather than falling back to the canonical vocabulary — a fallback
+  renames nothing, which is indistinguishable from a config typo.
+- The renaming happens on the way to a TRACKER, never to the dict the engine hands its own
+  callbacks: `keras_tracking_callback` translates its copy while `logs` stays untouched, because
+  a wired `EarlyStopping(monitor="val_loss")` must keep finding the name Keras gave it.
+- Like `metric_slots`, this sits at the TOP LEVEL and imports nothing but the standard library
+  plus confluid, so the framework-free backends can use it. UNLIKE `metric_slots` it IS
+  re-exported from the package root: it is on the path metrics take to a tracker, and a YAML has
+  to be able to name it.
+
+**Example.**
+
+```python
+from matrainer import MetricNames
+
+names = MetricNames()                                    # canonical out, any engine in
+names({"loss": 0.5, "val_loss": 0.4}, source="keras")    # {'train/loss': 0.5, 'val/loss': 0.4}
+names({"accuracy": 0.9}, source="fastai")                # {'val/accuracy': 0.9} — NOT train
+MetricNames(target="keras")({"val/loss": 0.4})           # {'val_loss': 0.4}
+```
+
+**What you may change.** Add a vocabulary when a new engine arrives (one `MetricVocabulary` entry
+plus its name in the `Framework` Literal — the runtime tuple is `get_args`, so nothing else
+changes). Add an alias when an engine auto-expands a base name the way `compile()` does. Do NOT
+invert the aliases for rendering, do not drop the canonical-form check in `parse_metric_name`
+(idempotence depends on it), and do not move the translation into `Tracker.log_metrics`: the
+tracker cannot know which engine or which split produced a bare key, which is the whole reason
+`source` is a per-call argument.
+
+## 7. A metric an owned loop cannot average gets a confusion-matrix accumulator (2026-08-04)
+
+**Context.** A backend whose engine owns the training loop (Keras, Lightning, a
+`transformers.Trainer`) gets stateful metrics for free: the engine calls `update()` per batch and
+`compute()` once at the end. A backend whose loop *we* own — bare torch, TensorFlow, JAX, MLX —
+sees one batch at a time, and the natural shape for a metric is `fn(logits, targets) -> float`
+scored per batch and averaged over the epoch.
+
+That shape is very nearly right for accuracy and quietly wrong for anything computed per class.
+Measured on 10 classes at batch 32:
+
+| | global macro-F1 | batch-averaged |
+| --- | --- | --- |
+| accuracy ≈ 0.9 | 0.9182 | 0.8849 |
+| accuracy ≈ 0.3 | 0.3486 | 0.3032 |
+
+Three to five points, always downward, and worse the more classes a batch is missing — a class
+absent from a batch scores 0 for that batch and drags the mean. In a cross-framework comparison
+that is not noise: it is a systematic penalty on whichever engines happen to own their own loop,
+which is the one thing such a comparison must not introduce.
+
+**Decision.** `matrainer/metric_functions.py` holds `zero_confusion` / `accumulate_confusion` /
+`macro_f1`. A loop keeps ONE `C×C` integer accumulator per split, adds each batch to it, and
+reduces once at the end — the same thing `torchmetrics` does internally, which is what makes the
+two engines' numbers comparable. The accumulator's size is set by the class count, not the
+dataset, so this costs nothing to run per batch.
+
+Consumers keep the per-batch protocol for the metrics it suits and PARTITION by name: a name in
+the confusion set is accumulated, everything else is scored per batch and averaged as before.
+
+**Consequences.**
+
+- It sits at the TOP LEVEL, not under `matrainer.torch`, for the `metric_slots` reason: that
+  subpackage requires torch and the callers here are deliberately framework-free. numpy is the
+  only import, and every engine that needs this already produces arrays numpy can read.
+- Not re-exported from the package root, again like `metric_slots`: the root is the *tracking*
+  surface and nothing here touches a tracker.
+- `argmax` over the last axis, so raw logits and probabilities give the same answer and no
+  backend has to declare which it produces.
+- An out-of-range target id is an ERROR, not a silent wrap: the flat `truth * C + prediction`
+  index would fold a stray id into another class's counts, the totals would still add up, and the
+  metric would still look plausible. The usual cause is an accumulator sized from a stale
+  `num_classes`.
+- SINGLE-LABEL only. A multi-hot row has no single cell to land in, so a consumer must DROP a
+  confusion metric on a multi-label run rather than approximate one — a number under a name that
+  means something else is worse than a gap, because nothing downstream can tell.
+- Counting is `np.bincount` on the flattened index rather than `np.add.at`, which is the obvious
+  spelling and roughly an order of magnitude slower — measurable when it runs once per batch.
+
+**Example.**
+
+```python
+from matrainer.metric_functions import accumulate_confusion, macro_f1, zero_confusion
+
+matrix = zero_confusion(num_classes)
+for logits, targets in batches:
+    accumulate_confusion(matrix, logits, targets)   # in place, returns the matrix
+macro_f1(matrix)                                    # == sklearn == torchmetrics, exactly
+```
+
+**What you may change.** Add a metric that derives from a confusion matrix (per-class recall,
+Cohen's kappa, a weighted F1) — the accumulator is already there and a new reduction is a pure
+function over it. Do NOT widen the accumulator to multi-label by inventing a per-label matrix
+here: that is a different structure (C independent 2×2 tables), and if it is needed it is a new
+function with its own name. Do not make `macro_f1` configurable into micro/weighted by adding a
+parameter that changes what the returned number MEANS under one name — add the reduction beside
+it instead.

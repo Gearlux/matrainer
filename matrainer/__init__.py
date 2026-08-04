@@ -16,6 +16,7 @@ __version__ = "0.2.0"
 from typing import Any, List
 
 from matrainer.checkpoints import CheckpointPolicy, SaveBest, SaveEveryEpoch, SaveLast
+from matrainer.metric_names import MetricNames
 from matrainer.run_names import generate_run_name
 from matrainer.tracking import RunManifest, Tracker, TrackerGroup, discover_backends, log_run_context
 
@@ -26,6 +27,7 @@ __all__ = [
     "RunManifest",
     "log_run_context",
     "generate_run_name",
+    "MetricNames",
     "CheckpointPolicy",
     "SaveLast",
     "SaveEveryEpoch",
