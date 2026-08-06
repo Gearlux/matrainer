@@ -585,6 +585,26 @@ for logits, targets in batches:
 macro_f1(matrix)                                    # == sklearn == torchmetrics, exactly
 ```
 
+**The per-pixel additions (2026-08-05) are that invitation taken up.** A second task needed the
+same accumulator for `mean_iou` / `overall_accuracy` / `iou_per_class`, and each is a pure
+reduction over the matrix already being kept — no second structure, no second accumulate path.
+Two things they added that the classification set did not need:
+
+- **`accumulate_confusion(..., ignore_index=)`**, for the void class a per-pixel task carries. The
+  drop happens BEFORE the range check, because both sentinels in the wild (`-100`, `255`) are
+  deliberately outside `[0, C)` and checking first would reject every batch that has one.
+- **A `nan` for a class present nowhere**, rather than the `0` `macro_f1` contributes. The two are
+  not inconsistent: F1's zero matches what sklearn and torchmetrics report for a class with no
+  support, and IoU's `nan` matches what `MulticlassJaccardIndex(average=None)` reports for the
+  same case. Each follows the library its number has to agree with.
+
+The bias measurement is worse here than for macro-F1 and differently shaped, which is worth
+knowing before anyone "simplifies" a loop back to averaging: batch-averaged mean IoU is not merely
+low, it MOVES WITH THE BATCH SIZE — 10 classes at accuracy 0.7 against an exact 0.5922 reads
+0.6164 at batch 4 and 0.5798 at batch 32. So the property the tests pin is BATCH-SIZE
+INDEPENDENCE rather than a direction, and that is the check to reach for when reviewing any
+hand-written loop's metric.
+
 **What you may change.** Add a metric that derives from a confusion matrix (per-class recall,
 Cohen's kappa, a weighted F1) — the accumulator is already there and a new reduction is a pure
 function over it. Do NOT widen the accumulator to multi-label by inventing a per-label matrix
@@ -592,3 +612,64 @@ here: that is a different structure (C independent 2×2 tables), and if it is ne
 function with its own name. Do not make `macro_f1` configurable into micro/weighted by adding a
 parameter that changes what the returned number MEANS under one name — add the reduction beside
 it instead.
+
+
+## 8. A sweep's tracker-side halves are matrainer's; its matrix is not (2026-08-06)
+
+### Context
+
+A *sweep* runs one config under every backend a task project has, into one tracker, so the runs
+become comparable. The first task project to build one wrote a ~290-line `examples/sweep/
+sweep_report.py` beside its driver: naming the experiment, reading MLflow and CSV back, folding the
+bookkeeping columns, rendering the table. The second copied it. Both were told to, deliberately —
+one duplication is cheaper than a premature abstraction, and the workspace backlog recorded the
+trigger to fix it: **the third consumer.**
+
+When the third arrived, the copies were compared by AST with docstrings stripped: **byte-identical.**
+What differed was prose — the line wrapping and which metric names the comments happened to cite.
+
+### Decision
+
+Lift the two tracker-side halves to `matrainer.sweep` and leave everything else where it is.
+
+The cut is by WHAT THE CODE QUERIES, and both sides of it are sharp:
+
+| stays in the task project | moved to matrainer |
+|---|---|
+| which cells the matrix has | naming the experiment `<prefix>_<N>` |
+| which engine a row pins, and why | reading MLflow / CSV back |
+| the config overlay and its metric alignment | which columns fold away |
+| probing what is installed, isolating failures | rendering the table |
+
+### Consequences
+
+* **It belongs here by the same argument that moved `metric_slots` and `metric_names`.** Both halves
+  are queries against a TRACKER, which is the thing this package abstracts, and the vocabulary the
+  report folds on (`epoch` / `runtime` / `total_flos`, Lightning's `_step` suffix) is
+  `matrainer.metric_names`' own.
+* **`python -m matrainer.sweep`, not a console script.** This package deliberately ships no binary —
+  the workspace retired its CLI — and a module main is neither a binary nor an entry-point group.
+* **The two constants became PARAMETERS.** A `./sweep_logs` path and a `http://127.0.0.1:5005`
+  MLflow URI are fine as an example script's module constants and wrong in a library, so they are
+  defaulted arguments (`save_dir` / `tracking_uri`) with the old values as the defaults.
+* **`QUERYABLE` became load-bearing.** It was a documentation-only tuple in both copies while
+  `collect` branched on string literals; it is now what `collect` reads, so the advertised set and
+  the implemented one cannot disagree.
+* The consuming drivers each dropped ~290 lines and one test file; what they kept — `all_backends.yaml`
+  and `run_sweep.sh` — is exactly the half that differs between tasks, which is why the split holds.
+
+### Example
+
+```python
+from matrainer.sweep import collect, next_experiment_name, render
+
+name = next_experiment_name("mlflow", "Thu_Aug_6_2026")   # -> "Thu_Aug_6_2026_3"
+rows, note = collect("mlflow", name)
+print(render(rows, name, "mlflow", note))
+```
+
+### What you may change
+
+Which trackers can be read (`aim` and `tensorboard` are genuinely queryable and are not implemented
+yet), and what counts as bookkeeping. What you may not do is teach it about a TASK — a metric this
+module knows by name is a metric a task project cannot rename.
