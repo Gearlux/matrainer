@@ -13,7 +13,14 @@ import numpy as np
 import pytest
 from sklearn.metrics import confusion_matrix, f1_score
 
-from matrainer.metric_functions import accumulate_confusion, macro_f1, zero_confusion
+from matrainer.metric_functions import (
+    accumulate_confusion,
+    iou_per_class,
+    macro_f1,
+    mean_iou,
+    overall_accuracy,
+    zero_confusion,
+)
 
 
 def _predictions(rows: int, classes: int, accuracy: float, seed: int) -> tuple:
@@ -154,3 +161,171 @@ def test_batch_averaging_is_what_this_module_exists_to_avoid() -> None:
         ]
     )
     assert per_batch < exact - 0.02, f"exact={exact:.4f} batch-averaged={per_batch:.4f}"
+
+
+# ---------------------------------------------------------------------------
+# ignore_index
+# ---------------------------------------------------------------------------
+def test_an_ignored_target_is_counted_nowhere() -> None:
+    """The whole requirement: a void position must affect no cell, so no metric derived from the
+    matrix can be moved by how much of an input was ignored."""
+    logits = np.eye(3)[[0, 1, 2, 0]] * 5.0
+    targets = np.array([0, 1, 2, 255])
+
+    with_void = accumulate_confusion(zero_confusion(3), logits, targets, ignore_index=255)
+    without = accumulate_confusion(zero_confusion(3), logits[:3], targets[:3])
+    assert np.array_equal(with_void, without)
+    assert int(with_void.sum()) == 3
+
+
+@pytest.mark.parametrize("sentinel", [-100, 255])
+def test_a_sentinel_OUTSIDE_the_class_range_is_dropped_rather_than_rejected(sentinel: int) -> None:
+    """The two conventions in the wild (torch's -100, SegFormer's 255) are both out of `[0, C)`,
+    so the drop has to happen BEFORE the range check — checking first would reject every batch
+    that has one."""
+    logits = np.eye(3)[[0, 1]] * 5.0
+    targets = np.array([0, sentinel])
+
+    assert int(accumulate_confusion(zero_confusion(3), logits, targets, ignore_index=sentinel).sum()) == 1
+
+
+def test_an_out_of_range_id_that_is_NOT_the_ignore_index_is_still_an_error() -> None:
+    """The guard the drop must not weaken: a stray id from a stale `num_classes` would otherwise
+    wrap into another class's counts and the totals would still add up."""
+    logits = np.eye(3)[[0, 0]] * 5.0
+    with pytest.raises(ValueError, match=r"must lie in \[0, 3\)"):
+        accumulate_confusion(zero_confusion(3), logits, np.array([0, 7]), ignore_index=255)
+
+
+def test_ignoring_everything_leaves_an_empty_matrix_rather_than_raising() -> None:
+    """An all-void input is legal — a crop that happens to contain no annotated pixel."""
+    logits = np.eye(3)[[0, 1]] * 5.0
+    assert not accumulate_confusion(zero_confusion(3), logits, np.array([255, 255]), ignore_index=255).any()
+
+
+def test_the_ignore_index_agrees_with_torchmetrics() -> None:
+    """The claim that makes the number comparable: dropping void positions here gives what
+    torchmetrics' own `ignore_index=` gives for the same predictions."""
+    torchmetrics = pytest.importorskip("torchmetrics")
+    import torch
+
+    rng = np.random.default_rng(11)
+    targets = rng.integers(0, 4, 512)
+    targets[rng.random(512) < 0.3] = 255
+    logits = np.eye(4)[rng.integers(0, 4, 512)] * 5.0 + rng.normal(0, 0.1, (512, 4))
+
+    matrix = accumulate_confusion(zero_confusion(4), logits, targets, ignore_index=255)
+    theirs = torchmetrics.classification.MulticlassJaccardIndex(num_classes=4, average="macro", ignore_index=255)
+    assert mean_iou(matrix) == pytest.approx(float(theirs(torch.tensor(logits), torch.tensor(targets))), abs=1e-6)
+
+
+# ---------------------------------------------------------------------------
+# overall_accuracy / iou_per_class / mean_iou
+# ---------------------------------------------------------------------------
+@pytest.mark.parametrize("accuracy", [0.3, 0.7, 0.95])
+def test_overall_accuracy_agrees_with_torchmetrics_micro(accuracy: float) -> None:
+    torchmetrics = pytest.importorskip("torchmetrics")
+    import torch
+
+    logits, targets = _predictions(1024, 5, accuracy=accuracy, seed=3)
+    matrix = accumulate_confusion(zero_confusion(5), logits, targets)
+    theirs = torchmetrics.classification.MulticlassAccuracy(num_classes=5, average="micro")
+    assert overall_accuracy(matrix) == pytest.approx(
+        float(theirs(torch.tensor(logits), torch.tensor(targets))), abs=1e-6
+    )
+
+
+@pytest.mark.parametrize("accuracy", [0.3, 0.7, 0.95])
+def test_mean_iou_agrees_with_torchmetrics_macro_jaccard(accuracy: float) -> None:
+    torchmetrics = pytest.importorskip("torchmetrics")
+    import torch
+
+    logits, targets = _predictions(1024, 5, accuracy=accuracy, seed=4)
+    matrix = accumulate_confusion(zero_confusion(5), logits, targets)
+    theirs = torchmetrics.classification.MulticlassJaccardIndex(num_classes=5, average="macro")
+    assert mean_iou(matrix) == pytest.approx(float(theirs(torch.tensor(logits), torch.tensor(targets))), abs=1e-6)
+
+
+def test_iou_per_class_agrees_with_torchmetrics_elementwise() -> None:
+    """`average=None`, the per-class VECTOR a segmentation report renders worst-first."""
+    torchmetrics = pytest.importorskip("torchmetrics")
+    import torch
+
+    logits, targets = _predictions(512, 4, accuracy=0.6, seed=6)
+    matrix = accumulate_confusion(zero_confusion(4), logits, targets)
+    theirs = torchmetrics.classification.MulticlassJaccardIndex(num_classes=4, average=None)
+    assert np.allclose(iou_per_class(matrix), theirs(torch.tensor(logits), torch.tensor(targets)).numpy(), atol=1e-6)
+
+
+def test_a_class_present_nowhere_is_nan_rather_than_zero() -> None:
+    """`nan` says "not present"; `0` would be a judgement the data does not support, and would
+    drag `mean_iou` down for the label scheme rather than for the model."""
+    logits = np.eye(3)[[0, 1, 0, 1]] * 5.0
+    matrix = accumulate_confusion(zero_confusion(3), logits, np.array([0, 1, 0, 1]))
+    per_class = iou_per_class(matrix)
+
+    assert np.isnan(per_class[2])
+    assert mean_iou(matrix) == pytest.approx(1.0), "the absent class must be skipped, not scored 0"
+
+
+def test_a_perfect_matrix_scores_one_on_both() -> None:
+    matrix = accumulate_confusion(zero_confusion(3), np.eye(3) * 5.0, np.arange(3))
+    assert overall_accuracy(matrix) == pytest.approx(1.0)
+    assert mean_iou(matrix) == pytest.approx(1.0)
+
+
+def test_an_empty_matrix_scores_zero_on_both_rather_than_nan() -> None:
+    """A caller puts these straight into a `{name: float}` metric channel, where a `nan` is a
+    value a tracker will happily record and nobody can read."""
+    assert overall_accuracy(zero_confusion(4)) == 0.0
+    assert mean_iou(zero_confusion(4)) == 0.0
+
+
+def _accumulated(logits: np.ndarray, targets: np.ndarray, size: int) -> np.ndarray:
+    """One matrix fed in ``size``-row batches — the shape every hand-written loop uses."""
+    matrix = zero_confusion(10)
+    for i in range(0, len(targets), size):
+        accumulate_confusion(matrix, logits[i : i + size], targets[i : i + size])
+    return matrix
+
+
+def _batch_averaged_iou(logits: np.ndarray, targets: np.ndarray, size: int) -> float:
+    """What a loop that scores each batch and averages would report."""
+    return float(
+        np.mean(
+            [
+                mean_iou(accumulate_confusion(zero_confusion(10), logits[i : i + size], targets[i : i + size]))
+                for i in range(0, len(targets), size)
+            ]
+        )
+    )
+
+
+def test_an_ACCUMULATED_mean_iou_does_not_depend_on_the_batch_size() -> None:
+    """The property that makes a cross-engine table readable, and the one a per-batch average
+    cannot have: the same predictions must give one number however they were fed in.
+
+    It is the check to reach for when reviewing a hand-written loop's metric — restating the
+    arithmetic would pass just as happily if the code and the test were wrong the same way.
+    """
+    logits, targets = _predictions(1024, 10, accuracy=0.7, seed=7)
+    values = {size: mean_iou(_accumulated(logits, targets, size)) for size in (4, 16, 128, 1024)}
+
+    assert len({round(value, 12) for value in values.values()}) == 1, values
+
+
+def test_batch_averaging_a_mean_iou_MOVES_WITH_the_batch_size() -> None:
+    """The segmentation half of this module's reason to exist, and it is worse than macro-F1's.
+
+    A class absent from a batch is SKIPPED by that batch's mean rather than scored 0, so batches
+    with fewer classes present are over-weighted — and unlike macro-F1's, the error is not even
+    consistently signed. Measured on 10 classes at accuracy 0.7 against an exact 0.5922:
+    batch 4 reads 0.6164 (+0.024), batch 32 reads 0.5798 (-0.012). So it is not a constant offset
+    a reader could learn to correct for; it is a different number per configuration.
+    """
+    logits, targets = _predictions(1024, 10, accuracy=0.7, seed=7)
+    exact = mean_iou(_accumulated(logits, targets, 1024))
+    small, large = _batch_averaged_iou(logits, targets, 4), _batch_averaged_iou(logits, targets, 32)
+
+    assert small > exact > large, f"exact={exact:.4f} batch4={small:.4f} batch32={large:.4f}"
+    assert small - large > 0.03, "the two batch sizes must disagree by more than rounding"

@@ -23,11 +23,63 @@ from collections.abc import Mapping
 from typing import Any, Dict
 
 from confluid import configurable, flow
+from confluid.fluid import Fluid
 from loggair import get_logger
 from torch import Tensor
 from torchmetrics import Metric, MetricCollection
 
 logger = get_logger(__name__)
+
+
+def _declares(target: Any, key: str) -> bool:
+    """Does ``target``'s constructor DECLARE ``key`` by name (ignoring ``**kwargs``)?
+
+    Deliberately NOT :func:`confluid.accepts_key`, and the difference is the whole point: that
+    helper answers yes for any target whose constructor takes ``**kwargs``, which is EVERY
+    torchmetrics metric — the base ``Metric.__init__`` uses it for ``compute_on_cpu`` /
+    ``dist_sync_on_step`` / … and then REJECTS anything else with *"Unexpected keyword arguments"*.
+    So the question that matters here is narrower than settability: is this an argument the metric
+    itself takes?
+
+    An unresolvable target (a dotted string a marker carries, a callable with no signature) is
+    treated as accepting the key, which preserves the pre-2026-08-05 behaviour for anything this
+    cannot see rather than silently dropping a dimension the metric needed.
+    """
+    try:
+        # `signature()` on a CLASS gives its constructor's signature with `self` already dropped,
+        # so one call covers a class, a factory function and a live instance's `__call__`.
+        parameters = inspect.signature(target).parameters
+    except (TypeError, ValueError):  # pragma: no cover - builtins / C-implemented callables
+        return True
+    parameter = parameters.get(key)
+    return parameter is not None and parameter.kind is not inspect.Parameter.VAR_KEYWORD
+
+
+def _sizing_kwargs(template: Any, flow_dims: Mapping[str, Any]) -> Dict[str, Any]:
+    """The subset of ``flow_dims`` this template can TAKE and has not PINNED for itself.
+
+    Two filters, and each closes a way the blanket form fails:
+
+    **Declares.** A task's sizing dimension is not universal across its own metric family. A
+    classification run's ``num_classes`` happens to reach every ``torchmetrics.classification``
+    metric, so the blanket form worked by luck; an image task's ``data_range`` reaches three of
+    the seven full-reference metrics (measured against torchmetrics 1.9: ``PeakSignalNoiseRatio``
+    — where it is REQUIRED — plus the two SSIMs; ``SpectralAngleMapper``,
+    ``UniversalImageQualityIndex``, ``ErrorRelativeGlobalDimensionlessSynthesis`` and
+    ``RootMeanSquaredErrorUsingSlidingWindow`` take no such argument). Passing it to one that does
+    not is not a no-op — the metric raises — so wiring a perfectly valid metric beside the others
+    would break the whole collection.
+
+    **Pinned.** A runtime kwarg normally OVERRIDES a marker's own, which would make a template's
+    explicit value unwritable: ``!lazy:PeakSignalNoiseRatio {data_range: 2.0}`` would silently be
+    scored on the run's scale instead of the one it asked for. Skipping a key the template already
+    carries makes the injection a FLOOR — the task supplies what the config did not.
+    """
+    if not flow_dims:
+        return {}
+    target = template.target if isinstance(template, Fluid) else template
+    pinned = template.kwargs if isinstance(template, Fluid) else {}
+    return {key: value for key, value in flow_dims.items() if key not in pinned and _declares(target, key)}
 
 
 def build_metric_collection(metrics: Any, **flow_dims: Any) -> MetricCollection:
@@ -42,13 +94,17 @@ def build_metric_collection(metrics: Any, **flow_dims: Any) -> MetricCollection:
       template, or a metric class; flowed with ``flow_dims`` and wrapped (auto-named by class).
       This lets a single metric node (including its deferred ``class`` output) wire into the slot
       and size itself off the model head at run time.
+
+    ``flow_dims`` is the task's SIZING dimension — ``num_classes`` for a classification or
+    per-pixel task, ``data_range`` for an image-to-image one — and it is applied PER TEMPLATE
+    rather than blanket: see :func:`_sizing_kwargs` for the two filters and what each one prevents.
     """
     if isinstance(metrics, MetricCollection):
         return metrics
     if isinstance(metrics, Mapping):
-        return MetricCollection({k: flow(v, **flow_dims) for k, v in metrics.items()})
+        return MetricCollection({k: flow(v, **_sizing_kwargs(v, flow_dims)) for k, v in metrics.items()})
     seq = metrics if isinstance(metrics, (list, tuple)) else [metrics]
-    return MetricCollection([flow(v, **flow_dims) for v in seq])
+    return MetricCollection([flow(v, **_sizing_kwargs(v, flow_dims)) for v in seq])
 
 
 def coerce_metric_value(value: Any) -> Any:
