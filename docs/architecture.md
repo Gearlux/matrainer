@@ -674,6 +674,30 @@ Which trackers can be read (`aim` and `tensorboard` are genuinely queryable and 
 yet), and what counts as bookkeeping. What you may not do is teach it about a TASK — a metric this
 module knows by name is a metric a task project cannot rename.
 
+**Amendment (2026-08-07, user decision).** The DRIVER joined the tracker-side halves: three
+near-identical per-project bash drivers carried the same probe / subprocess / isolate / report
+loop, so `matrainer.sweep` became a package — `report.py` (this record's original scope,
+verbatim), `spec.py` (the declarative matrix a project ships as `examples/sweep/sweep.yaml`)
+and `runner.py` (the machinery). The boundary this record draws is UNCHANGED and now enforced
+structurally: everything task-specific — which backends, what each requires, which row pins an
+engine, how a tracker is started — is DATA in the project's spec, never code here. The command
+surface is the `matrainer` console script's `sweep` group (a scoped, user-authorized exception
+to the no-binary rule — see the AGENTS mandate) and the unchanged module main; the default
+per-cell command is the generic `matrainer train`.
+
+```yaml
+# a project's examples/sweep/sweep.yaml — the matrix as data
+config: all_backends.yaml
+frameworks:
+  - {name: lightning, requires: [pytorch_lightning], models: [zoo, dncnn]}
+  - {name: keras, requires: [keras, tensorflow], env: {KERAS_BACKEND: tensorflow}, models: [unet]}
+models:
+  - name: zoo                       # first = the config's default, no flag
+  - {name: dncnn, flags: [--model, dncnn]}
+trackers: [mlflow, csv]
+tracker_setup: {mlflow: [aisland, mlflow, start]}
+```
+
 ---
 
 ## 9. The shared trainer machinery moved up: one API base, one concrete base per framework (2026-08-06)
