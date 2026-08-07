@@ -9,7 +9,7 @@ Per the workspace "Docs Never Name Dependent Projects" mandate, these records de
 
 ---
 
-## 1. Matrainer tracks; it does not train (2026-07)
+## 1. Matrainer tracks; it does not train (2026-07) — **superseded in part by record 9 (2026-08-06)**
 
 **Context.** Matrainer used to be a training *orchestrator*: a `LightningTrainer` / `LightningEvaluator`
 pair with `training_step` / `validation_step` / `test_step`, a `run()` loop, a five-verb CLI, and
@@ -673,3 +673,90 @@ print(render(rows, name, "mlflow", note))
 Which trackers can be read (`aim` and `tensorboard` are genuinely queryable and are not implemented
 yet), and what counts as bookkeeping. What you may not do is teach it about a TASK — a metric this
 module knows by name is a metric a task project cannot rename.
+
+---
+
+## 9. The shared trainer machinery moved up: one API base, one concrete base per framework (2026-08-06)
+
+**Context.** Record 1 pushed all training code into the consuming projects, and the projects then
+did the anticipated thing: four tasks each grew a merged train/evaluate/test/predict runnable per
+engine — up to ten engines per project — deliberately deferring a shared base "until the fleet
+exists to design it against". By 2026-08-06 the fleet existed, and the duplication was measured
+rather than felt: two projects' Lightning modules 61% byte-identical, the tracker plumbing
+(`_live_trackers`) and the two `@output` properties existing in **28 copies** each, the trainer
+construction byte-identical between two projects, ~1,060 near-identical CLI lines. Every mandate
+protecting the fleet's behavioural agreement (one name per quantity, per-split metric slots,
+reset-at-epoch-start) had to be enforced by per-project AST drift tests because no code was shared.
+
+**Decision (user-authorized reversal of record 1's scope).** Matrainer owns the shared trainer
+machinery, in a strict three-layer shape:
+
+1. **`matrainer.runnable.TrainerRunnable`** — ONE abstract, framework-free base defining the
+   NEUTRAL half of the API: the neutral constructor slots (stored verbatim), `run()` →
+   `run_entrypoint`, the four `@entrypoint`-marked abstract capabilities, tracker/prepare/
+   prediction plumbing, and the neutral hooks (`initialize`, `_prediction_output`,
+   `_reportable`, `_report_nonscalars`). It stores NO model/loss/metrics slot — deliberately.
+2. **A FAMILY base per engine family pins the framework types** —
+   `matrainer.torch.runnable.TorchTrainerRunnable` serves every engine that trains a
+   `torch.nn.Module` against torchmetrics (lightning, the bare loop, fastai, huggingface):
+   `model: Lazy[nn.Module]`, `loss_fn: Optional[Lazy[nn.Module]]`, the metric quartet as
+   `MetricsSpec`, `_targets -> Tensor`, the typed default hooks, the metric builders, the
+   sidecar write and the `trained_model -> nn.Module` output. A keras family base mirrors it
+   with keras types. This layer exists so that nothing user-facing is typed `Any`: a type the
+   neutral base cannot name lives exactly one layer down, where it can be.
+3. **One machinery base per framework** fills the loop in, each self-contained in its
+   extras-gated subpackage. **The abstraction stops at the API — there is no abstract trainer
+   OBJECT**: the `pl.Trainer` slot lives only in the lightning base, the epoch loop only in
+   the torch one, the `Learner` only in fastai's. Machinery bases share module *functions*
+   (`flow_trackers`, `write_collection_sidecar`, the `report_*` fan-outs), never code between
+   each other.
+4. **A consuming project's task base** implements the hooks once for its whole engine fleet;
+   the concrete class combines task base + framework base and keeps its own FULL flat
+   `__init__` (the confluid introspection surface).
+
+**Consequences.**
+- Record 1's "removing matrainer keeps a consumer training" invariant is dead by design; what
+  replaces it is *"a task's behaviour is written once per hook, not once per engine"* — the
+  behavioural-agreement mandates are now enforced by shared code plus matrainer's own base tests,
+  and a project's drift tests shrink to "inherits the base and does not shadow it".
+- The light core is UNCHANGED: `import matrainer` still imports no framework; every family base
+  lives behind its extra.
+- The four projects now break together when a base changes — which is the point (one fix, four
+  consumers), and why base changes ship with the consumers updated in the same workspace change.
+
+**Example.** A consuming project's concrete runnable, whole:
+
+```python
+@configurable(task="classification", role="trainer", framework="torch")
+class LightningClassifier(ClassificationTorchHooks, ClassificationBase, LightningRunnable):
+    def __init__(self, model, train_set=None, ..., num_classes=None, label_map=None):
+        super().__init__(model=model, train_set=train_set, ...)   # shared slots, stored verbatim
+        self.num_classes = num_classes                            # task-specific state
+        self.label_map = label_map
+```
+
+**What you may change.** New hooks (added with a safe default so every family base keeps
+working), new family bases, and base behaviour — shipped together with the consumer updates.
+What you may *not* do: introduce an abstract trainer object above the family bases, share code
+*between* family bases except via module functions, grow task semantics (what a loss/metric/label
+IS for a task) into any base, or reintroduce a matrainer CLI binary.
+
+**Amendment (2026-08-07).** The second machinery base landed: `matrainer.torch.loop.TorchLoopRunnable`,
+the bare-torch epoch written in the open. Its one design addition to the shape above is the
+BATCH-hook seam — `_train_batch_loss` / `_eval_batch` / `_predict_batch` carry the
+read-forward-loss default (input → forward → loss → metric update), so a task whose model
+computes its loss inside `forward` overrides exactly three methods instead of the loop, and
+`_eval_batch` returning `None` declares a loss-less eval split (the base then omits that
+split's `<split>/loss` key rather than recording a fake zero). The batch shape is a machinery
+ctor param (`collate_fn`), because it is a property of the MODEL's contract, not a config key.
+
+```python
+class TorchDetectorLike(DetectionHooks, TorchLoopRunnable):        # loss-inside-forward
+    def _train_batch_loss(self, batch):                            # the ONLY loop override
+        images, targets = self._to_device(batch)
+        return sum(self.model(images, targets).values())           # the summed loss dict
+    def _eval_batch(self, batch, collection):
+        images, targets = self._to_device(batch)
+        collection.update(self.model(images), targets)
+        return None                                                # eval mode has no loss
+```

@@ -27,14 +27,27 @@ it?" — is a per-backend concern and lives in the consuming runnable as an over
 
 from matrainer.torch.checkpoint import load_lightning_checkpoint
 from matrainer.torch.device import Device, resolve_device
-from matrainer.torch.metrics import MetricPreset, build_metric_collection, coerce_metric_value, scalar_metrics
+from matrainer.torch.loop import TorchLoopRunnable
+from matrainer.torch.metrics import (
+    MetricPreset,
+    MetricsSpec,
+    build_metric_collection,
+    coerce_metric_value,
+    scalar_metrics,
+    write_collection_sidecar,
+)
+from matrainer.torch.runnable import TorchTrainerRunnable
 
 __all__ = [
     "Device",
     "MetricPreset",
+    "MetricsSpec",
+    "TorchLoopRunnable",
+    "TorchTrainerRunnable",
     "build_metric_collection",
     "coerce_metric_value",
     "load_lightning_checkpoint",
     "resolve_device",
     "scalar_metrics",
+    "write_collection_sidecar",
 ]

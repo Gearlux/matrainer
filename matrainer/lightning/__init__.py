@@ -33,6 +33,7 @@ from matrainer.lightning.callbacks import (  # noqa: E402
     checkpoint_dir,
     has_mlflow_logger,
 )
+from matrainer.lightning.module import LightningRunnable  # noqa: E402
 from matrainer.lightning.trackers import TrackerLogger  # noqa: E402
 
 # Re-exported from `matrainer.torch` since 2026-08-01, where they moved because they never
@@ -40,12 +41,15 @@ from matrainer.lightning.trackers import TrackerLogger  # noqa: E402
 # surface is unchanged for every existing consumer.
 from matrainer.torch.metrics import (  # noqa: E402
     MetricPreset,
+    MetricsSpec,
     build_metric_collection,
     coerce_metric_value,
     scalar_metrics,
+    write_collection_sidecar,
 )
 
 __all__ = [
+    "LightningRunnable",
     "TrackingCallback",
     "TrackerLogger",
     "LightningProgressCallback",
@@ -57,7 +61,9 @@ __all__ = [
     "checkpoint_dir",
     "has_mlflow_logger",
     "MetricPreset",
+    "MetricsSpec",
     "build_metric_collection",
     "coerce_metric_value",
     "scalar_metrics",
+    "write_collection_sidecar",
 ]

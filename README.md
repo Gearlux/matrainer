@@ -46,6 +46,43 @@ behind an extra and lazily imported the first time you use its backend:
 A missing backend library raises one clear error — e.g. `pip install matrainer[mlflow]` — never a
 bare `ModuleNotFoundError`.
 
+## The trainer API — one abstract base, one concrete base per framework
+
+Since 2026-08 matrainer also ships the shared TRAINER machinery a task project builds its merged
+train/evaluate/test/predict runnables on. Three layers, each in its own extras-gated home:
+
+| Layer | Class | What it owns |
+|---|---|---|
+| Neutral API (`matrainer.runnable`, light core) | `TrainerRunnable` | the universal constructor slots, `run()` dispatch through the four `@entrypoint`-marked capabilities, tracker/prepare/prediction plumbing, the neutral task hooks |
+| torch family (`matrainer.torch`, `[torch]`) | `TorchTrainerRunnable` | the TYPED slots (`model: Lazy[nn.Module]`, the `MetricsSpec` quartet), the sentinel resolution, the per-split metric builders, the sidecar write, `trained_model` |
+| Lightning machinery (`matrainer.lightning`, `[lightning]`) | `LightningRunnable` | the loaders, the deferred `pl.Trainer` slot with its tracking hookup, the standard step functions, the four entry points |
+| bare-torch machinery (`matrainer.torch.loop`, `[torch]`) | `TorchLoopRunnable` | the hand-written epoch (`zero_grad`/`backward`/`step`), device resolution, the per-split scoring, a plain-`state_dict` checkpoint, per-epoch history, and the plain-function tracking hookup |
+
+The abstraction deliberately **stops at the API** — there is no abstract trainer *object*: the
+`pl.Trainer` slot exists only in the Lightning base and the open-coded epoch only in the loop
+base; a fastai `Learner`, a keras family live in their own bases as those land. The loop base
+adds three BATCH hooks (`_train_batch_loss` / `_eval_batch` / `_predict_batch`) with the
+read-forward-loss default, so a task whose model computes its loss inside `forward` (a native
+detection contract) overrides exactly those three; `_eval_batch` may return `None` to declare
+"this split has no loss", and the split then reports its metrics alone. A consuming project writes its TASK once as a
+pair of hook mixins and composes a concrete class per engine:
+
+```python
+from matrainer.lightning import LightningRunnable
+
+@configurable(task="mytask", role="trainer", framework="torch")
+class LightningMyTask(MyTaskTorchHooks, LightningRunnable):
+    def __init__(self, model, train_set=None, ..., my_task_knob=1.0):
+        super().__init__(model=model, train_set=train_set, ...)   # shared slots, stored verbatim
+        self.my_task_knob = my_task_knob                          # task-specific state
+```
+
+The hooks a task implements: `initialize` (resolve dimensions/labels, flow the model, build the
+metrics), `_targets` (the batch read the loss expects), `_default_loss` / `_default_metrics` /
+`_metric_flow_dims` (the sentinel defaults and their sizing kwargs), `_prediction_output` (the
+sink contract), `_reportable` / `_report_nonscalars` (reporting filters), `_after_fit` (epilogue).
+Everything else — tracker wiring, epoch reporting, sidecars, entry points — is inherited.
+
 ## The `Tracker` — the one abstraction
 
 `matrainer.Tracker` (in `matrainer.tracking.base`) mirrors the `pytorch_lightning.loggers.Logger`
