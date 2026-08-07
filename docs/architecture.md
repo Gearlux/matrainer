@@ -760,3 +760,24 @@ class TorchDetectorLike(DetectionHooks, TorchLoopRunnable):        # loss-inside
         collection.update(self.model(images), targets)
         return None                                                # eval mode has no loss
 ```
+
+**Amendment (2026-08-07, second).** The third machinery base landed:
+`matrainer.fastai.learner.FastaiRunnable`, the `Learner` member. Its design additions: the
+metric slots stay the NAME lists a fastai config wires (`_build_fit/_eval_metrics` are
+deliberate no-ops — fastai metrics resolve at Learner assembly, alias-first through the
+`_metric_aliases()` hook, union-on-fit / narrow-on-eval through `_learner_metrics`), the
+fastai-shaped sentinels fall through to the task hooks (`_default_fastai_loss` →
+`_default_loss`), and the Learner assembly is a set of overridable seams
+(`_learner_model` / `_learner_loss` / `_learner_metric_objects` / `_learner_callbacks` /
+`_place`) — which is what lets a loss-inside-forward task keep its no-op-loss bridge as five
+small hook overrides instead of its own fit loop.
+
+```python
+class FastaiDetectorLike(DetectionHooks, FastaiRunnable):          # loss-inside-forward
+    def _learner_model(self):
+        return NativeAdapter(super()._learner_model())             # train fwd -> summed loss dict
+    def _learner_loss(self):
+        return passthrough_loss                                    # the model already computed it
+    def _learner_metric_objects(self, split):
+        return []                                                  # scored via a callback instead
+```
