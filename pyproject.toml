@@ -85,6 +85,14 @@ torpaido = [
     "torpaido>=0.1.0"
 ]
 
+[project.scripts]
+# The ONE binary this package ships, and a user-authorized exception (2026-08-07) to the
+# no-binary rule: the GENERIC runner (`matrainer train <config>` — any project's runnable
+# config, verbs forcing the task) and the sweep group (`matrainer sweep backends|trackers|all
+# <sweep.yaml>` + the report commands). The per-project CLIs remain the ergonomic surface;
+# `python -m matrainer.sweep` keeps working.
+matrainer = "matrainer.console:main"
+
 [project.entry-points."confluid.configurables"]
 # Light root: the tracking backends, run-name helper, and checkpoint policies.
 matrainer = "matrainer"
