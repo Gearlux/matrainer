@@ -199,3 +199,37 @@ def test_empty_group_log_dir_is_none() -> None:
 def test_tracker_is_abstract() -> None:
     with pytest.raises(TypeError):
         Tracker()  # type: ignore[abstract]
+
+
+# ---------------------------------------------------------------------------
+# flow_trackers — the run-time half of the trackers-slot contract
+# ---------------------------------------------------------------------------
+class TestFlowTrackers:
+    def test_none_becomes_an_empty_list(self) -> None:
+        from matrainer.tracking.base import flow_trackers
+
+        assert flow_trackers(None) == []
+
+    def test_a_single_live_tracker_becomes_a_singleton_list(self, tmp_path: object) -> None:
+        from matrainer.tracking.base import flow_trackers
+        from matrainer.tracking.csv_backend import CsvTracker
+
+        tracker = CsvTracker(save_dir=str(tmp_path))
+        assert flow_trackers(tracker) == [tracker]
+
+    def test_a_deferred_marker_is_built(self, tmp_path: object) -> None:
+        from confluid import LazyClass
+
+        from matrainer.tracking.base import flow_trackers
+        from matrainer.tracking.csv_backend import CsvTracker
+
+        live = flow_trackers([LazyClass(CsvTracker, save_dir=str(tmp_path))])
+        assert len(live) == 1 and isinstance(live[0], CsvTracker)
+
+    def test_a_live_list_passes_through_by_identity(self, tmp_path: object) -> None:
+        """flow() on a live object is idempotent — the property the write-back idiom rests on."""
+        from matrainer.tracking.base import flow_trackers
+        from matrainer.tracking.csv_backend import CsvTracker
+
+        trackers = [CsvTracker(save_dir=str(tmp_path))]
+        assert flow_trackers(trackers)[0] is trackers[0]
