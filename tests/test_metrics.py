@@ -1,5 +1,6 @@
 """Tests for the flexible metrics system (MetricPreset + build_metric_collection)."""
 
+from pathlib import Path
 from typing import Any, cast
 
 import pytest
@@ -255,3 +256,64 @@ class TestSizingKwargs:
 
         mc = build_metric_collection({"acc": LazyClass(MulticlassAccuracy)}, num_classes=7)
         assert mc["acc"].num_classes == 7
+
+
+# ---------------------------------------------------------------------------
+# write_collection_sidecar — the compute-once sidecar composition
+# ---------------------------------------------------------------------------
+class TestWriteCollectionSidecar:
+    def _collection(self) -> object:
+        import torch
+        from torchmetrics import MetricCollection
+        from torchmetrics.classification import MulticlassAccuracy
+
+        collection = MetricCollection({"accuracy": MulticlassAccuracy(num_classes=2)}).clone(prefix="val/")
+        collection.update(torch.tensor([[0.9, 0.1], [0.2, 0.8]]), torch.tensor([0, 1]))
+        return collection
+
+    def test_a_live_collection_is_computed_and_written(self, tmp_path: Path) -> None:
+        import json
+
+        from matrainer.torch.metrics import write_collection_sidecar
+
+        path = tmp_path / "metrics.json"
+        write_collection_sidecar(str(path), self._collection(), "exp", "run")
+        payload = json.loads(path.read_text())
+        assert payload["metrics"]["val/accuracy"] == 1.0
+        assert payload["experiment_name"] == "exp" and payload["run_name"] == "run"
+
+    def test_a_non_collection_slot_is_a_silent_no_op(self, tmp_path: Path) -> None:
+        """A spec-holding or None slot means the run legitimately built no metrics."""
+        from matrainer.torch.metrics import write_collection_sidecar
+
+        path = tmp_path / "metrics.json"
+        write_collection_sidecar(str(path), {"still": "a spec"}, "exp", "run")
+        write_collection_sidecar(str(path), None, "exp", "run")
+        assert not path.exists()
+
+    def test_the_reportable_filter_runs_before_the_scalar_drop(self, tmp_path: Path) -> None:
+        """A task's strip rule (detection MAP's `classes`) applies to the sidecar too."""
+        import json
+
+        from matrainer.torch.metrics import write_collection_sidecar
+
+        path = tmp_path / "metrics.json"
+        write_collection_sidecar(
+            str(path),
+            self._collection(),
+            "exp",
+            "run",
+            reportable=lambda values: {k: v for k, v in values.items() if k != "val/accuracy"},
+        )
+        assert json.loads(path.read_text())["metrics"] == {}
+
+
+def test_the_metrics_spec_alias_is_shared_from_here() -> None:
+    """Declared ONCE (it existed verbatim in eight-plus consumer modules); both subpackage
+    surfaces re-export it with the other metric helpers."""
+    import matrainer.torch as torch_pkg
+    from matrainer.torch import MetricsSpec
+    from matrainer.torch.metrics import MetricsSpec as canonical
+
+    assert "MetricsSpec" in torch_pkg.__all__
+    assert canonical is MetricsSpec

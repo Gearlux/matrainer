@@ -20,15 +20,24 @@ re-exports every name so its public surface is unchanged.
 import importlib
 import inspect
 from collections.abc import Mapping
-from typing import Any, Dict
+from typing import Any, Callable, Dict, Optional, Union
 
-from confluid import configurable, flow
+from confluid import LazyClass, configurable, flow
 from confluid.fluid import Fluid
 from loggair import get_logger
 from torch import Tensor
 from torchmetrics import Metric, MetricCollection
 
+from matrainer.artifacts import write_metrics_sidecar
+
 logger = get_logger(__name__)
+
+#: What a runnable's metrics slot admits: a ``{name: template}`` mapping, a ready-made
+#: collection, or ``None`` for "not chosen" (the sentinel a task resolves in ``initialize()``).
+#: Named ONCE here because four slots per runnable share it across every torch-family backend
+#: and `to_pydantic` reads the annotation for form-specs / widget generation — it was declared
+#: verbatim in eight-plus consumer modules before the 2026-08-06 consolidation.
+MetricsSpec = Optional[Union[Dict[str, Union[Metric, LazyClass[Metric]]], MetricCollection]]
 
 
 def _declares(target: Any, key: str) -> bool:
@@ -145,6 +154,46 @@ def scalar_metrics(raw: Any) -> Dict[str, float]:
             if isinstance(val, (int, float)) and not isinstance(val, bool):
                 out[str(key)] = float(val)
     return out
+
+
+def write_collection_sidecar(
+    path: Any,
+    collection: Any,
+    experiment_name: str,
+    run_name: str,
+    *,
+    reportable: Optional[Callable[[Any], Any]] = None,
+) -> None:
+    """Compute a split's ``MetricCollection`` once and hand its SCALARS to the metrics sidecar.
+
+    The composition every torch-family runnable writes at the end of an eval run: guard that a
+    live collection was actually built (a spec-holding or ``None`` slot is a silent no-op —
+    the run may legitimately have no metrics), compute it, drop non-scalars via
+    :func:`scalar_metrics`, and delegate the write to
+    :func:`matrainer.artifacts.write_metrics_sidecar` (which owns where run artifacts land).
+    A compute failure is a warning, never an abort — the sidecar is a record, not the run.
+
+    Args:
+        path: The sidecar path (``None`` lets ``write_metrics_sidecar`` pick its default).
+        collection: The runnable's post-run metrics slot — anything that is not a live
+            ``Metric`` / ``MetricCollection`` is skipped.
+        experiment_name: Stamped into the sidecar as the run identity.
+        run_name: Stamped into the sidecar as the run identity.
+        reportable: Optional filter applied to the computed mapping BEFORE the scalar drop —
+            a task that must strip a pseudo-metric from every reporting path (a detection
+            MAP's ``classes`` key) passes its rule here.
+    """
+    if not isinstance(collection, (Metric, MetricCollection)):
+        return
+    try:
+        values = collection.compute()
+        if reportable is not None:
+            values = reportable(values)
+        payload = scalar_metrics(values)
+    except Exception as exc:  # pragma: no cover - defensive
+        logger.warning(f"Could not compute final metrics for the sidecar: {exc}")
+        return
+    write_metrics_sidecar(path, payload, experiment_name, run_name)
 
 
 # Metrics that return non-scalar values and cannot be logged with self.log_dict(), by category.
@@ -276,7 +325,9 @@ class MetricPreset:
 
 __all__ = [
     "MetricPreset",
+    "MetricsSpec",
     "build_metric_collection",
     "coerce_metric_value",
     "scalar_metrics",
+    "write_collection_sidecar",
 ]

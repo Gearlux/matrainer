@@ -51,6 +51,8 @@ from matrainer.tracking.render import (
     render_matrix_as_table,
     render_vector_as_figure,
     render_vector_as_table,
+    report_matrices,
+    report_vectors,
 )
 from matrainer.tracking.system import MpsMetricsSampler, enable_mlflow_system_metrics, start_system_metrics_monitor
 
@@ -79,6 +81,8 @@ __all__ = [
     "render_matrix_as_table",
     "render_vector_as_figure",
     "render_vector_as_table",
+    "report_matrices",
+    "report_vectors",
 ]
 
 #: Snapshot of the names that exist independent of backend discovery.

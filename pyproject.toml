@@ -62,6 +62,15 @@ clearml = ["clearml>=2.0"]
 keras = ["keras>=3.0", "recordstream[keras]>=0.1.0"]
 # Only for a consumer that genuinely wants the TensorFlow ENGINE underneath Keras 3.
 tensorflow = ["matrainer[keras]", "tensorflow>=2.16"]
+# The remaining framework-family runnable bases (the per-framework trainer machinery that
+# joined matrainer 2026-08-06 — see AGENTS.md). Each names its FAMILY's engine; the two
+# fastai bounds are measured upstream breaks (fastcore 2.x removes `L.starmap`, which
+# fastai's own optimizer still calls; fastprogress 1.1 drags in a web framework and needs
+# the fastcore major the first bound excludes) — removable when upstream fixes them.
+fastai = ["matrainer[torch]", "fastai", "fastcore<2", "fastprogress<1.1"]
+huggingface = ["matrainer[torch]", "transformers>=4.49", "accelerate"]
+jax = ["flax", "optax", "recordstream[keras]>=0.1.0"]
+mlx = ["mlx; sys_platform == 'darwin' and platform_machine == 'arm64'"]
 # Everything a workspace install wants.
 all = ["matrainer[lightning,mlflow,tensorboard,wandb,aim,clearml,keras,plot]"]
 dev = [

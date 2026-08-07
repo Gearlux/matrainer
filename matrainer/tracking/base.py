@@ -64,6 +64,24 @@ def as_tracker_list(value: Any) -> Optional[List["Tracker"]]:
     return [cast("Tracker", item) for item in value]
 
 
+def flow_trackers(value: Any) -> List["Tracker"]:
+    """Normalize AND build a ``trackers`` slot value into a list of LIVE trackers.
+
+    The run-time half of the slot contract :func:`as_tracker_list` documents: that one
+    normalizes the SHAPE (one tracker or an iterable, un-flowed), this one additionally flows
+    each entry so a deferred ``Fluid`` marker out of a YAML config becomes the live tracker.
+    ``None`` / nothing wired yields an empty list, so a caller loops without a guard.
+
+    A consuming runnable writes the result BACK to its slot
+    (``self.trackers = flow_trackers(self.trackers)``): ``flow()`` on a live object is
+    idempotent, but a deferred marker re-flowed on every call would be REBUILT each time —
+    two MLflow runs for one training run.
+    """
+    from confluid import flow
+
+    return [cast("Tracker", flow(t)) for t in as_tracker_list(value) or []]
+
+
 def text_file_stem(name: str, step: Optional[int] = None) -> str:
     """The filename stem a :meth:`Tracker.log_text` value is stored under.
 
@@ -312,4 +330,4 @@ class TrackerGroup(Tracker):
         return None
 
 
-__all__ = ["Tracker", "TrackerGroup", "as_tracker_list", "text_file_stem"]
+__all__ = ["Tracker", "TrackerGroup", "as_tracker_list", "flow_trackers", "text_file_stem"]

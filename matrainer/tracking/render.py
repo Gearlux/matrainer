@@ -44,6 +44,8 @@ __all__ = [
     "render_matrix_as_table",
     "render_vector_as_figure",
     "render_vector_as_table",
+    "report_matrices",
+    "report_vectors",
 ]
 
 
@@ -308,3 +310,81 @@ def render_vector_as_figure(
         for index, (_, value) in enumerate(rows):
             axes.text(value + 0.01 * span, index, f"{value:.3f}", va="center", fontsize="x-small")
     return figure
+
+
+def report_matrices(
+    values: Any,
+    class_names: Optional[Sequence[str]],
+    trackers: Sequence[Any],
+    *,
+    step: Optional[int] = None,
+    plot: bool = False,
+) -> None:
+    """Send every confusion MATRIX in a computed metrics mapping to the log + each tracker.
+
+    The reporting loop every classification-shaped runnable wrote at epoch end: the selection
+    rule is recordstream's ``confusion_matrices_payload`` (square 2-D, by SHAPE not by metric
+    name), the renderers are this module's, and this function is the WHEN/WHERE — the loggair
+    log always, plus every wired tracker's text channel, plus its figure channel when ``plot``
+    asks for one. A figure is rendered ONCE per payload, not once per tracker — real work every
+    tracker can share.
+
+    Args:
+        values: A metrics ``compute()`` mapping (scalars and matrices mixed; scalars ignored).
+        class_names: Row/column labels in class-id order, or ``None`` for index labels.
+        trackers: LIVE trackers (flow first — see ``flow_trackers``); empty is fine.
+        step: The step the text/figure entries are filed under (typically the epoch).
+        plot: ALSO render each matrix as a heatmap for ``log_figure`` (needs matplotlib —
+            ``matrainer[plot]`` — which is why it is opt-in; the table costs nothing).
+    """
+    from loggair import get_logger
+
+    # Function-body import: the selection rule is recordstream's, and importing it here keeps
+    # `import matrainer.tracking` from paying for recordstream's image stack (PIL) up front.
+    from recordstream.ops.image import confusion_matrices_payload
+
+    logger = get_logger(__name__)
+    for payload in confusion_matrices_payload(values, list(class_names) if class_names else None):
+        table = render_matrix_as_table(payload["name"], payload["counts"], payload["class_names"])
+        logger.info(table)
+        figure = (
+            render_matrix_as_figure(payload["name"], payload["counts"], payload["class_names"])
+            if plot and trackers
+            else None
+        )
+        for tracker in trackers:
+            tracker.log_text(payload["name"], table, step=step)
+            if figure is not None:
+                tracker.log_figure(payload["name"], figure, step=step)
+
+
+def report_vectors(
+    values: Any,
+    class_names: Optional[Sequence[str]],
+    trackers: Sequence[Any],
+    *,
+    step: Optional[int] = None,
+    plot: bool = False,
+) -> None:
+    """Send every per-class VECTOR in a computed metrics mapping to the log + each tracker.
+
+    The vector twin of :func:`report_matrices`, for the shape ``average=None`` produces (a
+    per-class IoU, a per-class AP): selection by :func:`per_class_vectors` (by SHAPE), the
+    worst-first table to the log and every tracker's text channel, the sorted bar chart to the
+    figure channel when ``plot`` asks. Same once-per-payload figure rule.
+    """
+    from loggair import get_logger
+
+    logger = get_logger(__name__)
+    for payload in per_class_vectors(values, list(class_names) if class_names else None):
+        table = render_vector_as_table(payload["name"], payload["values"], payload["class_names"])
+        logger.info(table)
+        figure = (
+            render_vector_as_figure(payload["name"], payload["values"], payload["class_names"])
+            if plot and trackers
+            else None
+        )
+        for tracker in trackers:
+            tracker.log_text(payload["name"], table, step=step)
+            if figure is not None:
+                tracker.log_figure(payload["name"], figure, step=step)
