@@ -38,6 +38,7 @@ behind an extra and lazily imported the first time you use its backend:
 | `matrainer[wandb]` | `wandb` | `WandbTracker` |
 | `matrainer[aim]` | `aim` | `AimTracker` |
 | `matrainer[clearml]` | `clearml` | `ClearMLTracker` |
+| `matrainer[fastai]` | torch, `fastai` (+ two measured upper bounds — see `pyproject.toml`) | `matrainer.fastai.FastaiRunnable` |
 | `matrainer[keras]` | `keras` | `matrainer.keras.keras_tracking_callback` |
 | `matrainer[plot]` | `matplotlib` | `render_matrix_as_figure` / `render_vector_as_figure` — a confusion matrix as a heatmap, a per-class metric as a bar chart, for `log_figure` |
 | `matrainer[tensorflow]` | `matrainer[keras]`, `tensorflow` | the same helper, with the TensorFlow engine underneath |
@@ -57,10 +58,12 @@ train/evaluate/test/predict runnables on. Three layers, each in its own extras-g
 | torch family (`matrainer.torch`, `[torch]`) | `TorchTrainerRunnable` | the TYPED slots (`model: Lazy[nn.Module]`, the `MetricsSpec` quartet), the sentinel resolution, the per-split metric builders, the sidecar write, `trained_model` |
 | Lightning machinery (`matrainer.lightning`, `[lightning]`) | `LightningRunnable` | the loaders, the deferred `pl.Trainer` slot with its tracking hookup, the standard step functions, the four entry points |
 | bare-torch machinery (`matrainer.torch.loop`, `[torch]`) | `TorchLoopRunnable` | the hand-written epoch (`zero_grad`/`backward`/`step`), device resolution, the per-split scoring, a plain-`state_dict` checkpoint, per-epoch history, and the plain-function tracking hookup |
+| fastai machinery (`matrainer.fastai`, `[fastai]`) | `FastaiRunnable` | the `DataLoaders`/`Learner` assembly as deferred slots, the positional batch tuple built on the task's `_targets` hook, the Recorder read-back into canonical names, alias-first metric-name resolution, and the plain-function tracking hookup |
 
 The abstraction deliberately **stops at the API** — there is no abstract trainer *object*: the
-`pl.Trainer` slot exists only in the Lightning base and the open-coded epoch only in the loop
-base; a fastai `Learner`, a keras family live in their own bases as those land. The loop base
+`pl.Trainer` slot exists only in the Lightning base, the open-coded epoch only in the loop
+base, and the `Learner` only in the fastai one; a keras family lives in its own base when it
+lands. The loop base
 adds three BATCH hooks (`_train_batch_loss` / `_eval_batch` / `_predict_batch`) with the
 read-forward-loss default, so a task whose model computes its loss inside `forward` (a native
 detection contract) overrides exactly those three; `_eval_batch` may return `None` to declare
