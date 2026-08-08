@@ -98,4 +98,31 @@ def keras_tracking_callback(
     return _KerasTrackingCallback()
 
 
-__all__ = ["keras_tracking_callback"]
+#: The family/machinery bases live in submodules that import keras at module level; resolved
+#: LAZILY (PEP 562) so `import matrainer.keras` for the callback alone still pulls no keras —
+#: the callback's own lazy `require` is this package's established contract.
+_LAZY_NAMES = {
+    "KerasTrainerRunnable": "matrainer.keras.runnable",
+    "KerasRunnable": "matrainer.keras.trainer",
+    "KerasLoss": "matrainer.keras.runnable",
+    "KerasMetric": "matrainer.keras.runnable",
+    "KerasOptimizer": "matrainer.keras.runnable",
+}
+
+__all__ = [
+    "KerasLoss",
+    "KerasMetric",
+    "KerasOptimizer",
+    "KerasRunnable",
+    "KerasTrainerRunnable",
+    "keras_tracking_callback",
+]
+
+
+def __getattr__(name: str) -> Any:
+    module_path = _LAZY_NAMES.get(name)
+    if module_path is None:
+        raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
+    from importlib import import_module
+
+    return getattr(import_module(module_path), name)

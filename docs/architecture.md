@@ -805,3 +805,87 @@ class FastaiDetectorLike(DetectionHooks, FastaiRunnable):          # loss-inside
     def _learner_metric_objects(self, split):
         return []                                                  # scored via a callback instead
 ```
+
+**Amendment (2026-08-07, third — P5).** The KERAS FAMILY landed, and it is the first family
+with its own FAMILY base beside the machinery: `matrainer.keras.runnable.KerasTrainerRunnable`
+pins the keras types (the `Lazy[keras.Model]` slot, the compile-slot aliases, the `_to_arrays`
+batch hook, the sentinel hooks, the UNION-as-family-property) under TWO machinery SIBLINGS —
+`matrainer.keras.trainer.KerasRunnable` (the engine owns the loop: compile/fit, the History
+read-back, the `_before_fit`/`_fit_scores` seams) and `matrainer.tensorflow.loop.
+TensorFlowRunnable` (we own the loop: tf.data, traced steps, per-split CLONED metric objects,
+the hand-driven CallbackList, the SavedModel export, the engine guard). The design additions
+the consolidation forced: the compile seams (`_compiled_loss` may be a positional LIST — a
+detection spec's loss is not a slot), `_before_fit` (the tracking callback's `on_train_end`
+closes the run, so a tracker-touching artifact write after `fit()` returns arrives at an
+ENDED run), and the metric CLONE (a live metric wired into a per-split spec is a stateful
+accumulator three splits must not share — one consumer's TF backend shipped exactly that).
+Verified behaviour-preserving at the strongest level available: the two seeded spec-engine
+cells reproduced their canonical losses BIT-EXACTLY through the new bases
+(keras 2.30023455619812, tensorflow 2.3113211567203202).
+
+```python
+class KerasSegmenterLike(SegKerasHooks, KerasRunnable):            # compile/fit member
+    def _default_keras_loss(self): return SparseCategoricalCrossentropy(from_logits=True)
+
+class TFSegmenterLike(SegKerasHooks, TensorFlowRunnable):          # native-loop sibling
+    pass                                                            # same hooks, other machinery
+```
+
+---
+
+## 10. The trainer CLI is a factory; a project CLI is its FRAMEWORKS table (2026-08-07)
+
+### Context
+
+Every training project grows the same command line: three verbs (`train`/`evaluate`/`predict`)
+that force a `task` onto a `runnable:`-rooted config, a `--framework` flag naming which scope
+block activates, a `frameworks` listing command, and two pre-steps that must run BEFORE the
+config loads (the keras engine pin, the registration import). Four projects carried that as
+~280 near-identical lines each — measured, the modules differed in their FRAMEWORKS table,
+their verb help texts, and nothing else that was not a docstring — and every behavioural fix
+(the taskless-verb guard, the pin-before-registration order) had to be applied four times.
+Their package roots duplicated a second machine: the PEP 562 lazy-name resolver that keeps
+`import <project>` framework-free.
+
+### Decision
+
+`matrainer.cli` is the FACTORY: `Framework` (description + registrations — `None`, one module,
+or a tuple that makes a multi-module coupling readable in the table), `default_dispatch` (the
+materialize-and-force-task path, with the taskless-fit guard as the default — a silent
+`hasattr` would let an evaluate verb TRAIN), `make_trainer_app(name, description, frameworks,
+verb_docs, dispatch)` and `trainer_main(app, frameworks)` running the established pre-step
+order. A project's `cli.py` shrinks to its DATA — the table and the verb texts — plus two
+calls. The generic `matrainer` console script is the same factory invoked WITHOUT a table
+(`frameworks=None` skips the listing command), which is exactly the difference between a
+project-agnostic runner and a project CLI. The lazy-name resolver is `matrainer._exports.
+lazy_exports(__name__, table)`; each root keeps its `_BACKEND_NAMES` table.
+
+### Consequences
+
+The order (`requested_framework` → `pin_keras_backend` → `register_frameworks` →
+`normalize_framework_flag` → `app.run()`) is pinned ONCE, in matrainer's own suite, instead of
+per project — each arrow was a real bug when reversed. A behavioural extension lands
+everywhere at once (raidar's guard reached the other three CLIs in the lift). `dispatch=` is
+the extension point for a project needing more than the default. The cost is that a project's
+CLI behaviour is no longer readable in its own module — the factory's docstrings carry the
+rationale, and the project module says so.
+
+### Example
+
+```python
+from matrainer.cli import Framework, make_trainer_app, trainer_main
+
+FRAMEWORKS = {"lightning": Framework("the reference backend", "myproject.torch_task")}
+app = make_trainer_app(name="myproject", description="…", frameworks=FRAMEWORKS,
+                       verb_docs={"train": "Train a …"})
+
+def main() -> None:          # [project.scripts] myproject = "myproject.cli:main"
+    trainer_main(app, FRAMEWORKS)
+```
+
+### What you may change
+
+Add pre-steps, verbs or `Framework` fields freely — every consumer inherits them. What you may
+not do is teach the factory a TASK (a verb doc naming one belongs in the project's
+`verb_docs=`) or reorder the pre-steps without re-measuring the two orderings the docstrings
+record.
