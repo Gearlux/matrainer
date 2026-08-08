@@ -143,6 +143,16 @@ def test_the_artifact_prologue_runs_before_the_fit() -> None:
     assert body.index("_before_fit()") < body.index("model.fit(")
 
 
+def test_the_fit_never_lets_keras_shuffle_batch_order() -> None:
+    """`model.fit(shuffle=False)` — the sequence owns row order (private seeded RNG, reshuffled
+    per epoch via `on_epoch_end`, which Keras drives). Keras's PyDataset shuffle permutes BATCH
+    order through the global `random` module, so a seeded run's trajectory would depend on how
+    many draws ambient code consumed first — measured: mlflow's telemetry client draws one
+    `random.randint` at run creation, which alone moved a seeded cell's final loss."""
+    body = inspect.getsource(KerasRunnable.fit)
+    assert "shuffle=False" in body[body.index("model.fit(") :]
+
+
 def test_evaluate_scores_the_validation_split() -> None:
     """The fleet harmonization: `evaluate` used to delegate to `test()` in every keras backend."""
     assert '_evaluate_split(self.val_set, "val")' in inspect.getsource(KerasRunnable.evaluate)
