@@ -127,8 +127,17 @@ class KerasRunnable(KerasTrainerRunnable):
         train_seq = self._sequence(self.train_set, shuffle=True)
         val_seq = self._sequence(self.val_set) if self.val_set is not None else None
         self._before_fit()
+        # shuffle=False: the sequence owns row order — a private seeded RNG, reshuffled per epoch
+        # via on_epoch_end (Keras drives it). Keras's own PyDataset shuffle permutes BATCH order
+        # through the global `random` module, so leaving it on makes the trajectory depend on how
+        # many draws ambient code consumed — measured: mlflow's telemetry client draws one
+        # `random.randint` at run creation, which alone shifted a seeded run's final loss.
         history = self.model.fit(
-            train_seq, validation_data=val_seq, epochs=self.max_epochs, callbacks=self._callbacks()
+            train_seq,
+            validation_data=val_seq,
+            epochs=self.max_epochs,
+            callbacks=self._callbacks(),
+            shuffle=False,
         )
         self._history = {k: [float(x) for x in v] for k, v in history.history.items()}
         final = self._fit_scores({k: v[-1] for k, v in self._history.items()})
