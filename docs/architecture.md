@@ -821,7 +821,8 @@ ENDED run), and the metric CLONE (a live metric wired into a per-split spec is a
 accumulator three splits must not share — one consumer's TF backend shipped exactly that).
 Verified behaviour-preserving at the strongest level available: the two seeded spec-engine
 cells reproduced their canonical losses BIT-EXACTLY through the new bases
-(keras 2.30023455619812, tensorflow 2.3113211567203202).
+(keras 2.30023455619812, tensorflow 2.3113211567203202 — the keras digit predates the sixth
+amendment's `shuffle=False` fix, which moved it).
 
 ```python
 class KerasSegmenterLike(SegKerasHooks, KerasRunnable):            # compile/fit member
@@ -895,6 +896,28 @@ class MlxDetectorLike(DetectionBase, MlxLoopRunnable):             # 4-arity, ba
             return loss_fn(model(x), y_cls, y_box, y_ctr)          # no aux — driver unpacks
         return nn.value_and_grad(self.model, compute)
 ```
+
+**Amendment (2026-08-08, sixth — `KerasRunnable` passes `shuffle=False`; batch order must not
+read ambient RNG).** The first full-fleet MLflow sweep caught a seeded keras cell landing a
+different final loss under a live `MlflowTracker` than under `csv` or no tracker — both arms
+individually deterministic, so it read as a seed leak. The bisect (run under both trackers with
+the real CLI path instrumented): initial weights, the sequence's row order, and the first
+batch's bytes were IDENTICAL at `fit` entry; all four RNG streams (python/numpy/torch/mps) were
+identical entering `model.fit`; after `on_train_begin`, python's global `random` alone diverged;
+and the tensors actually entering `train_step` 0 differed. Mechanism: Keras's `PyDatasetAdapter`
+permutes BATCH order via the global `random.shuffle` when `fit(shuffle=True)` (the default), and
+mlflow's telemetry client draws one `random.randint` at run creation
+(`mlflow/telemetry/client.py::_get_config`) — inside the tracking callback's `on_train_begin`,
+i.e. after the seed, before the first shuffle draw — shifting the permutation. The fix is the
+machinery's, not a tracker workaround: `model.fit(..., shuffle=False)`, because the sequence
+already OWNS row order (a private seeded `np.random.default_rng`, reshuffled every epoch via
+`on_epoch_end`, which Keras drives) — the engine's second, ambient-state shuffle bought nothing
+and made training a function of how many draws any in-process library had consumed. Verified:
+with the fix, the seeded detection cell is byte-identical across `csv` and `mlflow` (every loss
+component and AP scalar) and across reruns. Consequence: keras cells' trajectories CHANGED —
+seeded numbers recorded before this amendment are not bit-comparable across it (the detection
+fleet's canonical moved from 2.30023455619812 to 2.285114049911499). Pinned by
+`tests/test_keras_family.py::test_the_fit_never_lets_keras_shuffle_batch_order`.
 
 ---
 
