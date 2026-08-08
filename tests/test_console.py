@@ -1,10 +1,11 @@
 """The `matrainer` console script — the generic runner + the sweep dispatch.
 
-What this pins: the verb→task map (the verb wins over the YAML's `task:`), the taskless guard
-(a runnable with no `task` attribute runs as-is for `train` ONLY), the `--framework` rewrite,
-the keras engine pin's ORDER (before any registration import), the `--registrations` strip,
-the `sweep` dispatch, and — end to end — a real `matrainer train` subprocess over a tiny
-runnable config, proving the flat config's keys broadcast and the verb forces the task.
+The verb machinery itself (the verb→task map, the taskless guard, the `--framework` rewrite,
+the keras engine pin) is `matrainer.cli`'s and is pinned in `test_cli.py`; what belongs here
+is the console's OWN surface: the `--registrations` strip (a flag liquifai would read as a
+config override), the pin's ORDER against that import, the `sweep` dispatch, and — end to
+end — a real `matrainer train` subprocess over a tiny runnable config, proving the flat
+config's keys broadcast and the verb forces the task.
 """
 
 from __future__ import annotations
@@ -20,60 +21,8 @@ import pytest
 from matrainer import console
 
 # ---------------------------------------------------------------------------
-# The dispatch + the taskless guard
+# The argv pre-steps the console owns
 # ---------------------------------------------------------------------------
-
-
-class _Recorder:
-    def __init__(self) -> None:
-        self.task = "fit"
-        self.ran = False
-
-    def run(self) -> None:
-        self.ran = True
-
-
-class _Taskless:
-    def __init__(self) -> None:
-        self.ran = False
-
-    def run(self) -> None:
-        self.ran = True
-
-
-def test_the_verb_wins_over_the_yaml_task() -> None:
-    runnable = _Recorder()
-    runnable.task = "predict"  # what the YAML said
-    console._dispatch(runnable, "test")
-    assert runnable.task == "test" and runnable.ran
-
-
-def test_a_taskless_runnable_trains_as_is_and_refuses_the_other_verbs() -> None:
-    """The silent `hasattr` guard would let an evaluate verb TRAIN — refuse by name instead."""
-    runnable = _Taskless()
-    console._dispatch(runnable, "fit")
-    assert runnable.ran
-
-    with pytest.raises(ValueError, match="_Taskless"):
-        console._dispatch(_Taskless(), "test")
-
-
-def test_no_runnable_is_a_clear_error() -> None:
-    with pytest.raises(ValueError, match="runnable"):
-        console._dispatch(None, "fit")
-
-
-# ---------------------------------------------------------------------------
-# The argv pre-steps
-# ---------------------------------------------------------------------------
-def test_the_framework_flag_is_rewritten_never_appended() -> None:
-    argv = ["train", "cfg.yaml", "--framework", "keras", "--epochs-like", "3"]
-    console._normalize_framework_flag(argv)
-    assert argv == ["train", "cfg.yaml", "--scope", "framework=keras", "--epochs-like", "3"]
-
-    argv = ["train", "cfg.yaml", "--framework=torch"]
-    console._normalize_framework_flag(argv)
-    assert argv == ["train", "cfg.yaml", "--scope", "framework=torch"]
 
 
 def test_registrations_are_stripped_before_liquifai_sees_them() -> None:
@@ -83,16 +32,9 @@ def test_registrations_are_stripped_before_liquifai_sees_them() -> None:
     assert modules == ["a.mod", "b.mod"]
     assert "--registrations" not in argv
 
-
-def test_the_tensorflow_framework_pins_the_keras_engine(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.delenv("KERAS_BACKEND", raising=False)
-    console._pin_keras_backend("tensorflow")
-    import os
-
-    assert os.environ.get("KERAS_BACKEND") == "tensorflow"
-    monkeypatch.setenv("KERAS_BACKEND", "torch")
-    console._pin_keras_backend("tensorflow")
-    assert os.environ["KERAS_BACKEND"] == "torch", "setdefault — an explicit choice always wins"
+    argv = ["train", "cfg.yaml", "--registrations=c.mod"]
+    assert console._pop_registrations(argv) == ["c.mod"]
+    assert argv == ["train", "cfg.yaml"]
 
 
 def test_the_pin_runs_before_the_registration_import() -> None:
@@ -101,15 +43,13 @@ def test_the_pin_runs_before_the_registration_import() -> None:
     import inspect
 
     source = inspect.getsource(console.main)
-    assert source.index("_pin_keras_backend") < source.index("_import_registrations")
+    assert source.index("pin_keras_backend") < source.index("_import_registrations")
 
 
-def test_the_requested_framework_is_read_in_every_spelling() -> None:
-    read = console._requested_framework
-    assert read(["train", "c.yaml", "--framework", "jax"]) == "jax"
-    assert read(["train", "c.yaml", "--framework=mlx"]) == "mlx"
-    assert read(["train", "c.yaml", "--scope", "framework=keras"]) == "keras"
-    assert read(["train", "c.yaml"]) is None
+def test_the_app_has_the_three_verbs_and_no_frameworks_command() -> None:
+    """A project-agnostic runner has no FRAMEWORKS table — `--registrations` is its substitute."""
+    assert set(console.VERB_TASKS) <= set(console.app._commands)
+    assert "frameworks" not in console.app._commands
 
 
 def test_sweep_dispatches_before_the_liquifai_app(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:

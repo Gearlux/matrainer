@@ -59,11 +59,14 @@ train/evaluate/test/predict runnables on. Three layers, each in its own extras-g
 | Lightning machinery (`matrainer.lightning`, `[lightning]`) | `LightningRunnable` | the loaders, the deferred `pl.Trainer` slot with its tracking hookup, the standard step functions, the four entry points |
 | bare-torch machinery (`matrainer.torch.loop`, `[torch]`) | `TorchLoopRunnable` | the hand-written epoch (`zero_grad`/`backward`/`step`), device resolution, the per-split scoring, a plain-`state_dict` checkpoint, per-epoch history, and the plain-function tracking hookup |
 | fastai machinery (`matrainer.fastai`, `[fastai]`) | `FastaiRunnable` | the `DataLoaders`/`Learner` assembly as deferred slots, the positional batch tuple built on the task's `_targets` hook, the Recorder read-back into canonical names, alias-first metric-name resolution, and the plain-function tracking hookup |
+| Keras family (`matrainer.keras.runnable`, `[keras]`) | `KerasTrainerRunnable` | the TYPED slots (`Lazy[keras.Model]`, the `KerasLoss`/`KerasMetric`/`KerasOptimizer` aliases), the `_to_arrays` batch hook, the keras sentinel hooks, the metric UNION, the `RecordSequence` boundary, the tracking-callback plumbing |
+| Keras compile/fit machinery (`matrainer.keras.trainer`, `[keras]`) | `KerasRunnable` | build + compile (with the `_compiled_loss` / `_compiled_optimizer` / `_check_compiled_metrics` seams), the `History` read-back, the `_before_fit` / `_fit_scores` fit hooks, the four entry points over `keras.Model`'s own `fit`/`evaluate`/`predict` |
+| native-TensorFlow machinery (`matrainer.tensorflow.loop`, `[tensorflow]`) | `TensorFlowRunnable` | the `tf.data` pipeline, traced `GradientTape` steps (XLA via `jit_compile`), per-split CLONED metric objects, the hand-driven `CallbackList`, the SavedModel export, the engine guard |
 
 The abstraction deliberately **stops at the API** — there is no abstract trainer *object*: the
 `pl.Trainer` slot exists only in the Lightning base, the open-coded epoch only in the loop
-base, and the `Learner` only in the fastai one; a keras family lives in its own base when it
-lands. The loop base
+base, the `Learner` only in the fastai one, and the compile step only in the Keras one (whose
+two machinery bases are SIBLINGS sharing the keras family layer). The loop base
 adds three BATCH hooks (`_train_batch_loss` / `_eval_batch` / `_predict_batch`) with the
 read-forward-loss default, so a task whose model computes its loss inside `forward` (a native
 detection contract) overrides exactly those three; `_eval_batch` may return `None` to declare
@@ -876,6 +879,47 @@ of run, and a name that said `test_…` for one and `evaluate_…` for the other
 concept across two prefixes in every tracking backend. An unrecognised verb — including one a
 future runnable adds — is an evaluation rather than an error, because a run name is a label and
 refusing to produce one is never the right answer.
+
+## Building a project CLI (`matrainer.cli`, no extra needed)
+
+A training project's command line is three verbs (`train` / `evaluate` / `predict`) over a
+`runnable:`-rooted config, a `--framework` flag, and a `frameworks` listing — the machinery is
+identical across projects, so it is a FACTORY here and a project ships only its DATA:
+
+```python
+from matrainer.cli import Framework, make_trainer_app, trainer_main
+
+FRAMEWORKS = {
+    "lightning": Framework("the reference backend", "myproject.torch_task"),
+    "keras": Framework("Keras 3 on any engine", "myproject.keras_task"),
+    "huggingface": Framework("a Trainer that computes its own loss"),   # nothing to register
+}
+app = make_trainer_app(name="myproject", description="…", frameworks=FRAMEWORKS,
+                       verb_docs={"train": "Train a …"})
+
+def main() -> None:                     # [project.scripts] myproject = "myproject.cli:main"
+    trainer_main(app, FRAMEWORKS)
+```
+
+What the machinery does (each behaviour documented on its function): the verbs build through
+`recordstream`'s `materialize_runnable` (never a bare flow — that drops every top-level config
+key silently) and the verb wins over the YAML's `task:`; a runnable with no `task` attribute
+trains as-is and REFUSES the other verbs; `--framework X` is rewritten to `--scope
+framework=X`; `--framework tensorflow` pins `KERAS_BACKEND` before anything imports keras; and
+the named backend's registration modules are imported before the config loads. `dispatch=` on
+`make_trainer_app` is the extension point when the default dispatch is not enough.
+
+A package root keeps its core framework-free with the same library — the PEP 562 resolver is
+`matrainer._exports.lazy_exports`; the name table stays the project's:
+
+```python
+_BACKEND_NAMES = {"LightningThing": ("myproject.lightning_thing", "lightning")}
+__all__ = [*_BACKEND_NAMES]
+__getattr__, __dir__ = lazy_exports(__name__, _BACKEND_NAMES)
+```
+
+Touching a name whose backend is missing raises an `ImportError` naming the exact extra; an
+empty extra (`""`) marks a core name whose failure passes through untranslated.
 
 ## Running and reading a SWEEP (`matrainer sweep`, no extra needed)
 
