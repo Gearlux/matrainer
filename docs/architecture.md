@@ -831,6 +831,71 @@ class TFSegmenterLike(SegKerasHooks, TensorFlowRunnable):          # native-loop
     pass                                                            # same hooks, other machinery
 ```
 
+**Amendment (2026-08-08, fourth — P6, huggingface).** The `transformers.Trainer` machinery
+landed: `matrainer.huggingface.trainer.HuggingFaceRunnable`, on the TORCH family base — the
+member that writes least while swapping most, because the engine owns somebody else's whole
+training program (epoch, optimizer, scheduler, accumulation, mixed precision, distribution).
+What the machinery therefore is, is ASSEMBLY: the deferred `TrainingArguments`/`Trainer`
+slots with STRING dotted targets (importing the machinery never imports transformers), the
+run-time argument FLOOR (a config-pinned key wins — the workspace `TrainingArguments` rule,
+now written once), the `log_history` REPLAY as the tracker bridge (`report_to="none"` on
+purpose — Trainer auto-enables every importable tracker library), and the record-loader
+predict walk. The design additions the consolidation forced: the `_trainer_factory()` seam
+(one task's model refuses `labels=`, so its loss rides a `compute_loss` subclass that must
+still yield to a config-replaced Trainer), the `_metrics_hook(split)` seam returning `None`
+by default (one task scores OUTSIDE the Trainer through the fleet's torchmetrics and wires
+no hook at all), and the no-op metric builders with the family restore (the fastai
+arrangement, reused verbatim). Verified behaviour-preserving at the strongest level
+available: the seeded detection cell reproduced its canonical numbers BIT-EXACTLY through
+the new base (train/loss 40.41484375, val/map_50 0.046988025307655334).
+
+```python
+class HFRestorerLike(RestorationBase, HuggingFaceRunnable):        # the loss-slot member
+    def _trainer_factory(self):
+        loss_fn = flow(self.loss_fn)
+        class _T(transformers.Trainer):                            # Swin2SR refuses labels=
+            def compute_loss(self, model, inputs, **kw):
+                return loss_fn(model(inputs["pixel_values"]), inputs.pop("labels"))
+        return _T
+
+class HFDetectorLike(DetectionBase, HuggingFaceRunnable):          # the torchmetrics member
+    def _build_fit_metrics(self, include_train=True):              # restore the family builders
+        TorchTrainerRunnable._build_fit_metrics(self, include_train=False)
+    def _evaluate_split(self, source, split):                      # score OUTSIDE the Trainer
+        return self._decoded_scores(source, self.val_metrics if split == "val" else self.test_metrics)
+```
+
+**Amendment (2026-08-08, fifth — P6, jax + mlx).** The two OWNED-LOOP SIBLINGS landed and the
+migration is COMPLETE — every per-project backend now runs on a shared machinery base.
+`matrainer.jax.loop.JaxLoopRunnable` and `matrainer.mlx.loop.MlxLoopRunnable` share one hook
+surface (the batch boundary, the sentinel hooks, the metric STATE hooks, the fit hooks) under
+each engine's own loop; what the consolidation forced into the DESIGN is the state-hook
+triple — `_new_split_state` / `_score_batch` / `_split_scores` — because metric ACCUMULATION
+is a task vocabulary (a confusion matrix here, a squared-error total there, nothing at all
+for a task that scores after the fit), while the "accumulate per split, reduce ONCE" rule is
+the engine-independent part the driver owns. The epoch drivers SPLAT the batch and unpack a
+bare-loss step, so detection's 4-arity dense-map steps drive the same loop. Verified
+behaviour-preserving at the strongest level available: the seeded detection cells reproduced
+their canonical losses BIT-EXACTLY through the new bases (jax 2.1331496040026345, mlx
+1.953120619058609), and the per-pixel task's losses matched to the printed digit (jax
+0.6379/0.7427 vs the recorded 0.638/0.743; mlx 0.7888/0.7511 + mIoU 0.351 exactly).
+
+```python
+class JaxRestorerLike(RestorationBase, JaxLoopRunnable):           # accumulate-and-reduce
+    def _new_split_state(self, split): return zero_squared_error()
+    def _score_batch(self, state, outputs, arrays, split):
+        accumulate_squared_error(state, np.asarray(outputs), np.asarray(arrays[1]))
+    def _split_scores(self, state, split, step=None):
+        return {"psnr": psnr(state, self.data_range)}
+
+class MlxDetectorLike(DetectionBase, MlxLoopRunnable):             # 4-arity, bare-loss step
+    def _make_step(self):
+        loss_fn = self._loss_fn()
+        def compute(model, x, y_cls, y_box, y_ctr):
+            return loss_fn(model(x), y_cls, y_box, y_ctr)          # no aux — driver unpacks
+        return nn.value_and_grad(self.model, compute)
+```
+
 ---
 
 ## 10. The trainer CLI is a factory; a project CLI is its FRAMEWORKS table (2026-08-07)
