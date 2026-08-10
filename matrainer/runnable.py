@@ -12,7 +12,8 @@ with 60%+ of each module byte-identical across projects. The shape of the consol
 * **A FAMILY base pins the framework types** — ``matrainer.torch.runnable.TorchTrainerRunnable``
   stores ``model: Lazy[nn.Module]`` / ``loss_fn: Optional[Lazy[nn.Module]]`` / the
   ``MetricsSpec`` quartet and declares the torch-typed hooks (``_targets -> Tensor``, the
-  metric builders); the keras family base (`matrainer.keras.runnable.KerasTrainerRunnable`) does the same with keras types. NOTHING user-facing is
+  metric builders); the keras family base (`matrainer.keras.runnable.KerasTrainerRunnable`)
+  does the same with keras types. NOTHING user-facing is
   typed ``Any`` — a slot whose type is a framework's lives in that framework family's base,
   which is the whole reason this base does not store one.
 * **One concrete base per framework fills the machinery in** (``matrainer.lightning.
@@ -161,7 +162,7 @@ class TrainerRunnable(ProgressReporting, ABC):
         """Task setup before dispatch: resolve dimensions/labels, flow the model, build metrics.
 
         Entirely task-owned — the four tasks differ wildly here (a label walk, a mask walk, a
-        Regions walk, a trainable-parameters check) — and it typically ends by calling the
+        Boxes walk, a trainable-parameters check) — and it typically ends by calling the
         family base's metric builders.
         """
         raise NotImplementedError
