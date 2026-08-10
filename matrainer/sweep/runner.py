@@ -191,7 +191,11 @@ def run_sweep(
             print(f"skipped    : {', '.join(skipped)}")
         print()
 
-        log_dir = Path("sweep_logs") / experiment
+        # `save_dir`, not a literal: this is the directory the reader half
+        # (`next_experiment_name` / `collect`) was already given, so a hardcoded
+        # "sweep_logs" made `--save-dir` move where reports are READ from while the
+        # logs kept being WRITTEN to the default — a flag that silently half-worked.
+        log_dir = Path(save_dir) / experiment
         passed: List[str] = []
         failed: List[str] = []
         for cell in cells:

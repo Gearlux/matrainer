@@ -186,12 +186,28 @@ class TestRunning:
         # line — what matters is that it appears AFTER the failure summary (the report is the
         # deliverable, rendered before the non-zero exit).
         assert out.index("failed: b") < out.index("no runs recorded")
-        assert (tmp_path / "sweep_logs").is_dir(), "per-cell logs land under sweep_logs/<experiment>/"
+        assert (tmp_path / "logs").is_dir(), "per-cell logs land under <save_dir>/<experiment>/"
 
     def test_a_clean_sweep_exits_zero(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
         monkeypatch.chdir(tmp_path)
         path = _stub_spec(tmp_path, "pass")
         assert run_sweep(load_spec(path), "backends", save_dir=tmp_path / "logs") == 0
+
+    def test_save_dir_moves_the_logs_that_are_WRITTEN_not_only_the_ones_READ(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """`--save-dir` is one directory for both halves of the sweep.
+
+        The reader half (`next_experiment_name` / `collect`) always took the parameter; the
+        writer half hardcoded ``Path("sweep_logs")``, so pointing the flag somewhere else
+        left the per-cell logs behind in the default and the report read an empty tree —
+        a flag that silently half-worked, and a suite that wrote into the CWD it ran from.
+        """
+        monkeypatch.chdir(tmp_path)
+        path = _stub_spec(tmp_path, "pass")
+        assert run_sweep(load_spec(path), "backends", save_dir=tmp_path / "elsewhere") == 0
+        assert list((tmp_path / "elsewhere").rglob("*.log")), "the per-cell logs follow save_dir"
+        assert not (tmp_path / "sweep_logs").exists(), "and nothing is left in the default"
 
     def test_the_row_env_reaches_its_one_subprocess(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
         """The engine pin stays scoped to the cell — never exported to the sweep process."""
