@@ -49,6 +49,26 @@ class TrackerLogger(L.loggers.Logger):
         return self.tracker.version or ""
 
     @property
+    def save_dir(self) -> str:
+        """The tracker's own output root — and the thing that places CHECKPOINTS.
+
+        Lightning's base ``Logger.save_dir`` returns ``None``, and
+        ``ModelCheckpoint.__resolve_ckpt_dir`` reads it FIRST, falling back to
+        ``Trainer.default_root_dir`` (the process CWD) when it is ``None``. So an
+        un-overridden adapter sent every checkpoint to
+        ``<cwd>/<experiment_name>/<run_name>/checkpoints`` — a run-named directory
+        written straight into whatever directory the run was launched from, which for
+        a repo-rooted launch means the repository itself. Returning the tracker's
+        ``save_dir`` (``./runs`` by default, on every backend) puts checkpoints under
+        the SAME root the tracker already writes its metrics to, so one gitignored
+        directory holds a whole run.
+
+        This is a projection of an existing value, never a second source of truth:
+        override the tracker's ``save_dir`` and the checkpoints follow it.
+        """
+        return self.tracker.save_dir
+
+    @property
     def experiment(self) -> Any:
         return self.tracker.experiment
 
