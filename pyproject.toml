@@ -10,7 +10,7 @@ license = {text = "MIT"}
 dependencies = [
     "liquifai>=0.1.0",
     "loggair>=0.1.0",
-    "confluid>=0.1.0",
+    "confluid>=0.3.0",
     "recordstream>=0.1.0",
     "numpy",
     # coolname generates the default random run names (e.g. ``train_funny_rabbit``) in

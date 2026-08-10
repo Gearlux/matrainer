@@ -43,25 +43,21 @@ MetricsSpec = Optional[Union[Dict[str, Union[Metric, LazyClass[Metric]]], Metric
 def _declares(target: Any, key: str) -> bool:
     """Does ``target``'s constructor DECLARE ``key`` by name (ignoring ``**kwargs``)?
 
-    Deliberately NOT :func:`confluid.accepts_key`, and the difference is the whole point: that
-    helper answers yes for any target whose constructor takes ``**kwargs``, which is EVERY
-    torchmetrics metric — the base ``Metric.__init__`` uses it for ``compute_on_cpu`` /
-    ``dist_sync_on_step`` / … and then REJECTS anything else with *"Unexpected keyword arguments"*.
-    So the question that matters here is narrower than settability: is this an argument the metric
-    itself takes?
+    Since confluid 0.3.0 this IS :func:`confluid.declares_key` (added for exactly this case —
+    ``accepts_key`` answers yes for any ``**kwargs`` target, which is EVERY torchmetrics metric,
+    and the metric then REJECTS undeclared names with *"Unexpected keyword arguments"*). What
+    stays OURS is the fallback policy below.
 
     An unresolvable target (a dotted string a marker carries, a callable with no signature) is
     treated as accepting the key, which preserves the pre-2026-08-05 behaviour for anything this
     cannot see rather than silently dropping a dimension the metric needed.
     """
-    try:
-        # `signature()` on a CLASS gives its constructor's signature with `self` already dropped,
-        # so one call covers a class, a factory function and a live instance's `__call__`.
-        parameters = inspect.signature(target).parameters
-    except (TypeError, ValueError):  # pragma: no cover - builtins / C-implemented callables
+    from confluid import declares_key
+    from confluid.broadcast import _settability_target
+
+    if _settability_target(target) is None:  # unresolvable — permissive, OUR policy (confluid answers False)
         return True
-    parameter = parameters.get(key)
-    return parameter is not None and parameter.kind is not inspect.Parameter.VAR_KEYWORD
+    return declares_key(target, key)
 
 
 def _sizing_kwargs(template: Any, flow_dims: Mapping[str, Any]) -> Dict[str, Any]:
