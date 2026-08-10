@@ -15,6 +15,7 @@ run the real fits in their own suites); behavioural where torch + recordstream s
 from __future__ import annotations
 
 import inspect
+from pathlib import Path
 from typing import Any, Dict, List, Optional, cast
 
 import pytest
@@ -82,6 +83,24 @@ def test_the_eval_strategy_follows_the_wired_val_split() -> None:
     assert runnable._argument_floor()["eval_strategy"] == "no"
     runnable.val_set = [1]
     assert runnable._argument_floor()["eval_strategy"] == "epoch"
+
+
+def test_the_unconfigured_output_dir_roots_at_runs(tmp_path: Any) -> None:
+    """`runs/` is the ONE gitignored output root every project carries.
+
+    An unconfigured `Trainer` writes checkpoints and optimizer state, and the last-resort
+    path is the one nobody chose — so it must not scatter that into the directory the run
+    happened to be launched from (workspace `AGENTS.md`, "Run Output Lands In A Gitignored
+    `runs/`"). The two configured paths still win, in order.
+    """
+    runnable = _Hooked(run_name="funny_rabbit")
+    assert runnable._output_dir() == str(Path("./runs/hf_runs/funny_rabbit"))
+
+    runnable.metrics_sidecar_path = str(tmp_path / "metrics.json")
+    assert runnable._output_dir() == str(tmp_path / "funny_rabbit"), "the sidecar wins over the default"
+
+    runnable.output_dir = str(tmp_path / "explicit")
+    assert runnable._output_dir() == str(tmp_path / "explicit"), "an explicit path wins over both"
 
 
 # --------------------------------------------------------------------------- #
