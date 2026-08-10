@@ -977,3 +977,64 @@ Add pre-steps, verbs or `Framework` fields freely — every consumer inherits th
 not do is teach the factory a TASK (a verb doc naming one belongs in the project's
 `verb_docs=`) or reorder the pre-steps without re-measuring the two orderings the docstrings
 record.
+
+## 11. A logger adapter must project `save_dir`, or checkpoints land in the CWD (2026-08-10)
+
+### Context
+
+`TrackerLogger` adapts a matrainer `Tracker` to the `pytorch_lightning.loggers.Logger`
+interface. It implemented the parts a reader thinks of as "logging" — `name`, `version`,
+`experiment`, `log_metrics`, `log_hyperparams`, `save`, `finalize` — and left `save_dir` to the
+base class, which returns `None`. That looks harmless: nothing in the metric path reads it.
+
+But `save_dir` is not only a logging concern. `ModelCheckpoint.__resolve_ckpt_dir` reads it
+FIRST and falls back to `Trainer.default_root_dir` — the process CWD — when it is `None`:
+
+```python
+if trainer.loggers[0].save_dir is not None:
+    save_dir = trainer.loggers[0].save_dir
+else:
+    save_dir = trainer.default_root_dir
+ckpt_path = os.path.join(save_dir, str(name), version, "checkpoints")
+```
+
+So the adapter's `name`/`version` (the tracker's experiment and run name) were composed against
+the launch directory. A sweep names its experiment by date, so a run launched from a project
+root wrote `<repo>/Sun_Aug_9_2026_1/lightning_convnet/checkpoints/` INTO the repository. It
+stayed invisible because every file inside happened to match a `checkpoints/` ignore rule —
+`git status --ignored` collapsed the whole tree to one `!!` line, and the directory itself was
+never ignored at all. One non-checkpoint artifact would have made it committable.
+
+### Decision
+
+`TrackerLogger.save_dir` returns `self.tracker.save_dir`. Every `Tracker` backend already
+defaults it to `./runs` (`tracking/base.py`), so checkpoints land beside the metrics the same
+tracker writes, under one directory a project can ignore with one line.
+
+The property is a PROJECTION, never a second source of truth: there is no separate
+checkpoint-root knob to keep in sync, and overriding the tracker's `save_dir` moves both.
+
+### Consequences
+
+* A whole run — metrics, checkpoints, manifest, artifacts — lives under `runs/<experiment>/<run>/`.
+* The workspace mandate "Run Output Lands In A Gitignored `runs/`" is enforceable, because the
+  default no longer depends on where the operator happened to `cd` first.
+* An adapter over a Lightning interface must be checked for members read by things OTHER than
+  the obvious caller. `save_dir` is read by a callback, not by the logging path, which is why
+  a complete-looking adapter was missing it.
+
+### Example
+
+```python
+tracker = CsvTracker(experiment_name="mnist", run_name="convnet")   # save_dir="./runs"
+trainer = pl.Trainer(logger=TrackerLogger(tracker), callbacks=[ModelCheckpoint()])
+# checkpoints -> ./runs/mnist/convnet/checkpoints/   (not <cwd>/mnist/convnet/checkpoints/)
+```
+
+### What you may change
+
+The tracker's `save_dir` — that is the knob, and both metrics and checkpoints follow it. What
+you may not do is reintroduce a checkpoint root that is independent of it, or drop the property
+on the grounds that the metric path does not read it. Pinned by
+`tests/lightning/test_trackers.py::test_checkpoints_land_under_the_trackers_save_dir_not_the_launch_directory`,
+which asserts against Lightning's REAL resolution rather than a restatement of the rule.

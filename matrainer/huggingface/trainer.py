@@ -89,7 +89,7 @@ class HuggingFaceRunnable(TorchTrainerRunnable):
         report_to: Trainer's own tracking integrations — ``"none"`` on purpose (module
             docstring).
         output_dir: Where Trainer writes its state. Defaults beside the metrics sidecar when
-            one is configured, else ``./hf_runs/<run_name>``.
+            one is configured, else ``./runs/hf_runs/<run_name>``.
         callbacks: ``transformers.TrainerCallback`` instances, handed to the ``Trainer``.
             Stored VERBATIM (entries may be deferred markers) and flowed where used.
 
@@ -300,12 +300,18 @@ class HuggingFaceRunnable(TorchTrainerRunnable):
         return trainer
 
     def _output_dir(self) -> str:
-        """Where Trainer writes its state — beside the sidecar when one is configured."""
+        """Where Trainer writes its state — beside the sidecar when one is configured.
+
+        The last resort roots at ``runs/``, the ONE gitignored output directory every
+        project carries (workspace ``AGENTS.md``, "Run Output Lands In A Gitignored
+        ``runs/``"), so an unconfigured run does not scatter ``Trainer`` state into
+        whatever directory it was launched from.
+        """
         if self.output_dir:
             return str(Path(self.output_dir).expanduser())
         if self.metrics_sidecar_path:
             return str(Path(self.metrics_sidecar_path).expanduser().parent / self.run_name)
-        return str(Path("./hf_runs") / self.run_name)
+        return str(Path("./runs/hf_runs") / self.run_name)
 
     def _record_loader(self, source: Any) -> DataLoader[Any]:
         """A loader of COLLATED RECORD BATCHES — the shape :meth:`predict` needs."""

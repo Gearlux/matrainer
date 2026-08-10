@@ -571,6 +571,26 @@ from matrainer.lightning import TrackerLogger
 trainer = pl.Trainer(logger=TrackerLogger(MlflowTracker(experiment_name="exp")))
 ```
 
+The bridge also decides where **checkpoints** land. `ModelCheckpoint` reads its directory from
+the first logger's `save_dir`, so `TrackerLogger` reports the tracker's — meaning a whole run
+lands under one root:
+
+```
+<save_dir>/<experiment_name>/<run_name>/              # metrics, manifest, artifacts
+<save_dir>/<experiment_name>/<run_name>/checkpoints/  # ModelCheckpoint, with no dirpath set
+```
+
+`save_dir` defaults to `./runs` on every backend, and that is the only knob — move it and the
+checkpoints follow:
+
+```python
+trainer = pl.Trainer(logger=TrackerLogger(CsvTracker(save_dir="/data/runs")))
+```
+
+Set `ModelCheckpoint(dirpath=…)` explicitly only when a later evaluate/predict config must
+NAME the path (a default run name is a random slug, so nothing can address it afterwards) —
+and point it inside `runs/` too, e.g. `./runs/checkpoints/<name>`.
+
 Metrics may equally stay on stock `pytorch_lightning.loggers.*` — Matrainer **uses** pl loggers,
 never reimplements them.
 
