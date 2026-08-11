@@ -133,9 +133,11 @@ class TrainerRunnable(ProgressReporting, ABC):
     def _require_model(self) -> None:
         """Fail clearly when a declared model slot was never wired.
 
-        The slot is DEFAULTED in every family's constructor — zero-arg construction is a
-        workspace mandate, and `Mandatory[T]` is what keeps confluid still reporting it as
-        required to the form-specs and MCP schemas. That trade moves "you forgot the model"
+        The slot is DEFAULTED in every family's constructor — zero-arg construction is the
+        RECOMMENDED workspace shape (a recommendation, not a requirement: a required ctor
+        param is a legitimate choice elsewhere), and `Mandatory[T]` is what keeps confluid
+        still reporting it as required to the form-specs and MCP schemas. That trade moves
+        "you forgot the model"
         from a `TypeError` at construction to the start of the run that needs it, so this is
         where the clear error has to be raised. Without it the failure surfaces deep inside a
         framework as an unhelpful `NoneType` complaint (or, in the engines that own their
