@@ -139,6 +139,7 @@ class TorchLoopRunnable(TorchTrainerRunnable):
     def run(self) -> None:
         self._device = resolve_device(self.device_choice)
         logger.info(f"{self.log_label} torch backend on {self._device}.")
+        self._require_model()
         self.initialize()
         self._finalize_device()
         # The `@entrypoint` markers (inherited from the API base) ARE the dispatch table.

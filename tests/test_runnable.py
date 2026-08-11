@@ -78,6 +78,35 @@ def test_run_dispatches_through_the_entrypoint_markers() -> None:
     assert runnable.calls == ["initialize", "test"]
 
 
+def test_a_runnable_without_a_model_slot_is_untouched_by_the_guard() -> None:
+    """The stub declares no model slot, so ``run()`` must not invent a requirement for one.
+
+    The sentinel in :meth:`TrainerRunnable._require_model` exists for exactly this: a bare
+    class annotation creates no attribute, so "no model slot" and "slot present but empty" are
+    different states and only the second is an error.
+    """
+    runnable = _Stub(task="test")
+    runnable.run()  # no raise
+    assert not hasattr(runnable, "model")
+
+
+def test_an_empty_model_slot_raises_a_clear_error_at_run() -> None:
+    """The other half of the defaulted-`Mandatory` trade.
+
+    Every family defaults its `model` param so the class stays zero-arg constructible (and
+    `Mandatory[T]` keeps confluid reporting it required). That moves "you forgot the model"
+    out of construction, so ``run()`` is where it has to be caught — before a framework
+    reports it as an unhelpful ``NoneType`` complaint several layers down.
+    """
+    runnable = _Stub(task="test")
+    runnable.model = None  # what every family base stores when the slot was never wired
+
+    with pytest.raises(ValueError, match=r"`model` slot is empty"):
+        runnable.run()
+
+    assert runnable.calls == [], "the guard must fire BEFORE initialize()"
+
+
 def test_the_markers_are_declared_once_on_the_base_and_found_on_a_subclass() -> None:
     """`runnable_entrypoints` walks the MRO, so the API base's markers ARE the subclass's
     dispatch table — an override needs no re-decoration."""
