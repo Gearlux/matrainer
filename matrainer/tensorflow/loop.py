@@ -170,6 +170,7 @@ class TensorFlowRunnable(KerasTrainerRunnable):
     # ---- run dispatch ----------------------------------------------------------------------- #
     def run(self) -> None:
         self._require_tensorflow_backend()
+        self._require_model()
         self.initialize()
         self._build_live_objects()
         # The `@entrypoint` markers (inherited from the API base) ARE the dispatch table.

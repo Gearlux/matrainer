@@ -89,6 +89,11 @@ class TrainerRunnable(ProgressReporting, ABC):
     #: name a framework type, and a task base's torch-free half still reads/flows the slot.
     model: Any
 
+    #: Sentinel for :meth:`_require_model` — tells "no model slot on this runnable" apart from
+    #: "slot present, never wired". A bare annotation above creates no attribute, so a family
+    #: base that does not store one leaves `getattr` to return this instead of `None`.
+    _NO_MODEL_SLOT: ClassVar[object] = object()
+
     def __init__(
         self,
         *,
@@ -125,7 +130,30 @@ class TrainerRunnable(ProgressReporting, ABC):
         self.metric_names: Optional[Lazy[MetricNames]] = metric_names
 
     # ---- run dispatch --------------------------------------------------------------------- #
+    def _require_model(self) -> None:
+        """Fail clearly when a declared model slot was never wired.
+
+        The slot is DEFAULTED in every family's constructor — zero-arg construction is a
+        workspace mandate, and `Mandatory[T]` is what keeps confluid still reporting it as
+        required to the form-specs and MCP schemas. That trade moves "you forgot the model"
+        from a `TypeError` at construction to the start of the run that needs it, so this is
+        where the clear error has to be raised. Without it the failure surfaces deep inside a
+        framework as an unhelpful `NoneType` complaint (or, in the engines that own their
+        loop, only once the first batch is forwarded).
+
+        The sentinel distinguishes "slot exists and is empty" from "this runnable has no model
+        slot at all" — the family base is what STORES the attribute, so a runnable that never
+        declared one (an engine driving its own weights) is untouched.
+        """
+        if getattr(self, "model", self._NO_MODEL_SLOT) is None:
+            raise ValueError(
+                f"{type(self).__name__}: the `model` slot is empty. It is Mandatory but defaulted "
+                "(so the class stays zero-arg constructible) — wire one in the config, e.g. "
+                "`model: !lazy:your.package.YourModel {…}`, or pass `model=` to the constructor."
+            )
+
     def run(self) -> None:
+        self._require_model()
         self.initialize()
         # The `@entrypoint` markers below ARE the dispatch table — a hand-written
         # {task: method} dict restates them and drifts (recordstream `docs/runnable.md`).

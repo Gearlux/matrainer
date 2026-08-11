@@ -59,6 +59,7 @@ class KerasRunnable(KerasTrainerRunnable):
     # ---- run dispatch: compile between the task's initialize and the entry point ----------- #
     def run(self) -> None:
         logger.info(f"Keras backend in effect: {keras_backend()}")
+        self._require_model()
         self.initialize()
         self._compile()
         # The `@entrypoint` markers (inherited from the API base) ARE the dispatch table.
