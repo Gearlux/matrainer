@@ -551,8 +551,8 @@ def test_capture_config_dumps_the_resolved_config_to_its_own_file(tmp_path: Path
     final = read_yaml(m)["config"]["final"]
     assert final["path"] == "config/final.yaml"  # relative, so the run dir stays portable
     dumped = (tmp_path / "config" / "final.yaml").read_text()
-    assert "!class:" in dumped  # the tags live THERE ...
-    assert "!class:" not in m.path.read_text()  # ... and never in the manifest
+    assert "_target_:" in dumped  # the config markers live THERE ...
+    assert "_target_:" not in m.path.read_text()  # ... and never in the manifest
     assert final["sha256"] == hashlib.sha256(dumped.encode()).hexdigest()
 
     params = {k.rsplit(".", 1)[-1]: v for k, v in read_yaml(m)["params"].items()}
