@@ -10,7 +10,7 @@ with 60%+ of each module byte-identical across projects. The shape of the consol
   prediction writing, and the neutral task hooks (:meth:`initialize`,
   :meth:`_prediction_output`, :meth:`_reportable`, :meth:`_report_nonscalars`).
 * **A FAMILY base pins the framework types** — ``matrainer.torch.runnable.TorchTrainerRunnable``
-  stores ``model: Lazy[nn.Module]`` / ``loss_fn: Optional[Lazy[nn.Module]]`` / the
+  stores ``model: Partial[nn.Module]`` / ``loss_fn: Optional[Partial[nn.Module]]`` / the
   ``MetricsSpec`` quartet and declares the torch-typed hooks (``_targets -> Tensor``, the
   metric builders); the keras family base (`matrainer.keras.runnable.KerasTrainerRunnable`)
   does the same with keras types. NOTHING user-facing is
@@ -32,7 +32,7 @@ and matrainer's own tracking surface, never torch/keras/jax.
 from abc import ABC, abstractmethod
 from typing import Any, ClassVar, Iterable, List, Mapping, Optional, Union, cast
 
-from confluid import Lazy, configurable
+from confluid import Partial, configurable
 from loggair import get_logger
 from recordstream import PredictionsSink, RecordSource, batch_metadata, per_record_predictions, prepare_record_dataset
 from recordstream.runnable import ProgressReporting, RunnableTask, entrypoint, run_entrypoint
@@ -47,7 +47,7 @@ __all__ = ["TrainerRunnable"]
 
 
 # `@configurable` on an ABSTRACT base is the established pattern (`Tracker` is one): the mark is
-# what makes confluid's `__init__`-BODY scans (broadcast accept-list, `lazy_param_names`,
+# what makes confluid's `__init__`-BODY scans (broadcast accept-list, `partial_param_names`,
 # `to_pydantic`'s body-slot fields) walk this class in a concrete subclass's MRO — without it the
 # shared slots below would silently vanish from every form-spec. `validate=False` because the
 # keyword-only cooperative constructor is machinery, not a config surface (the CONCRETE class's
@@ -84,7 +84,7 @@ class TrainerRunnable(ProgressReporting, ABC):
     log_label: ClassVar[str] = "matrainer"
 
     #: The task model slot — DECLARED here (the name is universal) but STORED and TYPED by the
-    #: framework family base: `Lazy[nn.Module]` in the torch family, a keras model in that one.
+    #: framework family base: `Partial[nn.Module]` in the torch family, a keras model in that one.
     #: `Any` is the sanctioned strictly-needed case (workspace mandate): the neutral base cannot
     #: name a framework type, and a task base's torch-free half still reads/flows the slot.
     model: Any
@@ -97,37 +97,37 @@ class TrainerRunnable(ProgressReporting, ABC):
     def __init__(
         self,
         *,
-        train_set: Optional[Lazy[RecordSource]] = None,
-        test_set: Optional[Lazy[RecordSource]] = None,
+        train_set: Optional[Partial[RecordSource]] = None,
+        test_set: Optional[Partial[RecordSource]] = None,
         task: RunnableTask = "fit",
         max_epochs: int = 10,
-        trackers: Optional[Union[Lazy[Tracker], Iterable[Lazy[Tracker]]]] = None,
+        trackers: Optional[Union[Partial[Tracker], Iterable[Partial[Tracker]]]] = None,
         experiment_name: str = "matrainer",
         run_name: Optional[str] = None,
         input_key: str = "image",
         target_key: str = "target",
-        metric_names: Optional[Lazy[MetricNames]] = None,
+        metric_names: Optional[Partial[MetricNames]] = None,
     ) -> None:
         # Cooperative FIRST: a torch-family concrete has `nn.Module`/`LightningModule` further
         # down the MRO, and torch forbids attribute assignment before its own __init__ ran.
         super().__init__()
-        self.train_set: Optional[Lazy[RecordSource]] = train_set
-        self.val_set: Optional[Lazy[RecordSource]] = None
-        self.test_set: Optional[Lazy[RecordSource]] = test_set
+        self.train_set: Optional[Partial[RecordSource]] = train_set
+        self.val_set: Optional[Partial[RecordSource]] = None
+        self.test_set: Optional[Partial[RecordSource]] = test_set
         self.task: RunnableTask = task
         self.max_epochs = max_epochs
         self.experiment_name = experiment_name
         self.run_name = run_name if run_name is not None else generate_run_name(prefix=run_prefix(task))
         self.input_key = str(input_key)
         self.target_key = str(target_key)
-        self.predictions_sink: Optional[Lazy[PredictionsSink]] = None
+        self.predictions_sink: Optional[Partial[PredictionsSink]] = None
         self.metrics_sidecar_path: Optional[str] = None
         # Stored VERBATIM: may hold a single tracker, a list, or deferred Fluid markers;
         # `_live_trackers()` normalizes + flows at run time, writing back.
-        self.trackers: Optional[Union[Lazy[Tracker], Iterable[Lazy[Tracker]]]] = trackers
+        self.trackers: Optional[Union[Partial[Tracker], Iterable[Partial[Tracker]]]] = trackers
         # Stored VERBATIM for the same reason: wired from YAML it arrives as a deferred marker,
         # built where the metrics are reported.
-        self.metric_names: Optional[Lazy[MetricNames]] = metric_names
+        self.metric_names: Optional[Partial[MetricNames]] = metric_names
 
     # ---- run dispatch --------------------------------------------------------------------- #
     def _require_model(self) -> None:
@@ -259,7 +259,7 @@ class TrainerRunnable(ProgressReporting, ABC):
         self.trackers = flow_trackers(self.trackers)
         return cast(List[Tracker], self.trackers)
 
-    def _prepare(self, source: Optional[Lazy[RecordSource]]) -> Optional[Any]:
+    def _prepare(self, source: Optional[Partial[RecordSource]]) -> Optional[Any]:
         """Normalize a wired source's TYPE and its STATE, in THIS process (fork safety).
 
         Delegates to :func:`recordstream.prepare_record_dataset`; a method so a task can opt

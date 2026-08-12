@@ -20,7 +20,7 @@ from typing import Any, Callable, Dict, Iterable, List, Optional, Union, cast
 import pytorch_lightning as L
 import torch
 import torch.nn as nn
-from confluid import Lazy, LazyClass, configurable, flow, output
+from confluid import Partial, PartialClass, configurable, flow, output
 from loggair import get_logger
 from recordstream import RecordSource, batch_tensor, collate_records, ensure_record_dataset
 from recordstream.items import Record
@@ -71,14 +71,14 @@ class LightningRunnable(TorchTrainerRunnable, L.LightningModule):
     def __init__(
         self,
         *,
-        model: Optional[Lazy[nn.Module]] = None,
-        train_set: Optional[Lazy[RecordSource]] = None,
-        test_set: Optional[Lazy[RecordSource]] = None,
+        model: Optional[Partial[nn.Module]] = None,
+        train_set: Optional[Partial[RecordSource]] = None,
+        test_set: Optional[Partial[RecordSource]] = None,
         task: RunnableTask = "fit",
         max_epochs: int = 10,
         batch_size: int = 32,
         num_workers: int = 0,
-        trackers: Optional[Union[Lazy[Tracker], Iterable[Lazy[Tracker]]]] = None,
+        trackers: Optional[Union[Partial[Tracker], Iterable[Partial[Tracker]]]] = None,
         experiment_name: str = "matrainer",
         run_name: Optional[str] = None,
         input_key: str = "image",
@@ -87,7 +87,7 @@ class LightningRunnable(TorchTrainerRunnable, L.LightningModule):
         train_metrics: MetricsSpec = None,
         val_metrics: MetricsSpec = None,
         test_metrics: MetricsSpec = None,
-        metric_names: Optional[Lazy[MetricNames]] = None,
+        metric_names: Optional[Partial[MetricNames]] = None,
         collate_fn: Callable[[List[Record]], Record] = collate_records,
     ) -> None:
         super().__init__(
@@ -107,19 +107,19 @@ class LightningRunnable(TorchTrainerRunnable, L.LightningModule):
             test_metrics=test_metrics,
             metric_names=metric_names,
         )
-        # Deferred runtime slots — `Lazy[T]` DECLARES that the run methods flow this later,
+        # Deferred runtime slots — `Partial[T]` DECLARES that the run methods flow this later,
         # usually with a kwarg that does not exist yet (`params=self.parameters()`,
-        # `dataset=`). Deferral is enforced by the slot holding a `LazyClass` value; the
+        # `dataset=`). Deferral is enforced by the slot holding a `PartialClass` value; the
         # annotation gives `to_pydantic` a real type for form-specs/widgets.
-        self.optimizer: Lazy[Optimizer] = LazyClass(torch.optim.AdamW, lr=1e-4, weight_decay=0.05)
+        self.optimizer: Partial[Optimizer] = PartialClass(torch.optim.AdamW, lr=1e-4, weight_decay=0.05)
         slots = loader_slots(batch_size, num_workers, collate_fn=collate_fn)
-        self.train_loader: Lazy[DataLoader[Any]] = slots.train
-        self.val_loader: Lazy[DataLoader[Any]] = slots.val
-        self.test_loader: Lazy[DataLoader[Any]] = slots.test
+        self.train_loader: Partial[DataLoader[Any]] = slots.train
+        self.val_loader: Partial[DataLoader[Any]] = slots.val
+        self.test_loader: Partial[DataLoader[Any]] = slots.test
         # No `logger=` here: the trackers ARE the metric sinks, adapted to Lightning's logger
         # interface in `_build_trainer` (a Tracker may still be a deferred Fluid at this
         # point, so the adapter is built at run time, not now).
-        self.lightning: Lazy[L.Trainer] = LazyClass(L.Trainer, max_epochs=max_epochs)
+        self.lightning: Partial[L.Trainer] = PartialClass(L.Trainer, max_epochs=max_epochs)
         self.log_system_metrics: bool = True
 
     def forward(self, x: Tensor) -> Tensor:

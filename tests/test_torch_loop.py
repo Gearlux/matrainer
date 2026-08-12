@@ -17,7 +17,7 @@ pytest.importorskip("torch")
 
 import torch  # noqa: E402
 import torch.nn as nn  # noqa: E402
-from confluid import LazyClass, flow  # noqa: E402
+from confluid import PartialClass, flow  # noqa: E402
 from recordstream import Stream, batch_tensor  # noqa: E402
 from torchmetrics import MetricCollection  # noqa: E402
 from torchmetrics.regression import MeanAbsoluteError  # noqa: E402
@@ -51,7 +51,7 @@ class _MiniRestorer(TorchLoopRunnable):
         return nn.MSELoss()
 
     def _default_metrics(self) -> MetricsSpec:
-        return {"mae": LazyClass(MeanAbsoluteError)}
+        return {"mae": PartialClass(MeanAbsoluteError)}
 
     def _prediction_output(self, preds: Any) -> Dict[str, Any]:
         return {"restored": preds}

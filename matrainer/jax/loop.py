@@ -38,7 +38,7 @@ import jax
 import jax.numpy as jnp
 import numpy as np
 import optax
-from confluid import Lazy, configurable, flow, output
+from confluid import Partial, configurable, flow, output
 from flax import nnx
 from loggair import get_logger
 from recordstream import PredictionsSink, RecordSource, batch_values
@@ -142,9 +142,9 @@ class JaxLoopRunnable(TrainerRunnable):
     def __init__(
         self,
         *,
-        model: Optional[Lazy[nnx.Module]] = None,
-        train_set: Optional[Lazy[RecordSource]] = None,
-        test_set: Optional[Lazy[RecordSource]] = None,
+        model: Optional[Partial[nnx.Module]] = None,
+        train_set: Optional[Partial[RecordSource]] = None,
+        test_set: Optional[Partial[RecordSource]] = None,
         task: RunnableTask = "fit",
         max_epochs: int = 10,
         batch_size: int = 32,
@@ -158,13 +158,13 @@ class JaxLoopRunnable(TrainerRunnable):
         train_metrics: Any = None,
         val_metrics: Any = None,
         test_metrics: Any = None,
-        trackers: Optional[Union[Lazy[Tracker], Iterable[Lazy[Tracker]]]] = None,
-        callbacks: Optional[List[Lazy[EpochCallback]]] = None,
+        trackers: Optional[Union[Partial[Tracker], Iterable[Partial[Tracker]]]] = None,
+        callbacks: Optional[List[Partial[EpochCallback]]] = None,
         experiment_name: str = "matrainer",
         run_name: Optional[str] = None,
         input_key: str = "image",
         target_key: str = "target",
-        metric_names: Optional[Lazy[MetricNames]] = None,
+        metric_names: Optional[Partial[MetricNames]] = None,
     ) -> None:
         super().__init__(
             train_set=train_set,
@@ -180,7 +180,7 @@ class JaxLoopRunnable(TrainerRunnable):
         )
         # The slot keeps the consumer-visible type: concrete ctors mark the param Mandatory,
         # so a bare None only comes from the base's own zero-arg construction.
-        self.model: Lazy[nnx.Module] = cast(Lazy[nnx.Module], model)
+        self.model: Partial[nnx.Module] = cast(Partial[nnx.Module], model)
         self.batch_size = batch_size
         self.learning_rate = float(learning_rate)
         self.optimizer: JaxOptimizer = optimizer
@@ -193,7 +193,7 @@ class JaxLoopRunnable(TrainerRunnable):
         self.val_metrics: Any = val_metrics
         self.test_metrics: Any = test_metrics
         # Stored VERBATIM (lazy-init): entries may be deferred markers, flowed where used.
-        self.callbacks: Optional[List[Lazy[EpochCallback]]] = callbacks
+        self.callbacks: Optional[List[Partial[EpochCallback]]] = callbacks
         self._history: Dict[str, List[float]] = {}
         self._computed_metrics: Dict[str, float] = {}
 

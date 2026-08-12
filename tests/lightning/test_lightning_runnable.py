@@ -17,7 +17,7 @@ pytest.importorskip("pytorch_lightning")
 import pytorch_lightning as L  # noqa: E402
 import torch  # noqa: E402
 import torch.nn as nn  # noqa: E402
-from confluid import LazyClass, flow  # noqa: E402
+from confluid import PartialClass, flow  # noqa: E402
 from recordstream import Stream, batch_tensor  # noqa: E402
 from torchmetrics import MetricCollection  # noqa: E402
 from torchmetrics.regression import MeanAbsoluteError  # noqa: E402
@@ -36,7 +36,7 @@ class _MiniRestorer(LightningRunnable):
         self.after_fit_calls: List[Any] = []
         # A fast, quiet Trainer for the suite; a consumer's config replaces this slot the
         # same way (whole-value), which is the override path the loaders test pins too.
-        self.lightning = LazyClass(
+        self.lightning = PartialClass(
             L.Trainer,
             max_epochs=1,
             accelerator="cpu",
@@ -63,7 +63,7 @@ class _MiniRestorer(LightningRunnable):
         return nn.MSELoss()
 
     def _default_metrics(self) -> MetricsSpec:
-        return {"mae": LazyClass(MeanAbsoluteError)}
+        return {"mae": PartialClass(MeanAbsoluteError)}
 
     def _prediction_output(self, preds: Any) -> Dict[str, Any]:
         # The task's prediction CONTRACT (a real task returns restoration_output & friends);

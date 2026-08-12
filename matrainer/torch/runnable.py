@@ -5,7 +5,7 @@
 (``matrainer.lightning.LightningRunnable``, the bare-torch loop, the fastai ``Learner`` base,
 the ``transformers.Trainer`` one — every engine that trains a ``torch.nn.Module`` against
 torchmetrics). It exists so nothing user-facing is typed ``Any``: the model slot is
-``Lazy[nn.Module]``, the loss ``Optional[Lazy[nn.Module]]``, the four metric slots
+``Partial[nn.Module]``, the loss ``Optional[Partial[nn.Module]]``, the four metric slots
 ``MetricsSpec``, ``_targets`` returns a ``Tensor`` — types the neutral base cannot name
 without importing a framework. A keras family base mirrors this with keras types.
 
@@ -22,7 +22,7 @@ from typing import Any, Dict, Iterable, Optional, Union, cast
 
 import torch
 import torch.nn as nn
-from confluid import Fluid, Lazy, configurable, output
+from confluid import Fluid, Partial, configurable, output
 from loggair import get_logger
 from recordstream import RecordSource
 from recordstream.items import Record
@@ -60,12 +60,12 @@ class TorchTrainerRunnable(TrainerRunnable, TorchRunner):
     def __init__(
         self,
         *,
-        model: Optional[Lazy[nn.Module]] = None,
-        train_set: Optional[Lazy[RecordSource]] = None,
-        test_set: Optional[Lazy[RecordSource]] = None,
+        model: Optional[Partial[nn.Module]] = None,
+        train_set: Optional[Partial[RecordSource]] = None,
+        test_set: Optional[Partial[RecordSource]] = None,
         task: RunnableTask = "fit",
         max_epochs: int = 10,
-        trackers: Optional[Union[Lazy[Tracker], Iterable[Lazy[Tracker]]]] = None,
+        trackers: Optional[Union[Partial[Tracker], Iterable[Partial[Tracker]]]] = None,
         experiment_name: str = "matrainer",
         run_name: Optional[str] = None,
         input_key: str = "image",
@@ -74,7 +74,7 @@ class TorchTrainerRunnable(TrainerRunnable, TorchRunner):
         train_metrics: MetricsSpec = None,
         val_metrics: MetricsSpec = None,
         test_metrics: MetricsSpec = None,
-        metric_names: Optional[Lazy[MetricNames]] = None,
+        metric_names: Optional[Partial[MetricNames]] = None,
     ) -> None:
         super().__init__(
             train_set=train_set,
@@ -88,15 +88,15 @@ class TorchTrainerRunnable(TrainerRunnable, TorchRunner):
             target_key=target_key,
             metric_names=metric_names,
         )
-        # The slot keeps the CONSUMER-visible type (`Lazy[nn.Module]`, as every concrete class
+        # The slot keeps the CONSUMER-visible type (`Partial[nn.Module]`, as every concrete class
         # declared it): the concrete constructors mark the param `Mandatory`, so a bare `None`
         # only ever comes from the base's own zero-arg construction — hence the cast rather
         # than an `Optional` that would force a None-check on every downstream read.
-        self.model: Lazy[nn.Module] = cast(Lazy[nn.Module], model)
+        self.model: Partial[nn.Module] = cast(Partial[nn.Module], model)
         # Sentinel: `None` means "not chosen" — a live default could not be told apart from a
         # user's explicit choice; `_resolve_task_defaults()` fills it via the task hooks.
-        # `Lazy[...]`: a `!class:` loss stays a deferred marker until the run flows it.
-        self.loss_fn: Optional[Lazy[nn.Module]] = None
+        # `Partial[...]`: a `!class:` loss stays a deferred marker until the run flows it.
+        self.loss_fn: Optional[Partial[nn.Module]] = None
         # Per-split slots, each dual-purpose: they hold that split's metrics SPEC until the
         # builders below run, and the live prefixed `MetricCollection` after. The ATTRIBUTES are
         # `Any` deliberately (the sanctioned strictly-needed case): the spec→collection state

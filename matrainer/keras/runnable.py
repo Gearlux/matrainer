@@ -6,7 +6,7 @@ TorchTrainerRunnable`: the layer between the framework-neutral API
 compile/fit member (:class:`matrainer.keras.trainer.KerasRunnable`) and the native-TensorFlow
 loop (``matrainer.tensorflow.loop.TensorFlowRunnable``), which are SIBLINGS sharing only this
 layer. It exists so nothing user-facing is typed ``Any``: the model slot is
-``Lazy[keras.Model]``, the compile slots are the :data:`KerasLoss` / :data:`KerasMetric` /
+``Partial[keras.Model]``, the compile slots are the :data:`KerasLoss` / :data:`KerasMetric` /
 :data:`KerasOptimizer` aliases (a live object, the string alias Keras resolves, or a deferred
 marker — spelled out because ``Any`` types nothing and gives ``to_pydantic`` nothing to build a
 widget from).
@@ -43,7 +43,7 @@ from pathlib import Path
 from typing import Any, Dict, Iterable, List, Optional, Sequence, Union, cast
 
 import numpy as np
-from confluid import Fluid, Lazy, configurable, flow, output
+from confluid import Fluid, Partial, configurable, flow, output
 from loggair import get_logger
 from recordstream import RecordSource, batch_values
 from recordstream.keras import RecordSequence, keras, keras_backend
@@ -59,7 +59,7 @@ logger = get_logger(__name__)
 __all__ = ["KerasLoss", "KerasMetric", "KerasOptimizer", "KerasTrainerRunnable", "keras_backend"]
 
 #: A Keras loss: a live object or the string alias (``"mae"``) Keras resolves. Wired from YAML
-#: a nested ``!class:`` arrives as a deferred marker — the ``Lazy[...]`` on the slot declares
+#: a nested ``!class:`` arrives as a deferred marker — the ``Partial[...]`` on the slot declares
 #: that — and is flowed at USE (compile / step build).
 KerasLoss = Union[str, keras.losses.Loss]
 
@@ -93,25 +93,25 @@ class KerasTrainerRunnable(TrainerRunnable):
     def __init__(
         self,
         *,
-        model: Optional[Lazy["keras.Model"]] = None,
-        train_set: Optional[Lazy[RecordSource]] = None,
-        test_set: Optional[Lazy[RecordSource]] = None,
+        model: Optional[Partial["keras.Model"]] = None,
+        train_set: Optional[Partial[RecordSource]] = None,
+        test_set: Optional[Partial[RecordSource]] = None,
         task: RunnableTask = "fit",
         max_epochs: int = 10,
         batch_size: int = 32,
-        trackers: Optional[Union[Lazy[Tracker], Iterable[Lazy[Tracker]]]] = None,
-        callbacks: Optional[List[Lazy["keras.callbacks.Callback"]]] = None,
+        trackers: Optional[Union[Partial[Tracker], Iterable[Partial[Tracker]]]] = None,
+        callbacks: Optional[List[Partial["keras.callbacks.Callback"]]] = None,
         experiment_name: str = "matrainer",
         run_name: Optional[str] = None,
         input_key: str = "image",
         target_key: str = "target",
-        optimizer: Lazy[KerasOptimizer] = "adam",
-        loss: Optional[Lazy[KerasLoss]] = None,
-        metrics: Optional[List[Lazy[KerasMetric]]] = None,
-        train_metrics: Optional[List[Lazy[KerasMetric]]] = None,
-        val_metrics: Optional[List[Lazy[KerasMetric]]] = None,
-        test_metrics: Optional[List[Lazy[KerasMetric]]] = None,
-        metric_names: Optional[Lazy[MetricNames]] = None,
+        optimizer: Partial[KerasOptimizer] = "adam",
+        loss: Optional[Partial[KerasLoss]] = None,
+        metrics: Optional[List[Partial[KerasMetric]]] = None,
+        train_metrics: Optional[List[Partial[KerasMetric]]] = None,
+        val_metrics: Optional[List[Partial[KerasMetric]]] = None,
+        test_metrics: Optional[List[Partial[KerasMetric]]] = None,
+        metric_names: Optional[Partial[MetricNames]] = None,
     ) -> None:
         super().__init__(
             train_set=train_set,
@@ -125,30 +125,30 @@ class KerasTrainerRunnable(TrainerRunnable):
             target_key=target_key,
             metric_names=metric_names,
         )
-        # `keras.Model`, not `Lazy[keras.Model]`: the DEFERRED-ness is declared once, on the
-        # ctor param, which is what `lazy_param_names` / `to_pydantic` read. Restating it here
+        # `keras.Model`, not `Partial[keras.Model]`: the DEFERRED-ness is declared once, on the
+        # ctor param, which is what `partial_param_names` / `to_pydantic` read. Restating it here
         # would make the attribute a union no method could call through.
         self.model: "keras.Model" = cast("keras.Model", model)
         self.batch_size = batch_size
-        self.optimizer: Lazy[KerasOptimizer] = optimizer
+        self.optimizer: Partial[KerasOptimizer] = optimizer
         # Sentinels: a live default could not be told apart from a user's explicit choice, and
         # the right default may depend on a dimension only the task's `initialize` resolves.
-        self.loss: Optional[Lazy[KerasLoss]] = loss
+        self.loss: Optional[Partial[KerasLoss]] = loss
         # The ATTRIBUTES are `Any` (the torch family's precedent, and the sanctioned
         # strictly-needed case): the TYPED config surface is the ctor param above, and one
         # task's base guards `train_metrics` with a property the typed attribute would clash
-        # with. The machinery reads them as the `List[Lazy[KerasMetric]]` the params declare.
+        # with. The machinery reads them as the `List[Partial[KerasMetric]]` the params declare.
         self.metrics: Any = metrics
         self.train_metrics: Any = train_metrics
         self.val_metrics: Any = val_metrics
         self.test_metrics: Any = test_metrics
         # Stored VERBATIM (lazy-init): entries may be deferred markers, flowed where used.
-        self.callbacks: Optional[List[Lazy["keras.callbacks.Callback"]]] = callbacks
+        self.callbacks: Optional[List[Partial["keras.callbacks.Callback"]]] = callbacks
         self._history: Dict[str, List[float]] = {}
         self._computed_metrics: Dict[str, float] = {}
 
     # ---- the keras-typed task hooks -------------------------------------------------------- #
-    def _default_keras_loss(self) -> Optional[Lazy[KerasLoss]]:
+    def _default_keras_loss(self) -> Optional[Partial[KerasLoss]]:
         """The task's default Keras loss, asked once ``initialize`` knows the target shape.
 
         ``None`` (the default) leaves the sentinel unresolved — legitimate while a needed
@@ -156,7 +156,7 @@ class KerasTrainerRunnable(TrainerRunnable):
         """
         return None
 
-    def _default_keras_metrics(self) -> Optional[List[Lazy[KerasMetric]]]:
+    def _default_keras_metrics(self) -> Optional[List[Partial[KerasMetric]]]:
         """The task's default Keras metrics — same contract as :meth:`_default_keras_loss`."""
         return None
 
@@ -196,7 +196,7 @@ class KerasTrainerRunnable(TrainerRunnable):
     def _build_eval_metrics(self) -> None:
         """Deliberate NO-OP — see :meth:`_build_fit_metrics`."""
 
-    def _compiled_metrics(self) -> Sequence[Lazy[KerasMetric]]:
+    def _compiled_metrics(self) -> Sequence[Partial[KerasMetric]]:
         """The ONE metric list a compiled model can compute — the UNION of the four slots.
 
         ``keras.Model.compile`` takes a single list and reports it on training AND validation

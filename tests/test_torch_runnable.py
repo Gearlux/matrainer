@@ -12,7 +12,7 @@ import pytest
 torch = pytest.importorskip("torch")
 
 import torch.nn as nn  # noqa: E402
-from confluid import Fluid, LazyClass  # noqa: E402
+from confluid import Fluid, PartialClass  # noqa: E402
 from torchmetrics import MetricCollection  # noqa: E402
 from torchmetrics.classification import MulticlassAccuracy, MulticlassConfusionMatrix  # noqa: E402
 
@@ -51,7 +51,7 @@ class _WithDefaults(_Stub):
         return nn.CrossEntropyLoss()
 
     def _default_metrics(self) -> Any:
-        return {"accuracy": LazyClass(MulticlassAccuracy)}
+        return {"accuracy": PartialClass(MulticlassAccuracy)}
 
     def _metric_flow_dims(self) -> Dict[str, "int | float"]:
         return {"num_classes": 3}
@@ -95,7 +95,7 @@ def test_resolve_task_defaults_fills_the_sentinels_via_the_hooks() -> None:
 def test_a_user_wired_value_is_never_replaced() -> None:
     """That is what the `None` sentinel buys — "not chosen" vs "chosen to be the default"."""
     wired_loss = nn.L1Loss()
-    runnable = _WithDefaults(metrics={"mine": LazyClass(MulticlassAccuracy, num_classes=3)})
+    runnable = _WithDefaults(metrics={"mine": PartialClass(MulticlassAccuracy, num_classes=3)})
     runnable.loss_fn = wired_loss
     runnable._resolve_task_defaults()
     assert runnable.loss_fn is wired_loss and set(runnable.metrics) == {"mine"}
@@ -111,7 +111,7 @@ def test_the_hook_defaults_leave_the_sentinels_unresolved_and_resolution_idempot
 # the metric builders
 # ---------------------------------------------------------------------------
 def test_build_fit_metrics_builds_all_three_prefixed_once() -> None:
-    runnable = _WithDefaults(val_metrics={"confusion": LazyClass(MulticlassConfusionMatrix)})
+    runnable = _WithDefaults(val_metrics={"confusion": PartialClass(MulticlassConfusionMatrix)})
     runnable._resolve_task_defaults()
     runnable._build_fit_metrics()
     assert isinstance(runnable.train_metrics, MetricCollection)
@@ -201,7 +201,7 @@ def test_the_reportable_hook_filters_every_reporting_path(tmp_path: Any) -> None
 def test_trained_model_raises_while_deferred_and_returns_the_live_module() -> None:
     live = nn.Identity()
     assert _Stub(model=live).trained_model is live
-    deferred = _Stub(model=LazyClass(nn.Identity))
+    deferred = _Stub(model=PartialClass(nn.Identity))
     assert isinstance(deferred.model, Fluid)
     with pytest.raises(RuntimeError, match="still a deferred Fluid"):
         _ = deferred.trained_model

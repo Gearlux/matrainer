@@ -22,7 +22,7 @@ import inspect
 from collections.abc import Mapping
 from typing import Any, Callable, Dict, Optional, Union
 
-from confluid import LazyClass, configurable, flow
+from confluid import PartialClass, configurable, flow
 from confluid.fluid import Fluid
 from loggair import get_logger
 from torch import Tensor
@@ -37,7 +37,7 @@ logger = get_logger(__name__)
 #: Named ONCE here because four slots per runnable share it across every torch-family backend
 #: and `to_pydantic` reads the annotation for form-specs / widget generation — it was declared
 #: verbatim in eight-plus consumer modules before the 2026-08-06 consolidation.
-MetricsSpec = Optional[Union[Dict[str, Union[Metric, LazyClass[Metric]]], MetricCollection]]
+MetricsSpec = Optional[Union[Dict[str, Union[Metric, PartialClass[Metric]]], MetricCollection]]
 
 
 def _declares(target: Any, key: str) -> bool:
@@ -95,7 +95,7 @@ def build_metric_collection(metrics: Any, **flow_dims: Any) -> MetricCollection:
 
     * **MetricCollection** — returned as-is.
     * **Mapping** ``{name: template}`` — each value flowed with ``flow_dims``, keyed by name.
-    * **a single metric OR a list/tuple** — each a live ``Metric``, a ``LazyClass``/``Fluid``
+    * **a single metric OR a list/tuple** — each a live ``Metric``, a ``PartialClass``/``Fluid``
       template, or a metric class; flowed with ``flow_dims`` and wrapped (auto-named by class).
       This lets a single metric node (including its deferred ``class`` output) wire into the slot
       and size itself off the model head at run time.

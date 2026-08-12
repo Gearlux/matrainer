@@ -13,7 +13,7 @@ metrics hook, the loss seam, detection's own decode+torchmetrics scoring path).
 Four engine facts the whole family encodes:
 
 * **The transformers objects are DEFERRED SLOTS with STRING dotted targets** —
-  ``LazyClass("transformers.TrainingArguments")`` / ``("transformers.Trainer")`` — so this
+  ``PartialClass("transformers.TrainingArguments")`` / ``("transformers.Trainer")`` — so this
   module has no top-level ``import transformers`` (the methods that need it import it in
   their bodies) and a config reaches every knob they take (~100 on ``TrainingArguments``
   alone) without one of them becoming a matrainer param.
@@ -42,7 +42,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any, Dict, Iterable, List, Literal, Optional, Sequence, Union, cast
 
 import torch
-from confluid import Lazy, LazyClass, configurable, flow, output
+from confluid import Partial, PartialClass, configurable, flow, output
 from loggair import get_logger
 from recordstream import PredictionsSink, RecordSource, batch_tensor, collate_records
 from recordstream.runnable import RunnableTask
@@ -107,9 +107,9 @@ class HuggingFaceRunnable(TorchTrainerRunnable):
     def __init__(
         self,
         *,
-        model: Optional[Lazy[Any]] = None,
-        train_set: Optional[Lazy[RecordSource]] = None,
-        test_set: Optional[Lazy[RecordSource]] = None,
+        model: Optional[Partial[Any]] = None,
+        train_set: Optional[Partial[RecordSource]] = None,
+        test_set: Optional[Partial[RecordSource]] = None,
         task: RunnableTask = "fit",
         max_epochs: int = 10,
         batch_size: int = 8,
@@ -118,7 +118,7 @@ class HuggingFaceRunnable(TorchTrainerRunnable):
         weight_decay: float = 0.0,
         report_to: str = "none",
         output_dir: Optional[str] = None,
-        trackers: Optional[Union[Lazy[Tracker], Iterable[Lazy[Tracker]]]] = None,
+        trackers: Optional[Union[Partial[Tracker], Iterable[Partial[Tracker]]]] = None,
         callbacks: Optional[List[HuggingFaceCallback]] = None,
         experiment_name: str = "matrainer",
         run_name: Optional[str] = None,
@@ -130,7 +130,7 @@ class HuggingFaceRunnable(TorchTrainerRunnable):
         metrics: Any = None,
         val_metrics: Any = None,
         test_metrics: Any = None,
-        metric_names: Optional[Lazy[MetricNames]] = None,
+        metric_names: Optional[Partial[MetricNames]] = None,
     ) -> None:
         super().__init__(
             model=model,
@@ -161,11 +161,11 @@ class HuggingFaceRunnable(TorchTrainerRunnable):
         # The transformers objects are DEFERRED SLOTS with STRING dotted targets (module
         # docstring). `training_arguments` is EMPTY on purpose — every derived knob is a
         # run-time FLOOR in `_training_arguments()`, so a config override ADDS to them.
-        self.training_arguments: Lazy["TrainingArguments"] = LazyClass("transformers.TrainingArguments")
-        self.trainer: Lazy["Trainer"] = LazyClass("transformers.Trainer")
+        self.training_arguments: Partial["TrainingArguments"] = PartialClass("transformers.TrainingArguments")
+        self.trainer: Partial["Trainer"] = PartialClass("transformers.Trainer")
         # The record-dict loader `predict` walks: prediction pairs each output row with the
         # metadata that travelled beside the image, which `_to_hf_batch` has already dropped.
-        self.test_loader: Lazy[DataLoader[Any]] = LazyClass(
+        self.test_loader: Partial[DataLoader[Any]] = PartialClass(
             DataLoader,
             batch_size=batch_size,
             shuffle=False,

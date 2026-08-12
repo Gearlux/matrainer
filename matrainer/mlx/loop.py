@@ -30,7 +30,7 @@ import mlx.core as mx
 import mlx.nn as nn
 import mlx.optimizers
 import numpy as np
-from confluid import Lazy, configurable, flow, output
+from confluid import Partial, configurable, flow, output
 from loggair import get_logger
 from recordstream import PredictionsSink, RecordSource, batch_values
 from recordstream.keras import RecordSequence
@@ -127,9 +127,9 @@ class MlxLoopRunnable(TrainerRunnable):
     def __init__(
         self,
         *,
-        model: Optional[Lazy[nn.Module]] = None,
-        train_set: Optional[Lazy[RecordSource]] = None,
-        test_set: Optional[Lazy[RecordSource]] = None,
+        model: Optional[Partial[nn.Module]] = None,
+        train_set: Optional[Partial[RecordSource]] = None,
+        test_set: Optional[Partial[RecordSource]] = None,
         task: RunnableTask = "fit",
         max_epochs: int = 10,
         batch_size: int = 32,
@@ -142,13 +142,13 @@ class MlxLoopRunnable(TrainerRunnable):
         train_metrics: Any = None,
         val_metrics: Any = None,
         test_metrics: Any = None,
-        trackers: Optional[Union[Lazy[Tracker], Iterable[Lazy[Tracker]]]] = None,
-        callbacks: Optional[List[Lazy[EpochCallback]]] = None,
+        trackers: Optional[Union[Partial[Tracker], Iterable[Partial[Tracker]]]] = None,
+        callbacks: Optional[List[Partial[EpochCallback]]] = None,
         experiment_name: str = "matrainer",
         run_name: Optional[str] = None,
         input_key: str = "image",
         target_key: str = "target",
-        metric_names: Optional[Lazy[MetricNames]] = None,
+        metric_names: Optional[Partial[MetricNames]] = None,
     ) -> None:
         super().__init__(
             train_set=train_set,
@@ -162,7 +162,7 @@ class MlxLoopRunnable(TrainerRunnable):
             target_key=target_key,
             metric_names=metric_names,
         )
-        self.model: Lazy[nn.Module] = cast(Lazy[nn.Module], model)
+        self.model: Partial[nn.Module] = cast(Partial[nn.Module], model)
         self.batch_size = batch_size
         self.learning_rate = float(learning_rate)
         self.optimizer: MlxOptimizer = optimizer
@@ -171,7 +171,7 @@ class MlxLoopRunnable(TrainerRunnable):
         self.train_metrics: Any = train_metrics
         self.val_metrics: Any = val_metrics
         self.test_metrics: Any = test_metrics
-        self.callbacks: Optional[List[Lazy[EpochCallback]]] = callbacks
+        self.callbacks: Optional[List[Partial[EpochCallback]]] = callbacks
         self._history: Dict[str, List[float]] = {}
         self._computed_metrics: Dict[str, float] = {}
 
@@ -292,7 +292,7 @@ class MlxLoopRunnable(TrainerRunnable):
             result, grads = step(network, *arrays)
             loss, outputs = result if isinstance(result, tuple) else (result, None)
             optimizer.update(network, grads)
-            # Lazy arrays: NOTHING has computed until here — evaluating the parameters, the
+            # Partial arrays: NOTHING has computed until here — evaluating the parameters, the
             # optimizer state and the loss per step keeps the graph from growing unboundedly,
             # and omitting it does NOT raise.
             mx.eval(network.parameters(), optimizer.state, loss)
