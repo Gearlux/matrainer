@@ -790,7 +790,7 @@ from matrainer.torch import build_metric_collection, resolve_device, scalar_metr
 
 device = resolve_device("auto")                   # cuda -> mps -> cpu, whichever is present
 
-base = build_metric_collection({"accuracy": LazyClass(MulticlassAccuracy)}, num_classes=10)
+base = build_metric_collection({"accuracy": PartialClass(MulticlassAccuracy)}, num_classes=10)
 train_metrics, val_metrics = base.clone(prefix="train/"), base.clone(prefix="val/")
 ...
 final = scalar_metrics(val_metrics.compute())     # {"val/accuracy": 0.94}
