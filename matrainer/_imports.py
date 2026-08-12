@@ -1,4 +1,4 @@
-"""Lazy optional-dependency import helper.
+"""Partial optional-dependency import helper.
 
 Matrainer's core install is deliberately light — the tracking backends and the
 per-framework training subpackages pull heavy libraries (``mlflow``, ``wandb``,

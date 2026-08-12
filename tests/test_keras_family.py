@@ -21,7 +21,7 @@ import pytest
 
 keras = pytest.importorskip("keras")
 
-from confluid import Lazy  # noqa: E402
+from confluid import Partial  # noqa: E402
 
 from matrainer.keras.runnable import KerasLoss, KerasMetric, KerasTrainerRunnable  # noqa: E402
 from matrainer.keras.trainer import KerasRunnable  # noqa: E402
@@ -34,10 +34,10 @@ from matrainer.keras.trainer import KerasRunnable  # noqa: E402
 class _Hooked(KerasTrainerRunnable):
     """A minimal task-hooks stand-in over the family base."""
 
-    def _default_keras_loss(self) -> Optional[Lazy[KerasLoss]]:
+    def _default_keras_loss(self) -> Optional[Partial[KerasLoss]]:
         return keras.losses.MeanAbsoluteError()
 
-    def _default_keras_metrics(self) -> Optional[List[Lazy[KerasMetric]]]:
+    def _default_keras_metrics(self) -> Optional[List[Partial[KerasMetric]]]:
         return [keras.metrics.MeanSquaredError(name="mse")]
 
     # The abstract entry points, never driven here.
@@ -76,10 +76,10 @@ def test_an_unanswered_hook_leaves_the_sentinel_for_a_later_ask() -> None:
     """A task hook may need a dimension `initialize` has not resolved yet — `None` stays."""
 
     class _Unanswered(_Hooked):
-        def _default_keras_loss(self) -> Optional[Lazy[KerasLoss]]:
+        def _default_keras_loss(self) -> Optional[Partial[KerasLoss]]:
             return None
 
-        def _default_keras_metrics(self) -> Optional[List[Lazy[KerasMetric]]]:
+        def _default_keras_metrics(self) -> Optional[List[Partial[KerasMetric]]]:
             return None
 
     runnable = _Unanswered()

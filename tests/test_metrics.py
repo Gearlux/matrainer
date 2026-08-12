@@ -121,20 +121,20 @@ class TestMetricPreset:
 
 # ---------------------------------------------------------------------------
 # build_metric_collection — normalizes any metrics spec into a MetricCollection.
-# A single metric (incl. a deferred LazyClass from a StreamStudio metric node's
+# A single metric (incl. a deferred PartialClass from a StreamStudio metric node's
 # `class` output) must work, not just a dict / ready-made collection.
 # ---------------------------------------------------------------------------
 
 
 class TestBuildMetricCollection:
     def test_single_lazy_template_wraps_and_flows_with_dims(self) -> None:
-        # The reported crash: a single LazyClass (a metric node's `class` output) had no `.items()`.
-        from confluid import LazyClass
+        # The reported crash: a single PartialClass (a metric node's `class` output) had no `.items()`.
+        from confluid import PartialClass
         from torchmetrics.classification import MulticlassConfusionMatrix
 
         from matrainer.torch.metrics import build_metric_collection
 
-        mc = build_metric_collection(LazyClass(MulticlassConfusionMatrix), num_classes=10)
+        mc = build_metric_collection(PartialClass(MulticlassConfusionMatrix), num_classes=10)
         assert isinstance(mc, MetricCollection)
         assert list(mc.keys()) == ["MulticlassConfusionMatrix"]
         # The deferred class sized itself off the run-time num_classes (NOT the 0-valued widget).
@@ -147,23 +147,23 @@ class TestBuildMetricCollection:
         assert list(mc.keys()) == ["MulticlassAccuracy"]
 
     def test_list_of_templates_wraps_each(self) -> None:
-        from confluid import LazyClass
+        from confluid import PartialClass
         from torchmetrics.classification import MulticlassConfusionMatrix
 
         from matrainer.torch.metrics import build_metric_collection
 
         mc = build_metric_collection(
-            [LazyClass(MulticlassAccuracy), LazyClass(MulticlassConfusionMatrix)], num_classes=4
+            [PartialClass(MulticlassAccuracy), PartialClass(MulticlassConfusionMatrix)], num_classes=4
         )
         assert set(mc.keys()) == {"MulticlassAccuracy", "MulticlassConfusionMatrix"}
 
     def test_dict_of_templates_still_flows(self) -> None:
-        from confluid import LazyClass
+        from confluid import PartialClass
 
         from matrainer.torch.metrics import build_metric_collection
 
         mc = build_metric_collection(
-            {"acc": LazyClass(MulticlassAccuracy), "f1": LazyClass(MulticlassF1Score, average="macro")},
+            {"acc": PartialClass(MulticlassAccuracy), "f1": PartialClass(MulticlassF1Score, average="macro")},
             num_classes=2,
         )
         assert set(mc.keys()) == {"acc", "f1"}
@@ -176,12 +176,12 @@ class TestBuildMetricCollection:
 
     def test_single_metric_result_clones_per_split(self) -> None:
         # The caller clones with a `test/` prefix; that must work on the single-metric result.
-        from confluid import LazyClass
+        from confluid import PartialClass
         from torchmetrics.classification import MulticlassConfusionMatrix
 
         from matrainer.torch.metrics import build_metric_collection
 
-        mc = build_metric_collection(LazyClass(MulticlassConfusionMatrix), num_classes=5).clone(prefix="test/")
+        mc = build_metric_collection(PartialClass(MulticlassConfusionMatrix), num_classes=5).clone(prefix="test/")
         assert list(mc.keys()) == ["test/MulticlassConfusionMatrix"]
 
 
@@ -201,48 +201,48 @@ class TestSizingKwargs:
 
     def test_a_dimension_the_metric_cannot_take_is_not_passed(self) -> None:
         """``SpectralAngleMapper`` has no ``data_range``; passing one raises inside confluid."""
-        from confluid import LazyClass
+        from confluid import PartialClass
         from torchmetrics.image import SpectralAngleMapper
 
         from matrainer.torch.metrics import build_metric_collection
 
-        mc = build_metric_collection({"sam": LazyClass(SpectralAngleMapper)}, data_range=1.0)
+        mc = build_metric_collection({"sam": PartialClass(SpectralAngleMapper)}, data_range=1.0)
         assert isinstance(mc["sam"], SpectralAngleMapper)
 
     def test_a_dimension_the_metric_requires_still_reaches_it(self) -> None:
         """``PeakSignalNoiseRatio(data_range)`` has NO default — an un-injected template cannot
         even be built, which is torchmetrics deliberately refusing to guess a scale."""
-        from confluid import LazyClass
+        from confluid import PartialClass
         from torchmetrics.image import PeakSignalNoiseRatio
 
         from matrainer.torch.metrics import build_metric_collection
 
-        mc = build_metric_collection({"psnr": LazyClass(PeakSignalNoiseRatio)}, data_range=255.0)
+        mc = build_metric_collection({"psnr": PartialClass(PeakSignalNoiseRatio)}, data_range=255.0)
         assert float(cast(Any, mc["psnr"]).data_range) == 255.0
 
     def test_a_template_that_pins_the_dimension_keeps_its_own_value(self) -> None:
         """The injection is a FLOOR: a runtime kwarg would otherwise OVERRIDE the marker's own,
         making an explicitly-written value unwritable."""
-        from confluid import LazyClass
+        from confluid import PartialClass
         from torchmetrics.image import PeakSignalNoiseRatio
 
         from matrainer.torch.metrics import build_metric_collection
 
-        mc = build_metric_collection({"psnr": LazyClass(PeakSignalNoiseRatio, data_range=2.0)}, data_range=1.0)
+        mc = build_metric_collection({"psnr": PartialClass(PeakSignalNoiseRatio, data_range=2.0)}, data_range=1.0)
         assert float(cast(Any, mc["psnr"]).data_range) == 2.0
 
     def test_a_mixed_collection_builds_whole(self) -> None:
         """The case that motivated this: metrics that take the dimension beside ones that do not."""
-        from confluid import LazyClass
+        from confluid import PartialClass
         from torchmetrics.image import PeakSignalNoiseRatio, SpectralAngleMapper, StructuralSimilarityIndexMeasure
 
         from matrainer.torch.metrics import build_metric_collection
 
         mc = build_metric_collection(
             {
-                "psnr": LazyClass(PeakSignalNoiseRatio),
-                "ssim": LazyClass(StructuralSimilarityIndexMeasure),
-                "sam": LazyClass(SpectralAngleMapper),
+                "psnr": PartialClass(PeakSignalNoiseRatio),
+                "ssim": PartialClass(StructuralSimilarityIndexMeasure),
+                "sam": PartialClass(SpectralAngleMapper),
             },
             data_range=1.0,
         )
@@ -250,11 +250,11 @@ class TestSizingKwargs:
 
     def test_the_classification_dimension_still_propagates(self) -> None:
         """The pre-existing behaviour every other task depends on is unchanged."""
-        from confluid import LazyClass
+        from confluid import PartialClass
 
         from matrainer.torch.metrics import build_metric_collection
 
-        mc = build_metric_collection({"acc": LazyClass(MulticlassAccuracy)}, num_classes=7)
+        mc = build_metric_collection({"acc": PartialClass(MulticlassAccuracy)}, num_classes=7)
         assert mc["acc"].num_classes == 7
 
 

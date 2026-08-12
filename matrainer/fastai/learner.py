@@ -37,7 +37,7 @@ from typing import Any, Callable, Dict, Iterable, List, Optional, Sequence, Tupl
 
 import torch
 import torch.nn as nn
-from confluid import Lazy, LazyClass, configurable, flow
+from confluid import Partial, PartialClass, configurable, flow
 from fastai import metrics as fastai_metrics
 from fastai import optimizer as fastai_optimizer
 
@@ -127,14 +127,14 @@ class FastaiRunnable(TorchTrainerRunnable):
     def __init__(
         self,
         *,
-        model: Optional[Lazy[nn.Module]] = None,
-        train_set: Optional[Lazy[RecordSource]] = None,
-        test_set: Optional[Lazy[RecordSource]] = None,
+        model: Optional[Partial[nn.Module]] = None,
+        train_set: Optional[Partial[RecordSource]] = None,
+        test_set: Optional[Partial[RecordSource]] = None,
         task: RunnableTask = "fit",
         max_epochs: int = 10,
         batch_size: int = 16,
         num_workers: int = 0,
-        trackers: Optional[Union[Lazy[Tracker], Iterable[Lazy[Tracker]]]] = None,
+        trackers: Optional[Union[Partial[Tracker], Iterable[Partial[Tracker]]]] = None,
         experiment_name: str = "matrainer",
         run_name: Optional[str] = None,
         input_key: str = "image",
@@ -143,13 +143,13 @@ class FastaiRunnable(TorchTrainerRunnable):
         train_metrics: Any = None,
         val_metrics: Any = None,
         test_metrics: Any = None,
-        metric_names: Optional[Lazy[MetricNames]] = None,
+        metric_names: Optional[Partial[MetricNames]] = None,
         learning_rate: float = 1e-3,
         weight_decay: Optional[float] = None,
         one_cycle: bool = True,
         opt_func: FastaiOptimizer = "Adam",
-        loss: Optional[Lazy[FastaiLoss]] = None,
-        callbacks: Optional[List[Lazy[FastaiCallback]]] = None,
+        loss: Optional[Partial[FastaiLoss]] = None,
+        callbacks: Optional[List[Partial[FastaiCallback]]] = None,
         collate_fn: Optional[Callable[[List[Record]], Any]] = None,
     ) -> None:
         super().__init__(
@@ -177,30 +177,30 @@ class FastaiRunnable(TorchTrainerRunnable):
         if loss is not None:
             self.loss = loss
         # Stored VERBATIM (lazy-init): entries may be deferred `Fluid` markers, flowed where used.
-        self.callbacks: Optional[List[Lazy[FastaiCallback]]] = callbacks
+        self.callbacks: Optional[List[Partial[FastaiCallback]]] = callbacks
         # The cast: `_to_tuple` returns fastai's positional tuple rather than a Record —
         # deliberate, the whole point of this collate — while `loader_slots` types the
         # record-shaped default.
         slots = loader_slots(
             batch_size, num_workers, collate_fn=cast(Callable[[List[Record]], Any], collate_fn or self._to_tuple)
         )
-        self.train_loader: Lazy[DataLoader[Any]] = slots.train
-        self.val_loader: Lazy[DataLoader[Any]] = slots.val
-        self.test_loader: Lazy[DataLoader[Any]] = slots.test
+        self.train_loader: Partial[DataLoader[Any]] = slots.train
+        self.val_loader: Partial[DataLoader[Any]] = slots.val
+        self.test_loader: Partial[DataLoader[Any]] = slots.test
         # fastai's own two objects, deferred for the same reason the loaders are: everything this
         # base CONSTRUCTS should be reachable from config, or every knob they take and this class
         # does not restate — a `DataLoaders` path, a `Learner`'s `moms` / `splitter` /
         # `model_dir` — is unreachable from YAML. `DataLoaders(*loaders, …)` takes its loaders
         # POSITIONALLY, so `_dataloaders()` supplies them as `flow()`'s positional runtime args.
-        self.dataloaders: Lazy[DataLoaders] = LazyClass(DataLoaders)
-        self.learner: Lazy[Learner] = LazyClass(Learner, lr=self.learning_rate, wd=self.weight_decay)
+        self.dataloaders: Partial[DataLoaders] = PartialClass(DataLoaders)
+        self.learner: Partial[Learner] = PartialClass(Learner, lr=self.learning_rate, wd=self.weight_decay)
         self._computed_metrics: Dict[str, float] = {}
         self._learner: Optional[Learner] = None
         self._device: torch.device = torch.device("cpu")
 
     # ---- the fastai spelling of the family's loss slot ------------------------------------- #
     @property
-    def loss(self) -> Optional[Lazy[FastaiLoss]]:
+    def loss(self) -> Optional[Partial[FastaiLoss]]:
         """The fastai spelling of the family's ``loss_fn`` slot — ONE slot, two names.
 
         fastai configs and the fleet's tests say ``loss:`` (a ``Learner``'s own vocabulary,
@@ -209,10 +209,10 @@ class FastaiRunnable(TorchTrainerRunnable):
         a hook that inspects ``self.loss_fn`` (a weight-capability probe) sees what a config
         wired as ``loss:``.
         """
-        return cast(Optional[Lazy[FastaiLoss]], self.loss_fn)
+        return cast(Optional[Partial[FastaiLoss]], self.loss_fn)
 
     @loss.setter
-    def loss(self, value: Optional[Lazy[FastaiLoss]]) -> None:
+    def loss(self, value: Optional[Partial[FastaiLoss]]) -> None:
         self.loss_fn = cast(Any, value)
 
     @property

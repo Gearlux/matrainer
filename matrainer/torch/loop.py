@@ -27,7 +27,7 @@ from typing import Any, Callable, Dict, Iterable, List, Optional, Union, cast
 
 import torch
 import torch.nn as nn
-from confluid import Lazy, LazyClass, configurable, flow, output
+from confluid import Partial, PartialClass, configurable, flow, output
 from loggair import get_logger
 from recordstream import RecordSource, batch_tensor, collate_records
 from recordstream.items import Record
@@ -78,14 +78,14 @@ class TorchLoopRunnable(TorchTrainerRunnable):
     def __init__(
         self,
         *,
-        model: Optional[Lazy[nn.Module]] = None,
-        train_set: Optional[Lazy[RecordSource]] = None,
-        test_set: Optional[Lazy[RecordSource]] = None,
+        model: Optional[Partial[nn.Module]] = None,
+        train_set: Optional[Partial[RecordSource]] = None,
+        test_set: Optional[Partial[RecordSource]] = None,
         task: RunnableTask = "fit",
         max_epochs: int = 10,
         batch_size: int = 32,
         num_workers: int = 0,
-        trackers: Optional[Union[Lazy[Tracker], Iterable[Lazy[Tracker]]]] = None,
+        trackers: Optional[Union[Partial[Tracker], Iterable[Partial[Tracker]]]] = None,
         experiment_name: str = "matrainer",
         run_name: Optional[str] = None,
         input_key: str = "image",
@@ -94,7 +94,7 @@ class TorchLoopRunnable(TorchTrainerRunnable):
         train_metrics: MetricsSpec = None,
         val_metrics: MetricsSpec = None,
         test_metrics: MetricsSpec = None,
-        metric_names: Optional[Lazy[MetricNames]] = None,
+        metric_names: Optional[Partial[MetricNames]] = None,
         device: Device = "auto",
         checkpoint_dir: Optional[str] = None,
         grad_clip: Optional[float] = None,
@@ -122,10 +122,10 @@ class TorchLoopRunnable(TorchTrainerRunnable):
         self.checkpoint_dir = checkpoint_dir
         self.grad_clip = grad_clip
         slots = loader_slots(batch_size, num_workers, collate_fn=collate_fn)
-        self.train_loader: Lazy[DataLoader[Any]] = slots.train
-        self.val_loader: Lazy[DataLoader[Any]] = slots.val
-        self.test_loader: Lazy[DataLoader[Any]] = slots.test
-        self.optimizer: Lazy[Optimizer] = LazyClass(torch.optim.AdamW, lr=1e-4, weight_decay=0.05)
+        self.train_loader: Partial[DataLoader[Any]] = slots.train
+        self.val_loader: Partial[DataLoader[Any]] = slots.val
+        self.test_loader: Partial[DataLoader[Any]] = slots.test
+        self.optimizer: Partial[Optimizer] = PartialClass(torch.optim.AdamW, lr=1e-4, weight_decay=0.05)
         self._history: Dict[str, List[float]] = {}
         self._computed_metrics: Dict[str, float] = {}
         self._device: torch.device = torch.device("cpu")

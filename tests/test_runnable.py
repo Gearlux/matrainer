@@ -12,7 +12,7 @@ import textwrap
 from typing import Any, List
 
 import pytest
-from confluid import LazyClass
+from confluid import PartialClass
 from recordstream.runnable import entrypoint_tasks, runnable_entrypoints
 
 from matrainer.runnable import TrainerRunnable
@@ -144,7 +144,7 @@ def test_an_incomplete_subclass_cannot_be_instantiated() -> None:
 def test_live_trackers_flows_once_and_writes_back(tmp_path: Any) -> None:
     from matrainer.tracking.csv_backend import CsvTracker
 
-    runnable = _Stub(trackers=LazyClass(CsvTracker, save_dir=str(tmp_path)))
+    runnable = _Stub(trackers=PartialClass(CsvTracker, save_dir=str(tmp_path)))
     live = runnable._live_trackers()
     assert len(live) == 1 and isinstance(live[0], CsvTracker)
     # Written back: the second call returns the SAME object, not a rebuilt one.

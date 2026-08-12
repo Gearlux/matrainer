@@ -148,7 +148,7 @@ def test_a_chain_deeper_than_the_cap_gives_up_rather_than_walking_forever() -> N
 
 def test_a_deferred_marker_is_materialized_before_being_asked() -> None:
     """A `!lazy:` model straight out of a config must answer without a flow() at the call site."""
-    from confluid import LazyClass, configurable
+    from confluid import PartialClass, configurable
 
     @configurable
     class MarkerToy:
@@ -159,7 +159,7 @@ def test_a_deferred_marker_is_materialized_before_being_asked() -> None:
         def model_refs(self) -> List[ModelRef]:
             return [hf_model_ref(self.name)]
 
-    assert model_refs(LazyClass(MarkerToy)) == [hf_model_ref("org/net")]
+    assert model_refs(PartialClass(MarkerToy)) == [hf_model_ref("org/net")]
 
 
 def test_asking_a_live_model_does_not_run_its_solidify_hook() -> None:

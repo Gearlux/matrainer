@@ -218,12 +218,12 @@ class TestFlowTrackers:
         assert flow_trackers(tracker) == [tracker]
 
     def test_a_deferred_marker_is_built(self, tmp_path: object) -> None:
-        from confluid import LazyClass
+        from confluid import PartialClass
 
         from matrainer.tracking.base import flow_trackers
         from matrainer.tracking.csv_backend import CsvTracker
 
-        live = flow_trackers([LazyClass(CsvTracker, save_dir=str(tmp_path))])
+        live = flow_trackers([PartialClass(CsvTracker, save_dir=str(tmp_path))])
         assert len(live) == 1 and isinstance(live[0], CsvTracker)
 
     def test_a_live_list_passes_through_by_identity(self, tmp_path: object) -> None:
