@@ -723,7 +723,7 @@ machinery, in a strict three-layer shape:
 2. **A FAMILY base per engine family pins the framework types** —
    `matrainer.torch.runnable.TorchTrainerRunnable` serves every engine that trains a
    `torch.nn.Module` against torchmetrics (lightning, the bare loop, fastai, huggingface):
-   `model: Lazy[nn.Module]`, `loss_fn: Optional[Lazy[nn.Module]]`, the metric quartet as
+   `model: Partial[nn.Module]`, `loss_fn: Optional[Partial[nn.Module]]`, the metric quartet as
    `MetricsSpec`, `_targets -> Tensor`, the typed default hooks, the metric builders, the
    sidecar write and the `trained_model -> nn.Module` output. A keras family base mirrors it
    with keras types. This layer exists so that nothing user-facing is typed `Any`: a type the
@@ -808,7 +808,7 @@ class FastaiDetectorLike(DetectionHooks, FastaiRunnable):          # loss-inside
 
 **Amendment (2026-08-07, third — P5).** The KERAS FAMILY landed, and it is the first family
 with its own FAMILY base beside the machinery: `matrainer.keras.runnable.KerasTrainerRunnable`
-pins the keras types (the `Lazy[keras.Model]` slot, the compile-slot aliases, the `_to_arrays`
+pins the keras types (the `Partial[keras.Model]` slot, the compile-slot aliases, the `_to_arrays`
 batch hook, the sentinel hooks, the UNION-as-family-property) under TWO machinery SIBLINGS —
 `matrainer.keras.trainer.KerasRunnable` (the engine owns the loop: compile/fit, the History
 read-back, the `_before_fit`/`_fit_scores` seams) and `matrainer.tensorflow.loop.
