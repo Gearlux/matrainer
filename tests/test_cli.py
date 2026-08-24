@@ -165,7 +165,13 @@ def test_the_requested_framework_is_read_in_every_spelling() -> None:
 
 
 def test_the_tensorflow_framework_pins_the_keras_engine(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.delenv("KERAS_BACKEND", raising=False)
+    # `delenv(raising=False)` records NOTHING when the variable is already absent, so the
+    # direct `os.environ[...] = ...` inside `pin_keras_backend` would have no undo entry and
+    # leak `KERAS_BACKEND=tensorflow` into every later test — where `import keras` then tries
+    # to load a TensorFlow this workspace may not have. Setting it first gives monkeypatch a
+    # record to restore from.
+    monkeypatch.setenv("KERAS_BACKEND", "torch")
+    monkeypatch.delenv("KERAS_BACKEND")
     pin_keras_backend("tensorflow")
     assert os.environ.get("KERAS_BACKEND") == "tensorflow"
     monkeypatch.setenv("KERAS_BACKEND", "torch")
@@ -176,7 +182,8 @@ def test_the_tensorflow_framework_pins_the_keras_engine(monkeypatch: pytest.Monk
 @pytest.mark.parametrize("framework", ["keras", "torch", "lightning", None])
 def test_no_other_framework_touches_the_variable(monkeypatch: pytest.MonkeyPatch, framework: Any) -> None:
     """Running on whichever engine is bound is the point of a plain `keras` backend."""
-    monkeypatch.delenv("KERAS_BACKEND", raising=False)
+    monkeypatch.setenv("KERAS_BACKEND", "torch")  # see above: gives monkeypatch a record to undo
+    monkeypatch.delenv("KERAS_BACKEND")
     pin_keras_backend(framework)
     assert "KERAS_BACKEND" not in os.environ
 

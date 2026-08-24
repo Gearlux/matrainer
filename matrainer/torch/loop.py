@@ -61,6 +61,9 @@ class TorchLoopRunnable(TorchTrainerRunnable):
     Args (on top of the family base's):
         batch_size: Rows per batch, baked into the three deferred loader slots.
         num_workers: Loader workers (``persistent_workers`` derives from it).
+        persistent_workers: Override that derivation. ``None`` derives (``num_workers != 0``);
+            an explicit value is for a HOST fact the derivation cannot see — macOS terminates
+            persistent workers slowly, so a config there sets ``false`` and keeps its workers.
         device: Where to run — the closed :data:`~matrainer.torch.device.Device` Literal;
             ``"auto"`` prefers CUDA → MPS → CPU and an explicit value is taken at its word.
         checkpoint_dir: Directory for ``model.pt`` (a plain ``state_dict`` — there is no
@@ -85,6 +88,7 @@ class TorchLoopRunnable(TorchTrainerRunnable):
         max_epochs: int = 10,
         batch_size: int = 32,
         num_workers: int = 0,
+        persistent_workers: Optional[bool] = None,
         trackers: Optional[Union[Partial[Tracker], Iterable[Partial[Tracker]]]] = None,
         experiment_name: str = "matrainer",
         run_name: Optional[str] = None,
@@ -121,7 +125,7 @@ class TorchLoopRunnable(TorchTrainerRunnable):
         self.device_choice: Device = device
         self.checkpoint_dir = checkpoint_dir
         self.grad_clip = grad_clip
-        slots = loader_slots(batch_size, num_workers, collate_fn=collate_fn)
+        slots = loader_slots(batch_size, num_workers, collate_fn=collate_fn, persistent_workers=persistent_workers)
         self.train_loader: Partial[DataLoader[Any]] = slots.train
         self.val_loader: Partial[DataLoader[Any]] = slots.val
         self.test_loader: Partial[DataLoader[Any]] = slots.test
