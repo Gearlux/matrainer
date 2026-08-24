@@ -25,6 +25,7 @@ it?" — is a per-backend concern and lives in the consuming runnable as an over
 ``collate_fn_with_metadata`` was deleted outright: nothing used it.
 """
 
+import matrainer.torch.spellings  # noqa: F401 — registers the torch-family dump spellings (see that module)
 from matrainer.torch.checkpoint import load_lightning_checkpoint
 from matrainer.torch.device import Device, resolve_device
 from matrainer.torch.loop import TorchLoopRunnable

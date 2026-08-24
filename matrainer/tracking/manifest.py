@@ -518,7 +518,9 @@ class RunManifest:
         try:
             from confluid import dump
 
-            text = dump(runnable)
+            # ``qualified=True``: classes are named by their importable dotted path,
+            # so the artifact reloads in a COLD process — no registrations needed.
+            text = dump(runnable, qualified=True)
         except Exception as exc:
             logger.debug(f"resolved-configuration dump failed for {type(runnable).__name__}: {exc}")
             return None

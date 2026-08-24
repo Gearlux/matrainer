@@ -207,8 +207,9 @@ def test_the_module_imports_nothing_but_the_standard_library() -> None:
         elif isinstance(node, ast.ImportFrom) and node.module and node.level == 0:
             roots.add(node.module.split(".")[0])
     # confluid is the one exception and it is BODY-LOCAL on purpose: materializing a deferred
-    # marker needs it, and nothing else in the module does.
-    assert roots <= {"pathlib", "typing", "urllib", "confluid"}, roots
+    # marker needs it, and nothing else in the module does. ``importlib`` (stdlib) joined it
+    # with the never-built guard — resolving a dotted target CLASS without constructing it.
+    assert roots <= {"pathlib", "typing", "urllib", "importlib", "confluid"}, roots
     assert "confluid" not in {
         node.module.split(".")[0]
         for node in ast.iter_child_nodes(source)
@@ -231,3 +232,61 @@ def test_importing_model_identity_pulls_in_no_framework(forbidden: str) -> None:
     code = f"import matrainer.uri, sys; assert {forbidden!r} not in sys.modules, {forbidden!r}"
     result = subprocess.run([sys.executable, "-c", code], capture_output=True, text=True)
     assert result.returncode == 0, result.stderr
+
+
+# --- asking never builds: a deferred marker's CLASS is checked before construction -------------
+
+_BUILDS = {"count": 0}
+
+
+class _NoModelSurface:
+    """No ``model_refs``, no ``model`` ctor slot — the shape of a deferred ``pl.Trainer``.
+
+    Note the REAL ``pl.Trainer`` has a ``model`` PROPERTY, which is why the guard reads
+    the constructor declaration (``declares_key``), never a bare ``hasattr(cls, "model")``.
+    """
+
+    def __init__(self, max_epochs: int = 1) -> None:
+        _BUILDS["count"] += 1
+        self.max_epochs = max_epochs
+
+    @property
+    def model(self) -> None:
+        return None
+
+
+class _DeferredReporter:
+    """DOES declare the protocol — a deferred marker of this class still builds and answers."""
+
+    def __init__(self, uri: str = "zoo://thing") -> None:
+        self._uri = uri
+
+    @property
+    def model_refs(self) -> List[ModelRef]:
+        return [ModelRef(uri=self._uri)]
+
+
+def test_a_deferred_marker_whose_class_has_no_model_surface_is_never_built() -> None:
+    from confluid import PartialClass
+
+    _BUILDS["count"] = 0
+    assert model_refs(PartialClass(_NoModelSurface, max_epochs=3)) == []
+    assert _BUILDS["count"] == 0, "the class answers the question; nothing is constructed"
+
+
+def test_a_deferred_marker_that_declares_the_protocol_still_builds_and_answers() -> None:
+    from confluid import PartialClass
+
+    refs = model_refs(PartialClass(_DeferredReporter, uri="zoo://x"))
+    assert [r.uri for r in refs] == ["zoo://x"]
+
+
+def test_a_deferred_marker_with_a_model_ctor_slot_is_still_built_and_followed() -> None:
+    class _Holder:
+        def __init__(self, model: Any = None) -> None:
+            self.model = model
+
+    from confluid import Target
+
+    inner = _Wrapper(refs=[ModelRef(uri="zoo://inner")])
+    assert [r.uri for r in model_refs(Target(_Holder, model=inner))] == ["zoo://inner"]

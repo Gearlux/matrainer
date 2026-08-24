@@ -331,6 +331,16 @@ references them by path and digest. `manifest.artifacts()` lists them, and `log_
 them with the manifest, so a remote-only backend is never left holding a reference to a file that
 exists on one machine.
 
+`config/final.yaml` is **reload-faithful** for the torch stack — and it reloads in a **cold**
+process: the dump names every class by its importable dotted path (`dump(qualified=True)`), so
+`confluid.load("config/final.yaml")` reconstructs the runnable with no registrations and no prior
+imports. `matrainer.torch` additionally registers document spellings (confluid's
+`register_dump_spelling`) for the values a resolved run holds that YAML cannot natively carry — a small `torch.Tensor` (a class-weights vector, a loss's `weight`)
+dumps as its values + dtype and reloads to the exact tensor, and a `torchmetrics.Metric` /
+`MetricCollection` dumps as its configuration and reloads to an equivalent, computing object. A
+tensor above 65 536 elements keeps the explicit placeholder instead — model-scale weights belong
+to checkpoints, not YAML.
+
 A mistyped section name raises rather than silently creating a key, and `set` on a list section (or
 `add` on a mapping one) tells you which to use. `run_dir=None` derives
 `runs/<experiment_name>/<run_name>`; the directory is created on first write, not at construction.
