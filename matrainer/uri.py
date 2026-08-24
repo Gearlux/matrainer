@@ -163,10 +163,61 @@ def _materialize(node: Any) -> Any:
 
     A marker, by contrast, has nothing to read until it is built, and building one is cheap by the
     workspace's lazy-construction rule.
+
+    A deferred marker is built only when its target CLASS could possibly answer — it declares
+    the ``model_refs`` protocol or a ``model`` constructor slot the walk would follow. Anything
+    else answers ``[]`` WITHOUT being constructed: a run's provenance capture walks every
+    configured slot, and it used to build a full ``pl.Trainer`` just to learn it names no model
+    (one throwaway Trainer per capture walk, each printing the accelerator banner). The ``model``
+    check reads the constructor declaration (``declares_key``), never a bare
+    ``hasattr(cls, "model")`` — ``pl.Trainer`` has a ``model`` PROPERTY, which would defeat the
+    guard. An unresolvable target keeps the old build path.
     """
     from confluid import Fluid, flow
 
-    return flow(node) if isinstance(node, Fluid) else node
+    if not isinstance(node, Fluid):
+        return node
+    target = _target_class(node)
+    if target is not None and not _has_model_surface(target):
+        return None
+    return flow(node)
+
+
+def _target_class(marker: Any) -> Optional[type]:
+    """The marker's target as a CLASS, resolved without building — ``None`` when it cannot be.
+
+    A builder FUNCTION target also answers ``None`` (its return type is unknowable statically),
+    so the caller stays conservative and builds, exactly as before the guard existed.
+    """
+    target = getattr(marker, "target", None)
+    if isinstance(target, type):
+        return target
+    if isinstance(target, str):
+        from confluid.registry import resolve_class
+
+        resolved = resolve_class(target)
+        if isinstance(resolved, type):
+            return resolved
+        module, _, name = target.rpartition(".")
+        if module:
+            try:
+                import importlib
+
+                candidate = getattr(importlib.import_module(module), name, None)
+            except Exception:
+                return None
+            if isinstance(candidate, type):
+                return candidate
+    return None
+
+
+def _has_model_surface(cls: type) -> bool:
+    """Whether ``cls`` declares anything the model walk could read."""
+    if hasattr(cls, "model_refs"):
+        return True
+    from confluid import declares_key
+
+    return declares_key(cls, "model")
 
 
 def _deduplicate(refs: Any) -> List[ModelRef]:

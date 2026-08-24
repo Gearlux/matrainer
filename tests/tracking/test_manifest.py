@@ -1121,3 +1121,19 @@ def test_capture_models_with_nothing_loaded_is_a_noop(tmp_path: Path) -> None:
     m = RunManifest(run_dir=tmp_path)
     m.capture_models(ScratchToy(model=_IdentifiedModel()))
     assert m.section("models") == []
+
+
+def test_the_resolved_config_names_classes_by_their_importable_path(tmp_path: Path) -> None:
+    """``config/final.yaml`` must reload in a COLD process — no registrations, no
+    prior imports — so classes are named module-qualified, never by the bare
+    registry key only that process knew."""
+    from confluid import load
+
+    from matrainer.checkpoints import SaveLast
+
+    m = RunManifest(run_dir=tmp_path, handle_interrupts=False)
+    m.capture_config(SaveLast())
+
+    dumped = (tmp_path / "config" / "final.yaml").read_text()
+    assert "_target_: matrainer.checkpoints.SaveLast" in dumped, dumped
+    assert isinstance(load(dumped), SaveLast)
