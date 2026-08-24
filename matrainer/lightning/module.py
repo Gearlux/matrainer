@@ -54,6 +54,9 @@ class LightningRunnable(TorchTrainerRunnable, L.LightningModule):
     Args (on top of the family base's):
         batch_size: Rows per batch, baked into the three deferred loader slots.
         num_workers: Loader workers (``persistent_workers`` derives from it).
+        persistent_workers: Override that derivation. ``None`` derives (``num_workers != 0``);
+            an explicit value is for a HOST fact the derivation cannot see — macOS terminates
+            persistent workers slowly, so a config there sets ``false`` and keeps its workers.
         collate_fn: The batch-shape choice baked into the loaders — ``collate_records``
             stacks (classification/segmentation/restoration), ``collate_list`` does not
             (detection's ``List[Tensor]`` contract). A machinery-level knob for the task
@@ -78,6 +81,7 @@ class LightningRunnable(TorchTrainerRunnable, L.LightningModule):
         max_epochs: int = 10,
         batch_size: int = 32,
         num_workers: int = 0,
+        persistent_workers: Optional[bool] = None,
         trackers: Optional[Union[Partial[Tracker], Iterable[Partial[Tracker]]]] = None,
         experiment_name: str = "matrainer",
         run_name: Optional[str] = None,
@@ -112,7 +116,7 @@ class LightningRunnable(TorchTrainerRunnable, L.LightningModule):
         # `dataset=`). Deferral is enforced by the slot holding a `PartialClass` value; the
         # annotation gives `to_pydantic` a real type for form-specs/widgets.
         self.optimizer: Partial[Optimizer] = PartialClass(torch.optim.AdamW, lr=1e-4, weight_decay=0.05)
-        slots = loader_slots(batch_size, num_workers, collate_fn=collate_fn)
+        slots = loader_slots(batch_size, num_workers, collate_fn=collate_fn, persistent_workers=persistent_workers)
         self.train_loader: Partial[DataLoader[Any]] = slots.train
         self.val_loader: Partial[DataLoader[Any]] = slots.val
         self.test_loader: Partial[DataLoader[Any]] = slots.test

@@ -171,3 +171,17 @@ def test_an_eval_batch_returning_none_omits_the_loss_key() -> None:
     runnable.run()
     assert "test/loss" not in runnable.computed_metrics
     assert "test/mae" in runnable.computed_metrics
+
+
+def test_persistent_workers_is_overridable_and_still_derives_by_default() -> None:
+    """The knob a HOST-scoped config sets: `persistent_workers: false` with workers kept.
+
+    macOS terminates persistent workers slowly enough that a short run spends longer
+    stopping than training, and no derivation from `num_workers` can see that."""
+    derived = _mini(num_workers=2)
+    forced = _mini(num_workers=2, persistent_workers=False)
+    for split in ("train_loader", "val_loader", "test_loader"):
+        assert getattr(derived, split).kwargs["persistent_workers"] is True, split
+        marker = getattr(forced, split)
+        assert marker.kwargs["persistent_workers"] is False, split
+        assert marker.kwargs["num_workers"] == 2, split
