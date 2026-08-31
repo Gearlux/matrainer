@@ -100,6 +100,9 @@ matrainer = "matrainer.console:main"
 matrainer = "matrainer"
 # The four Tracker backends + TrackerGroup (import-safe; each lazily imports its library).
 matrainer-tracking = "matrainer.tracking"
+# The whole-model file loader (role="model" object member; torch-only, so its own module keeps
+# a light install's discovery scan torch-free).
+matrainer-torch-model-file = "matrainer.torch.model_file"
 # (The predictions sink moved to recordstream 2026-07-29 — see `recordstream.predictions`, which
 # recordstream discovers through its own entry point; there is no matrainer-sinks group any more.)
 # The Lightning platform: registers the deferred runtime members (torch optimizers / DataLoader /

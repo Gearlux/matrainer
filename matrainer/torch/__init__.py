@@ -5,6 +5,8 @@ What a torch training platform needs from a TRACKING library, without pulling
 
 * :func:`~matrainer.torch.checkpoint.load_lightning_checkpoint` — load weights from a
   Lightning / Ultralytics / plain-state-dict checkpoint (reading back what a tracked run wrote).
+* :class:`~matrainer.torch.model_file.TorchModelFile` — its WHOLE-MODEL twin: a complete saved
+  model (``torch.save(model, path)``) loaded lazily from one file, used exactly as saved.
 * the metric helpers (:func:`~matrainer.torch.metrics.build_metric_collection`,
   :class:`~matrainer.torch.metrics.MetricPreset`, the JSON-safe coercion helpers), moved here
   from ``matrainer.lightning`` on 2026-08-01. They never imported ``pytorch_lightning`` — only
@@ -37,6 +39,7 @@ from matrainer.torch.metrics import (
     scalar_metrics,
     write_collection_sidecar,
 )
+from matrainer.torch.model_file import TorchModelFile
 from matrainer.torch.runnable import TorchTrainerRunnable
 
 __all__ = [
@@ -44,6 +47,7 @@ __all__ = [
     "MetricPreset",
     "MetricsSpec",
     "TorchLoopRunnable",
+    "TorchModelFile",
     "TorchTrainerRunnable",
     "build_metric_collection",
     "coerce_metric_value",
