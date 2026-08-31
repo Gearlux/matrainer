@@ -773,6 +773,14 @@ only the copy on its way to a tracker is renamed.
   `model.` prefix), an Ultralytics `.pt` (pulls the live module's `state_dict`), or a plain
   state-dict; auto-retargets to a named child when keys match one. `strict=False` tolerates a
   re-headed `num_classes`.
+- `TorchModelFile(file=…)` — the WHOLE-MODEL counterpart: loads a complete saved model
+  (`torch.save(model, path)`) lazily from one file and uses it exactly as saved. Registered
+  `role="model"`, so canvas/discovery surfaces offer it as an object node docking into any torch
+  model slot. A file holding a dict (a state dict, a training checkpoint) is refused with the fix
+  named — those carry no architecture and load through a wrapper's `checkpoint_path` instead. Two
+  inherent caveats: the pickle stores an import *reference* to the model's class (the defining
+  package must be installed where the file loads), and un-pickling executes code from the file —
+  load only files you trust.
 - `build_metric_collection(metrics, **dims)` — normalize any metrics spec (a mapping, a list, a
   single metric, an already-built `MetricCollection`) into one `MetricCollection` the caller clones
   per split, flowing each template with the sizing kwarg (`num_classes=` / `num_labels=` /
