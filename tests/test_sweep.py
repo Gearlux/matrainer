@@ -195,10 +195,20 @@ class TestUnreadableTrackers:
 
         assert rows == [] and note is not None and "own UI" in note
 
-    def test_the_queryable_set_is_what_collect_actually_branches_on(self) -> None:
-        """`QUERYABLE` is load-bearing rather than documentation: `collect` reads it."""
+    def test_the_queryable_set_is_what_collect_actually_branches_on(self, tmp_path: Path) -> None:
+        """`QUERYABLE` is load-bearing rather than documentation: `collect` reads it.
+
+        MLflow is queried through a SQLite store under ``tmp_path`` — the default tracking URI is the
+        workspace's local server, which no CI runner (and no laptop without the service up) listens
+        on, and a connection refusal is not what this test is about (a ``file://`` store would do
+        too, but MLflow 3 refuses one unless ``MLFLOW_ALLOW_FILE_STORE`` is set)."""
         for tracker in sweep.QUERYABLE:
-            _, note = sweep.collect(tracker, "no_such_experiment", save_dir=Path("/nonexistent"))
+            _, note = sweep.collect(
+                tracker,
+                "no_such_experiment",
+                save_dir=Path("/nonexistent"),
+                tracking_uri=f"sqlite:///{tmp_path / 'mlflow.db'}",
+            )
             assert note is None, f"{tracker} is advertised as queryable but reported a note"
 
 
