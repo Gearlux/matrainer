@@ -11,14 +11,20 @@ A plain ``import matrainer`` stays light (no torch / pytorch_lightning): it expo
 the tracking surface and the framework-neutral checkpoint policies.
 """
 
-__version__ = "0.2.0"
-
+from importlib.metadata import PackageNotFoundError, version
 from typing import Any, List
 
 from matrainer.checkpoints import CheckpointPolicy, SaveBest, SaveEveryEpoch, SaveLast
 from matrainer.metric_names import MetricNames
 from matrainer.run_names import generate_run_name
 from matrainer.tracking import RunManifest, Tracker, TrackerGroup, discover_backends, log_run_context
+
+try:
+    # Single source of truth: the installed distribution's metadata, i.e. pyproject.toml's
+    # `version` (the distribution is `matrainer`). Never type the number in here as well.
+    __version__ = version("matrainer")
+except PackageNotFoundError:  # pragma: no cover - uninstalled source checkout
+    __version__ = "0.0.0.dev0"
 
 __all__ = [
     "__version__",
