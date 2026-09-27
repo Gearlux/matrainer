@@ -49,7 +49,11 @@ imported the first time you use its backend:
 | `matrainer[keras]` | `keras` | `matrainer.keras.keras_tracking_callback` |
 | `matrainer[plot]` | `matplotlib` | `render_matrix_as_figure` / `render_vector_as_figure` — a confusion matrix as a heatmap, a per-class metric as a bar chart, for `log_figure` |
 | `matrainer[tensorflow]` | `matrainer[keras]`, `tensorflow` | the same helper, with the TensorFlow engine underneath |
-| `matrainer[all]` | every extra above | everything |
+| `matrainer[all]` | `lightning`, `mlflow`, `tensorboard`, `wandb`, `aim`, `clearml`, `keras`, `plot` | every tracker, Lightning and Keras (the other training frameworks stay separate extras) |
+
+**Python 3.13:** the Aim tracker's library (`aim`) publishes no Python 3.13 packages yet, so
+`matrainer[aim]` — and `matrainer[all]`, which includes it — install on Python 3.12 only. Every other
+extra installs on both.
 
 Install one with `pip install --pre "matrainer[mlflow]"` (several: `"matrainer[lightning,mlflow]"`).
 A missing backend library raises one clear error naming the extra to install — never a bare
