@@ -163,6 +163,14 @@ matrainer = ["py.typed"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
+# --cov-branch is REQUIRED here, not a preference: `branch = true` below is read by the
+# pytest process only, while pytest-cov tells CHILD processes which mode to use through
+# COV_CORE_BRANCH, which it exports only when the flag is on the command line. Tests that
+# spawn a real python child (test_console, test_sweep_runner, test_light_import, …) otherwise
+# write statement data beside the parent's branch data, and the final combine refuses to merge
+# them — measured on Linux CI 2026-09-27: INTERNALERROR "Can't combine statement coverage data
+# with branch data". See AGENTS.md.
+addopts = "--cov-branch"
 
 [tool.coverage.run]
 source = ["matrainer"]
