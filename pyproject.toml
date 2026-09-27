@@ -1,16 +1,39 @@
+[build-system]
+# >=77 for the PEP 639 `license` string + `license-files` below.
+requires = ["setuptools>=77", "wheel"]
+build-backend = "setuptools.build_meta"
+
 [project]
 name = "matrainer"
-version = "0.1.0"
+version = "0.1.0a1"
 description = "Experiment tracking for any training platform (MLflow / TensorBoard / CSV / W&B)."
-authors = [{name = "Taidal"}]
-license = {text = "MIT"}
-# LIGHT core: only the tracking library + framework-neutral checkpoint policies. The heavy
-# training frameworks (torch / pytorch-lightning / tensorflow) and the logger libraries live
-# behind the extras below; each backend imports its library lazily (matrainer._imports.require).
+readme = "README.md"
+authors = [{name = "Gert Behiels"}]
+license = "MIT"
+license-files = ["LICENSE"]
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Intended Audience :: Developers",
+    "Intended Audience :: Science/Research",
+    "Operating System :: OS Independent",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Topic :: Scientific/Engineering :: Artificial Intelligence",
+    "Topic :: Software Development :: Libraries :: Python Modules",
+    "Typing :: Typed",
+]
+# The core carries NO training framework (torch / pytorch-lightning / tensorflow) and NO tracker
+# library — those live behind the extras below, each imported lazily (matrainer._imports.require).
+# It is not small on disk: recordstream is core (the runnable base and the label-map artifacts
+# import it) and brings its data stack — measured 2026-09-26, a bare install is 65 packages / 457 MB.
+# Floors are what the suite actually runs against — measured 2026-09-27 in a clean venv
+# resolving from PyPI alone (825 passed). The old `liquifai>=0.1.0` / `loggair>=0.1.0`
+# described a combination nobody could install: recordstream 0.1.0a1 requires liquifai>=0.2.0.
 dependencies = [
-    "liquifai>=0.1.0",
-    "loggair>=0.1.0",
-    "confluid>=0.3.0",
+    "liquifai>=0.3.0",
+    "loggair>=0.2.0",
+    "confluid>=0.3.1",
     # recordstream ships as a pre-release (0.1.0a1). Under PEP 440 a plain `>=0.1.0`
     # EXCLUDES every pre-release of 0.1.0, so it would resolve to nothing.
     "recordstream>=0.1.0a1",
@@ -24,6 +47,12 @@ dependencies = [
     "pyyaml>=6.0",
 ]
 requires-python = ">=3.12"
+
+[project.urls]
+Homepage = "https://github.com/Gearlux/matrainer"
+Repository = "https://github.com/Gearlux/matrainer.git"
+Issues = "https://github.com/Gearlux/matrainer/issues"
+Changelog = "https://github.com/Gearlux/matrainer/blob/main/CHANGELOG.md"
 
 [project.optional-dependencies]
 # Torch-only, Lightning-free helpers (matrainer.torch: checkpoint + the metric helpers).
@@ -76,15 +105,16 @@ mlx = ["mlx; sys_platform == 'darwin' and platform_machine == 'arm64'"]
 # Everything a workspace install wants.
 all = ["matrainer[lightning,mlflow,tensorboard,wandb,aim,clearml,keras,plot]"]
 dev = [
+    # Release tooling: `python -m build` produces the sdist + wheel, `twine check`
+    # validates the metadata PyPI will re-validate on upload.
+    "build>=1.0.0",
+    "twine>=5.0.0",
     "black>=24.0.0,<25.0.0",
     "isort>=5.13.0,<6.0.0",
     "flake8>=6.0.0,<8.0.0",
     "mypy>=1.0.0,<2.0.0",
     "pytest>=7.0.0,<9.0.0",
     "pytest-cov>=4.0.0,<7.0.0",
-]
-torpaido = [
-    "torpaido>=0.1.0"
 ]
 
 [project.scripts]

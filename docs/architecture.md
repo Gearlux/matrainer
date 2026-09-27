@@ -420,8 +420,8 @@ about what importing it costs.
 - `pip install matrainer[torch]` now gives a consumer the metric helpers. It also
   gives them `torchmetrics`, which is a real addition to that extra — accepted,
   because a torch consumer computing no metrics is not the case worth optimising.
-- Every existing import keeps working. `raidar/detector.py` does
-  `from matrainer.lightning import scalar_metrics` and was not touched.
+- Every existing import keeps working. A consumer doing
+  `from matrainer.lightning import scalar_metrics` needed no change.
 - `matrainer.torch` grows for the first time since its 2026-07-29 emptying. The rule
   that emptied it still holds and this does not bend it: those helpers left because
   they were about the DATA (recordstream's business); these arrive because they are
@@ -953,7 +953,7 @@ lazy_exports(__name__, table)`; each root keeps its `_BACKEND_NAMES` table.
 The order (`requested_framework` → `pin_keras_backend` → `register_frameworks` →
 `normalize_framework_flag` → `app.run()`) is pinned ONCE, in matrainer's own suite, instead of
 per project — each arrow was a real bug when reversed. A behavioural extension lands
-everywhere at once (raidar's guard reached the other three CLIs in the lift). `dispatch=` is
+everywhere at once (one project's taskless-fit guard reached the other three CLIs in the lift). `dispatch=` is
 the extension point for a project needing more than the default. The cost is that a project's
 CLI behaviour is no longer readable in its own module — the factory's docstrings carry the
 rationale, and the project module says so.
