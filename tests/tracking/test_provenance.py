@@ -1273,8 +1273,8 @@ def test_a_child_object_a_framework_diverts_is_still_a_slot() -> None:
     green tests, complete-looking run, no weights named. Found by reading a real run's manifest.
     """
     runnable = _FakeModule()
-    runnable.train_set = "a plain attribute"  # type: ignore[assignment]
-    runnable.model = _FakeBackbone()  # type: ignore[assignment]
+    runnable.train_set = "a plain attribute"
+    runnable.model = _FakeBackbone()
 
     slots = dict(provenance.configured_slots(runnable))
     assert "model" in slots, f"the diverted child is invisible: {sorted(slots)}"
@@ -1293,7 +1293,7 @@ def test_the_registry_itself_is_not_walked_as_a_private_attribute() -> None:
     its KEYS are the public names the caller assigned.
     """
     runnable = _FakeModule()
-    runnable.model = _FakeBackbone()  # type: ignore[assignment]
+    runnable.model = _FakeBackbone()
 
     paths = [path for path, _ in provenance.configured_slots(runnable)]
     assert not any(path.startswith("_") or "._" in path for path in paths), paths

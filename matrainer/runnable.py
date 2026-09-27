@@ -257,7 +257,7 @@ class TrainerRunnable(ProgressReporting, ABC):
         every call — two MLflow runs for one training run.
         """
         self.trackers = flow_trackers(self.trackers)
-        return cast(List[Tracker], self.trackers)
+        return self.trackers
 
     def _prepare(self, source: Optional[Partial[RecordSource]]) -> Optional[Any]:
         """Normalize a wired source's TYPE and its STATE, in THIS process (fork safety).

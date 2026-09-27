@@ -74,7 +74,7 @@ def keras_tracking_callback(
     members = list(trackers)
     names = as_metric_names(metric_names)
 
-    class _KerasTrackingCallback(keras.callbacks.Callback):  # type: ignore[misc, name-defined]
+    class _KerasTrackingCallback(keras.callbacks.Callback):  # type: ignore[name-defined]
         #: The run manifest, available from train begin onward (``None`` before that).
         manifest: Any = None
 

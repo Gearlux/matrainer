@@ -10,7 +10,7 @@ import pytest
 from matrainer._exports import lazy_exports
 
 
-def _pair(names: dict) -> tuple:  # type: ignore[type-arg]  # helper: build against THIS package
+def _pair(names: dict) -> tuple:  # helper: build against THIS package
     return lazy_exports("matrainer", names)
 
 
