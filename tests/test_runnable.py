@@ -163,7 +163,7 @@ def test_write_predictions_slices_the_batch_and_pairs_metadata() -> None:
 
     runnable = _Stub(input_key="image", target_key="class")
     sink = _SinkRecorder()
-    runnable.predictions_sink = sink  # type: ignore[assignment]
+    runnable.predictions_sink = sink
     batch = {"image": np.zeros((2, 3)), "class": [0, 1], "idx": [10, 11]}
     runnable._write_predictions({"probs": np.eye(2)}, batch)
     assert len(sink.writes) == 2

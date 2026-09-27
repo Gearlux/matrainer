@@ -239,7 +239,7 @@ class TorchTrainerRunnable(TrainerRunnable, TorchRunner):
         """The trained/live model (post-run ``@output``). Raises while still deferred."""
         if isinstance(self.model, Fluid):
             raise RuntimeError("trained_model is only available after run(): the model is still a deferred Fluid.")
-        return cast(nn.Module, self.model)
+        return self.model
 
     @property
     @output

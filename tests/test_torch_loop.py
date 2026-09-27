@@ -147,7 +147,7 @@ def test_an_evaluate_run_scores_the_val_split() -> None:
 def test_predict_writes_one_prediction_per_record_with_its_metadata() -> None:
     runnable = _mini(test_set=_records(4), task="predict")
     sink = _SinkRecorder()
-    runnable.predictions_sink = sink  # type: ignore[assignment]
+    runnable.predictions_sink = sink
     runnable.run()
     assert len(sink.writes) == 4
     assert sink.writes[2][1] == {"idx": 2}, "metadata pairs per record, input/target excluded"

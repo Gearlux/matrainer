@@ -200,6 +200,11 @@ show_error_codes = true
 strict_optional = true
 explicit_package_bases = true
 
+# Optional-extra libraries CI does not install. CI runs `mypy .` HERE with only the extras its
+# install line names, so every module an extra-gated subpackage imports must be listed, or CI
+# fails on `import-not-found` while the workspace-root run (everything installed) passes —
+# measured 2026-09-27 on the first release PR. `mlx` and pyobjc (`objc`/`Foundation`/
+# `CoreFoundation`) cannot be installed on Linux at all.
 [[tool.mypy.overrides]]
 module = [
     "mlflow.*",
@@ -210,6 +215,15 @@ module = [
     "matplotlib.*",
     "wandb.*",
     "tensorflow.*",
-    "coolname.*"
+    "coolname.*",
+    "fastai.*",
+    "transformers.*",
+    "jax.*",
+    "flax.*",
+    "optax.*",
+    "mlx.*",
+    "objc.*",
+    "Foundation.*",
+    "CoreFoundation.*",
 ]
 ignore_missing_imports = true

@@ -271,7 +271,7 @@ class TorchLoopRunnable(TorchTrainerRunnable):
             logs: Dict[str, float] = {"train/loss": self._train_epoch(train_loader, optimizer)}
             logs.update(self._epoch_metrics(self.train_metrics, step=epoch))
             if loaders["val"] is not None:
-                val_loss = self._eval_epoch(cast(DataLoader[Any], loaders["val"]), self.val_metrics)
+                val_loss = self._eval_epoch(loaders["val"], self.val_metrics)
                 if val_loss is not None:
                     logs["val/loss"] = val_loss
                 logs.update(self._epoch_metrics(self.val_metrics, step=epoch))
@@ -288,7 +288,7 @@ class TorchLoopRunnable(TorchTrainerRunnable):
         self._after_fit(self, self.train_set, self.val_set, self.test_set)
         write_metrics_sidecar(self.metrics_sidecar_path, self._computed_metrics, self.experiment_name, self.run_name)
         if loaders["test"] is not None:
-            self._computed_metrics.update(self._score(cast(DataLoader[Any], loaders["test"])))
+            self._computed_metrics.update(self._score(loaders["test"]))
         # Uploads the log file, stamps the manifest's terminal status AND finalizes every
         # tracker. Not optional once a manifest exists: left unfinished it stays `running`, and
         # matrainer's atexit hook then calls a successful run `interrupted`.

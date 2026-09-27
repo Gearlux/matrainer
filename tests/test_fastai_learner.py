@@ -151,7 +151,7 @@ def test_an_evaluate_run_scores_the_val_split() -> None:
 def test_predict_writes_one_prediction_per_record_with_its_metadata() -> None:
     runnable = _mini(test_set=_records(4), task="predict")
     sink = _SinkRecorder()
-    runnable.predictions_sink = sink  # type: ignore[assignment]
+    runnable.predictions_sink = sink
     runnable.run()
     assert len(sink.writes) == 4
     assert sink.writes[2][1] == {"idx": 2}, "metadata pairs per record, input/target excluded"
@@ -173,7 +173,7 @@ def test_the_loss_property_is_the_family_loss_fn_slot() -> None:
 def test_a_yaml_string_learning_rate_is_coerced() -> None:
     """YAML 1.1 parses `1e-4` (no decimal point) as a STRING; fastai's scheduler then dies in
     a numpy divide three frames from the config line."""
-    runnable = _mini(learning_rate="1e-4")  # type: ignore[arg-type]
+    runnable = _mini(learning_rate="1e-4")
     assert runnable.learning_rate == pytest.approx(1e-4)
 
 
