@@ -22,12 +22,16 @@ what this port cares about would be useless at the next one.
 ## Installation
 
 ```bash
-pip install git+https://github.com/Gearlux/matrainer.git@main
+pip install --pre matrainer
 ```
 
-The core install is light — `confluid` / `liquifai` / `loggair` / `coolname` / `numpy` only.
-`import matrainer` pulls in **no** torch, pytorch-lightning, mlflow, or wandb. Everything heavy is
-behind an extra and lazily imported the first time you use its backend:
+`--pre` is needed while matrainer (and its `recordstream` dependency) ship as pre-releases.
+
+The core install carries **no** training framework and **no** tracker library: `import matrainer`
+pulls in no torch, pytorch-lightning, tensorflow, mlflow or wandb. It is not small on disk —
+`recordstream`, a core dependency, brings its own data stack (pandas, pyarrow, scipy, opencv,
+`datasets`), about 65 packages in all. Every framework and tracker is behind an extra and lazily
+imported the first time you use its backend:
 
 | Extra | Pulls in | Enables |
 |---|---|---|
@@ -47,8 +51,9 @@ behind an extra and lazily imported the first time you use its backend:
 | `matrainer[tensorflow]` | `matrainer[keras]`, `tensorflow` | the same helper, with the TensorFlow engine underneath |
 | `matrainer[all]` | every extra above | everything |
 
-A missing backend library raises one clear error — e.g. `pip install matrainer[mlflow]` — never a
-bare `ModuleNotFoundError`.
+Install one with `pip install --pre "matrainer[mlflow]"` (several: `"matrainer[lightning,mlflow]"`).
+A missing backend library raises one clear error naming the extra to install — never a bare
+`ModuleNotFoundError`.
 
 ## The trainer API — one abstract base, one concrete base per framework
 
@@ -163,7 +168,7 @@ on your own machine, and see your runs, with no account and no licence key.
 | `ClearMLTracker` | `clearml` | Apache-2.0 (self-hosted server via docker-compose) | full web UI — or `offline=True` for no server at all | ✅ shipped |
 
 Other free and self-hostable options, **not** implemented here — the `Tracker` ABC makes any of them
-a single new file if you need one (see [architecture record 4](docs/architecture.md)):
+a single new file if you need one (see [architecture record 4](https://github.com/Gearlux/matrainer/blob/main/docs/architecture.md)):
 `dvclive` (git-native experiment versioning), `trackio` (a Weights & Biases-API-compatible local
 dashboard), `sacred` + Omniboard (needs a MongoDB), and `determined` (Apache-2.0, but it is a cluster
 scheduler — heavy if all you want is tracking).
@@ -485,14 +490,14 @@ against it instead:
 
 ```yaml
 command:
-  cwd: $PROJECT_ROOT/sonair
-  line: cd "$PROJECT_ROOT/sonair" && "$PROJECT_ROOT/.venv/bin/python" -m recordstream.cli run cfg.yaml
+  cwd: $PROJECT_ROOT/my_project
+  line: cd "$PROJECT_ROOT/my_project" && "$PROJECT_ROOT/.venv/bin/python" -m recordstream.cli run cfg.yaml
 code:
 - {name: confluid, path: $PROJECT_ROOT/confluid, commit: 3f9c0e09…, dirty: false}
 datasets:
 - {kind: file, name: $DATA_ROOT/imagefolder, uri: 'file://$DATA_ROOT/imagefolder'}
 env:
-  roots: {PROJECT_ROOT: /Users/gert/taidal, DATA_ROOT: /Volumes/Store}   # recorded verbatim
+  roots: {PROJECT_ROOT: /home/me/work, DATA_ROOT: /Volumes/Store}   # recorded verbatim
 ```
 
 The whole document is contracted on the way out — the command line, the config tree, the code
@@ -1079,8 +1084,8 @@ The **runnable protocol** and **pipeline running** are *not* in Matrainer — th
 - `recordstream run <config.yaml>` — the generic runner. A config roots at a top-level `runnable:` key
   plus a `task:`; consumers may also ship their own CLI wrapping it.
 
-There is no `matrainer.runner` / `matrainer.progress` / `matrainer.workflow` / `matrainer.processing`
-and no matrainer binary.
+There is no `matrainer.runner` / `matrainer.progress` / `matrainer.workflow` / `matrainer.processing`.
+The one binary, `matrainer`, is the generic runner and the sweep driver described above.
 
 ## Examples
 
@@ -1101,7 +1106,8 @@ python examples/standalone_tracking.py
 | `loggair` | structured logging + the active-log-file handle `capture_log_file` uploads |
 | `coolname` | random run names |
 | `pyyaml` | the run manifest's readable half (`manifest.yaml`) |
-| `numpy` | the predictions sink |
+| `recordstream` | the record model the trainer API runs on, and the label-map format run artifacts use |
+| `numpy` | the confusion-matrix metrics (`matrainer.metric_functions`) |
 
 Everything else — torch, pytorch-lightning, torchmetrics, mlflow, tensorboard, wandb, aim,
 clearml, tensorflow, matplotlib — is optional and behind an extra.
