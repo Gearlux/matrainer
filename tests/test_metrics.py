@@ -1,33 +1,13 @@
-"""Tests for the flexible metrics system."""
+"""Tests for the flexible metrics system (MetricPreset + build_metric_collection)."""
+
+from pathlib import Path
+from typing import Any, cast
 
 import pytest
-import pytorch_lightning as L
-import torch
-import torch.nn as nn
-from confluid import configurable
-from dataflux.core import Flux
-from dataflux.sample import Sample
-from torch.utils.data import DataLoader
 from torchmetrics import Metric, MetricCollection
-from torchmetrics.classification import MulticlassAccuracy, MulticlassF1Score, MulticlassPrecision, MulticlassRecall
+from torchmetrics.classification import MulticlassAccuracy, MulticlassF1Score
 
-from marainer.metrics import MetricPreset
-from marainer.trainer import LightningTrainer
-
-
-@configurable
-class TinyModel(nn.Module):
-    def __init__(self, input_size: int = 4, num_classes: int = 2) -> None:
-        super().__init__()
-        self.fc = nn.Linear(input_size, num_classes)
-
-    def forward(self, x: torch.Tensor) -> torch.Tensor:
-        return self.fc(x)  # type: ignore[no-any-return]
-
-
-def make_samples(n: int = 32, input_size: int = 4) -> list[Sample]:
-    return [Sample(input=torch.randn(input_size), target=i % 2, metadata={}) for i in range(n)]
-
+from matrainer.torch.metrics import MetricPreset
 
 # ---------------------------------------------------------------------------
 # MetricPreset tests
@@ -134,90 +114,206 @@ class TestMetricPreset:
 # ---------------------------------------------------------------------------
 
 
-class TestTrainerMetricsIntegration:
-    def _make_trainer(
-        self,
-        train_metrics: MetricCollection | None = None,
-        val_metrics: MetricCollection | None = None,
-    ) -> LightningTrainer:
-        trainer = LightningTrainer(
-            model=TinyModel(),
-            train_set=make_samples(16),
+# NOTE: the training-loop integration tests (step functions / full-epoch fit) moved to the
+# consumer projects — matrainer no longer owns a Lightning training class; its metrics module is
+# just the build_metric_collection + MetricPreset utilities tested here.
+
+
+# ---------------------------------------------------------------------------
+# build_metric_collection — normalizes any metrics spec into a MetricCollection.
+# A single metric (incl. a deferred PartialClass from a StreamStudio metric node's
+# `class` output) must work, not just a dict / ready-made collection.
+# ---------------------------------------------------------------------------
+
+
+class TestBuildMetricCollection:
+    def test_single_lazy_template_wraps_and_flows_with_dims(self) -> None:
+        # The reported crash: a single PartialClass (a metric node's `class` output) had no `.items()`.
+        from confluid import PartialClass
+        from torchmetrics.classification import MulticlassConfusionMatrix
+
+        from matrainer.torch.metrics import build_metric_collection
+
+        mc = build_metric_collection(PartialClass(MulticlassConfusionMatrix), num_classes=10)
+        assert isinstance(mc, MetricCollection)
+        assert list(mc.keys()) == ["MulticlassConfusionMatrix"]
+        # The deferred class sized itself off the run-time num_classes (NOT the 0-valued widget).
+        assert mc["MulticlassConfusionMatrix"].num_classes == 10
+
+    def test_single_live_metric_wraps(self) -> None:
+        from matrainer.torch.metrics import build_metric_collection
+
+        mc = build_metric_collection(MulticlassAccuracy(num_classes=3), num_classes=3)
+        assert list(mc.keys()) == ["MulticlassAccuracy"]
+
+    def test_list_of_templates_wraps_each(self) -> None:
+        from confluid import PartialClass
+        from torchmetrics.classification import MulticlassConfusionMatrix
+
+        from matrainer.torch.metrics import build_metric_collection
+
+        mc = build_metric_collection(
+            [PartialClass(MulticlassAccuracy), PartialClass(MulticlassConfusionMatrix)], num_classes=4
         )
-        if train_metrics is not None:
-            trainer.train_metrics = train_metrics
-        if val_metrics is not None:
-            trainer.val_metrics = val_metrics
-        return trainer
+        assert set(mc.keys()) == {"MulticlassAccuracy", "MulticlassConfusionMatrix"}
 
-    def test_no_metrics_backward_compat(self) -> None:
-        trainer = self._make_trainer()
-        assert trainer.train_metrics is None
-        assert trainer.val_metrics is None
-        flux = Flux(source=make_samples(16))
-        loader: DataLoader = DataLoader(flux, batch_size=8)
-        loss = trainer.training_step(next(iter(loader)), 0)
-        assert loss.dim() == 0
+    def test_dict_of_templates_still_flows(self) -> None:
+        from confluid import PartialClass
 
-    def test_metrics_set_via_configurable(self) -> None:
-        train_mc = MetricCollection(
-            [MulticlassAccuracy(num_classes=2), MulticlassF1Score(num_classes=2)],
-            prefix="train/",
+        from matrainer.torch.metrics import build_metric_collection
+
+        mc = build_metric_collection(
+            {"acc": PartialClass(MulticlassAccuracy), "f1": PartialClass(MulticlassF1Score, average="macro")},
+            num_classes=2,
         )
-        val_mc = MetricCollection(
-            [MulticlassAccuracy(num_classes=2), MulticlassF1Score(num_classes=2)],
-            prefix="val/",
+        assert set(mc.keys()) == {"acc", "f1"}
+
+    def test_ready_made_collection_passes_through_unchanged(self) -> None:
+        from matrainer.torch.metrics import build_metric_collection
+
+        ready = MetricCollection({"acc": MulticlassAccuracy(num_classes=2)})
+        assert build_metric_collection(ready, num_classes=2) is ready
+
+    def test_single_metric_result_clones_per_split(self) -> None:
+        # The caller clones with a `test/` prefix; that must work on the single-metric result.
+        from confluid import PartialClass
+        from torchmetrics.classification import MulticlassConfusionMatrix
+
+        from matrainer.torch.metrics import build_metric_collection
+
+        mc = build_metric_collection(PartialClass(MulticlassConfusionMatrix), num_classes=5).clone(prefix="test/")
+        assert list(mc.keys()) == ["test/MulticlassConfusionMatrix"]
+
+
+# ---------------------------------------------------------------------------
+# The sizing dimension is applied PER TEMPLATE, not blanket
+# ---------------------------------------------------------------------------
+
+
+class TestSizingKwargs:
+    """``flow_dims`` reaches only the templates that can take it and have not pinned it.
+
+    The blanket form worked for classification by luck — every ``torchmetrics.classification``
+    metric happens to take ``num_classes``. An image task's ``data_range`` does not: three of the
+    seven full-reference metrics accept it and four do not, so the blanket form made a valid
+    metric break the whole collection.
+    """
+
+    def test_a_dimension_the_metric_cannot_take_is_not_passed(self) -> None:
+        """``SpectralAngleMapper`` has no ``data_range``; passing one raises inside confluid."""
+        from confluid import PartialClass
+        from torchmetrics.image import SpectralAngleMapper
+
+        from matrainer.torch.metrics import build_metric_collection
+
+        mc = build_metric_collection({"sam": PartialClass(SpectralAngleMapper)}, data_range=1.0)
+        assert isinstance(mc["sam"], SpectralAngleMapper)
+
+    def test_a_dimension_the_metric_requires_still_reaches_it(self) -> None:
+        """``PeakSignalNoiseRatio(data_range)`` has NO default — an un-injected template cannot
+        even be built, which is torchmetrics deliberately refusing to guess a scale."""
+        from confluid import PartialClass
+        from torchmetrics.image import PeakSignalNoiseRatio
+
+        from matrainer.torch.metrics import build_metric_collection
+
+        mc = build_metric_collection({"psnr": PartialClass(PeakSignalNoiseRatio)}, data_range=255.0)
+        assert float(cast(Any, mc["psnr"]).data_range) == 255.0
+
+    def test_a_template_that_pins_the_dimension_keeps_its_own_value(self) -> None:
+        """The injection is a FLOOR: a runtime kwarg would otherwise OVERRIDE the marker's own,
+        making an explicitly-written value unwritable."""
+        from confluid import PartialClass
+        from torchmetrics.image import PeakSignalNoiseRatio
+
+        from matrainer.torch.metrics import build_metric_collection
+
+        mc = build_metric_collection({"psnr": PartialClass(PeakSignalNoiseRatio, data_range=2.0)}, data_range=1.0)
+        assert float(cast(Any, mc["psnr"]).data_range) == 2.0
+
+    def test_a_mixed_collection_builds_whole(self) -> None:
+        """The case that motivated this: metrics that take the dimension beside ones that do not."""
+        from confluid import PartialClass
+        from torchmetrics.image import PeakSignalNoiseRatio, SpectralAngleMapper, StructuralSimilarityIndexMeasure
+
+        from matrainer.torch.metrics import build_metric_collection
+
+        mc = build_metric_collection(
+            {
+                "psnr": PartialClass(PeakSignalNoiseRatio),
+                "ssim": PartialClass(StructuralSimilarityIndexMeasure),
+                "sam": PartialClass(SpectralAngleMapper),
+            },
+            data_range=1.0,
         )
-        trainer = self._make_trainer(train_metrics=train_mc, val_metrics=val_mc)
-        assert trainer.train_metrics is not None
-        assert trainer.val_metrics is not None
-        assert isinstance(trainer.train_metrics, MetricCollection)
-        assert isinstance(trainer.val_metrics, MetricCollection)
+        assert set(mc.keys()) == {"psnr", "ssim", "sam"}
 
-    def test_train_metrics_prefixed(self) -> None:
-        train_mc = MetricCollection([MulticlassAccuracy(num_classes=2)], prefix="train/")
-        trainer = self._make_trainer(train_metrics=train_mc)
-        assert trainer.train_metrics is not None
-        assert any("train/" in str(k) for k in trainer.train_metrics)
+    def test_the_classification_dimension_still_propagates(self) -> None:
+        """The pre-existing behaviour every other task depends on is unchanged."""
+        from confluid import PartialClass
 
-    def test_val_metrics_prefixed(self) -> None:
-        val_mc = MetricCollection([MulticlassAccuracy(num_classes=2)], prefix="val/")
-        trainer = self._make_trainer(val_metrics=val_mc)
-        assert trainer.val_metrics is not None
-        assert any("val/" in str(k) for k in trainer.val_metrics)
+        from matrainer.torch.metrics import build_metric_collection
 
-    def test_training_step_updates_metrics(self) -> None:
-        train_mc = MetricCollection([MulticlassAccuracy(num_classes=2)], prefix="train/")
-        trainer = self._make_trainer(train_metrics=train_mc)
-        flux = Flux(source=make_samples(16))
-        loader: DataLoader = DataLoader(flux, batch_size=8)
-        loss = trainer.training_step(next(iter(loader)), 0)
-        assert loss.dim() == 0
+        mc = build_metric_collection({"acc": PartialClass(MulticlassAccuracy)}, num_classes=7)
+        assert mc["acc"].num_classes == 7
 
-    def test_validation_step_updates_metrics(self) -> None:
-        val_mc = MetricCollection([MulticlassAccuracy(num_classes=2)], prefix="val/")
-        trainer = self._make_trainer(val_metrics=val_mc)
-        flux = Flux(source=make_samples(16))
-        loader: DataLoader = DataLoader(flux, batch_size=8)
-        loss = trainer.validation_step(next(iter(loader)), 0)
-        assert loss.dim() == 0
 
-    def test_full_epoch_with_metrics(self) -> None:
-        train_mc = MetricCollection(
-            [
-                MulticlassAccuracy(num_classes=2),
-                MulticlassPrecision(num_classes=2),
-                MulticlassRecall(num_classes=2),
-            ],
-            prefix="train/",
+# ---------------------------------------------------------------------------
+# write_collection_sidecar — the compute-once sidecar composition
+# ---------------------------------------------------------------------------
+class TestWriteCollectionSidecar:
+    def _collection(self) -> object:
+        import torch
+        from torchmetrics import MetricCollection
+        from torchmetrics.classification import MulticlassAccuracy
+
+        collection = MetricCollection({"accuracy": MulticlassAccuracy(num_classes=2)}).clone(prefix="val/")
+        collection.update(torch.tensor([[0.9, 0.1], [0.2, 0.8]]), torch.tensor([0, 1]))
+        return collection
+
+    def test_a_live_collection_is_computed_and_written(self, tmp_path: Path) -> None:
+        import json
+
+        from matrainer.torch.metrics import write_collection_sidecar
+
+        path = tmp_path / "metrics.json"
+        write_collection_sidecar(str(path), self._collection(), "exp", "run")
+        payload = json.loads(path.read_text())
+        assert payload["metrics"]["val/accuracy"] == 1.0
+        assert payload["experiment_name"] == "exp" and payload["run_name"] == "run"
+
+    def test_a_non_collection_slot_is_a_silent_no_op(self, tmp_path: Path) -> None:
+        """A spec-holding or None slot means the run legitimately built no metrics."""
+        from matrainer.torch.metrics import write_collection_sidecar
+
+        path = tmp_path / "metrics.json"
+        write_collection_sidecar(str(path), {"still": "a spec"}, "exp", "run")
+        write_collection_sidecar(str(path), None, "exp", "run")
+        assert not path.exists()
+
+    def test_the_reportable_filter_runs_before_the_scalar_drop(self, tmp_path: Path) -> None:
+        """A task's strip rule (detection MAP's `classes`) applies to the sidecar too."""
+        import json
+
+        from matrainer.torch.metrics import write_collection_sidecar
+
+        path = tmp_path / "metrics.json"
+        write_collection_sidecar(
+            str(path),
+            self._collection(),
+            "exp",
+            "run",
+            reportable=lambda values: {k: v for k, v in values.items() if k != "val/accuracy"},
         )
-        trainer = self._make_trainer(train_metrics=train_mc)
-        flux = Flux(source=make_samples(32))
-        loader: DataLoader = DataLoader(flux, batch_size=16)
-        lt = L.Trainer(
-            max_epochs=1,
-            accelerator="cpu",
-            enable_progress_bar=False,
-            enable_model_summary=False,
-        )
-        lt.fit(model=trainer, train_dataloaders=loader)
+        assert json.loads(path.read_text())["metrics"] == {}
+
+
+def test_the_metrics_spec_alias_is_shared_from_here() -> None:
+    """Declared ONCE (it existed verbatim in eight-plus consumer modules); both subpackage
+    surfaces re-export it with the other metric helpers."""
+    import matrainer.torch as torch_pkg
+    from matrainer.torch import MetricsSpec
+    from matrainer.torch.metrics import MetricsSpec as canonical
+
+    assert "MetricsSpec" in torch_pkg.__all__
+    assert canonical is MetricsSpec

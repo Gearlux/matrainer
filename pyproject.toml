@@ -1,36 +1,114 @@
+[build-system]
+# >=77 for the PEP 639 `license` string + `license-files` below.
+requires = ["setuptools>=77", "wheel"]
+build-backend = "setuptools.build_meta"
+
 [project]
-name = "marainer"
-version = "0.1.0"
-description = "Project-agnostic training and processing pipeline orchestrator."
-authors = [{name = "Taidal"}]
-license = {text = "MIT"}
+name = "matrainer"
+version = "0.1.0a1"
+description = "Experiment tracking for any training platform (MLflow / TensorBoard / CSV / W&B)."
+readme = "README.md"
+authors = [{name = "Gert Behiels"}]
+license = "MIT"
+license-files = ["LICENSE"]
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Intended Audience :: Developers",
+    "Intended Audience :: Science/Research",
+    "Operating System :: OS Independent",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Topic :: Scientific/Engineering :: Artificial Intelligence",
+    "Topic :: Software Development :: Libraries :: Python Modules",
+    "Typing :: Typed",
+]
+# The core carries NO training framework (torch / pytorch-lightning / tensorflow) and NO tracker
+# library — those live behind the extras below, each imported lazily (matrainer._imports.require).
+# It is not small on disk: recordstream is core (the runnable base and the label-map artifacts
+# import it) and brings its data stack — measured 2026-09-26, a bare install is 65 packages / 457 MB.
+# Floors are what the suite actually runs against — measured 2026-09-27 in a clean venv
+# resolving from PyPI alone (825 passed). The old `liquifai>=0.1.0` / `loggair>=0.1.0`
+# described a combination nobody could install: recordstream 0.1.0a1 requires liquifai>=0.2.0.
 dependencies = [
-    "liquifai>=0.1.0",
-    "log-flow>=0.1.0",
-    "confluid>=0.1.0",
-    "data-flux>=0.1.0",
-    "mlflow",
-    "torch",
+    "liquifai>=0.3.0",
+    "loggair>=0.2.0",
+    "confluid>=0.3.1",
+    # recordstream ships as a pre-release (0.1.0a1). Under PEP 440 a plain `>=0.1.0`
+    # EXCLUDES every pre-release of 0.1.0, so it would resolve to nothing.
+    "recordstream>=0.1.0a1",
     "numpy",
-    "pytorch-lightning",
-    "tensorboard",
-    "torchmetrics",
-    "tabulate",
-    "matplotlib",
-    "psutil",
-    # pyobjc subset for the inline IOAccelerator reader (Apple-Silicon GPU
-    # utilisation, no sudo) in marainer.system_metrics. The full ``pyobjc``
-    # meta-package pulls in 100+ frameworks; these two are the minimum
-    # surface our reader uses. ``pyobjc-framework-Cocoa`` ships both the
-    # Foundation module (for ``NSBundle.bundleWithIdentifier_``) and the
-    # CoreFoundation module (for ``CFRelease`` on the props dict).
-    "pyobjc-core; sys_platform == 'darwin'",
-    "pyobjc-framework-Cocoa; sys_platform == 'darwin'",
+    # coolname generates the default random run names (e.g. ``train_funny_rabbit``) in
+    # matrainer.run_names — offline adjective_noun slugs, no network.
+    "coolname",
+    # matrainer.tracking.manifest writes the run manifest as YAML (the readable artifact)
+    # beside its JSON twin. Declared explicitly rather than leaned on transitively via
+    # confluid: a module that imports a package must depend on it.
+    "pyyaml>=6.0",
 ]
 requires-python = ">=3.12"
 
+[project.urls]
+Homepage = "https://github.com/Gearlux/matrainer"
+Repository = "https://github.com/Gearlux/matrainer.git"
+Issues = "https://github.com/Gearlux/matrainer/issues"
+Changelog = "https://github.com/Gearlux/matrainer/blob/main/CHANGELOG.md"
+
 [project.optional-dependencies]
+# Torch-only, Lightning-free helpers (matrainer.torch: checkpoint + the metric helpers).
+# torchmetrics is here rather than in [lightning] since 2026-08-01: `matrainer.torch.metrics`
+# builds `MetricCollection`s and never touches pytorch_lightning, so a consumer training on
+# plain torch needs it — see matrainer/torch/metrics.py.
+torch = ["torch", "torchmetrics"]
+# PyTorch-Lightning tracking helpers (matrainer.lightning: TrackingCallback / TrackerLogger + metric utils).
+lightning = ["matrainer[torch]", "pytorch-lightning", "torchmetrics", "tabulate", "matplotlib"]
+# Rendering a non-scalar run value (a confusion matrix) as a FIGURE for `Tracker.log_figure`.
+# The markdown-table form needs no extra beyond `tabulate`; only the heatmap needs matplotlib,
+# which is why it is opt-in — see matrainer/tracking/render.py::render_matrix_as_figure.
+plot = ["matplotlib"]
+# The MlflowTracker backend + MLflow system metrics. pyobjc powers the inline IOAccelerator
+# reader (Apple-Silicon GPU utilisation, no sudo) in matrainer.tracking.system.
+mlflow = [
+    "mlflow",
+    "psutil",
+    "pyobjc-core; sys_platform == 'darwin'",
+    "pyobjc-framework-Cocoa; sys_platform == 'darwin'",
+]
+# The TensorBoardTracker backend uses torch.utils.tensorboard, so it implies [torch].
+tensorboard = ["matrainer[torch]"]
+# The WandbTracker backend.
+wandb = ["wandb"]
+# The AimTracker backend. Aim is Apache-2.0 and fully self-hosted — runs land in a local
+# .aim repository and `aim up` serves the UI from it, with no server and no account.
+aim = ["aim>=3.29"]
+# The ClearMLTracker backend. Apache-2.0 with a self-hostable server (docker-compose);
+# `offline=True` records to local disk with no server and no credentials at all.
+clearml = ["clearml>=2.0"]
+# Keras tracking helper (matrainer.keras.keras_tracking_callback). Keras 3 is standalone and
+# picks its own compute backend (torch / tensorflow / jax) via KERAS_BACKEND, so this extra
+# must NOT drag TensorFlow in — a consumer on the torch backend never asked for it.
+# `recordstream[keras]` is declared because the callback imports keras THROUGH
+# `recordstream.keras`, which sets KERAS_BACKEND before keras loads (that extra adds only the
+# same `keras` named above; recordstream itself is already a hard dependency).
+keras = ["keras>=3.0", "recordstream[keras]>=0.1.0a1"]
+# Only for a consumer that genuinely wants the TensorFlow ENGINE underneath Keras 3.
+tensorflow = ["matrainer[keras]", "tensorflow>=2.16"]
+# The remaining framework-family runnable bases (the per-framework trainer machinery that
+# joined matrainer 2026-08-06 — see AGENTS.md). Each names its FAMILY's engine; the two
+# fastai bounds are measured upstream breaks (fastcore 2.x removes `L.starmap`, which
+# fastai's own optimizer still calls; fastprogress 1.1 drags in a web framework and needs
+# the fastcore major the first bound excludes) — removable when upstream fixes them.
+fastai = ["matrainer[torch]", "fastai", "fastcore<2", "fastprogress<1.1"]
+huggingface = ["matrainer[torch]", "transformers>=4.49", "accelerate"]
+jax = ["flax", "optax", "recordstream[keras]>=0.1.0a1"]
+mlx = ["mlx; sys_platform == 'darwin' and platform_machine == 'arm64'"]
+# Everything a workspace install wants.
+all = ["matrainer[lightning,mlflow,tensorboard,wandb,aim,clearml,keras,plot]"]
 dev = [
+    # Release tooling: `python -m build` produces the sdist + wheel, `twine check`
+    # validates the metadata PyPI will re-validate on upload.
+    "build>=1.0.0",
+    "twine>=5.0.0",
     "black>=24.0.0,<25.0.0",
     "isort>=5.13.0,<6.0.0",
     "flake8>=6.0.0,<8.0.0",
@@ -38,29 +116,70 @@ dev = [
     "pytest>=7.0.0,<9.0.0",
     "pytest-cov>=4.0.0,<7.0.0",
 ]
-torpaido = [
-    "torpaido>=0.1.0"
-]
 
 [project.scripts]
-marainer = "marainer.cli:main"
+# The ONE binary this package ships, and a user-authorized exception (2026-08-07) to the
+# no-binary rule: the GENERIC runner (`matrainer train <config>` — any project's runnable
+# config, verbs forcing the task) and the sweep group (`matrainer sweep backends|trackers|all
+# <sweep.yaml>` + the report commands). The per-project CLIs remain the ergonomic surface;
+# `python -m matrainer.sweep` keeps working.
+matrainer = "matrainer.console:main"
 
 [project.entry-points."confluid.configurables"]
-marainer = "marainer"
+# Light root: the tracking backends, run-name helper, and checkpoint policies.
+matrainer = "matrainer"
+# The four Tracker backends + TrackerGroup (import-safe; each lazily imports its library).
+matrainer-tracking = "matrainer.tracking"
+# The whole-model file loader (role="model" object member; torch-only, so its own module keeps
+# a light install's discovery scan torch-free).
+matrainer-torch-model-file = "matrainer.torch.model_file"
+# (The predictions sink moved to recordstream 2026-07-29 — see `recordstream.predictions`, which
+# recordstream discovers through its own entry point; there is no matrainer-sinks group any more.)
+# The Lightning platform: registers the deferred runtime members (torch optimizers / DataLoader /
+# pl.Trainer) + stock Lightning loggers, and re-exports the tracking callbacks / MetricPreset. Imports
+# pytorch_lightning — discovery must warn-and-continue on a light install without the [lightning] extra.
+matrainer-lightning = "matrainer.lightning.configurables"
+
+# Which of this project's extras belong to each aisland selection axis. Selecting a name here
+# is what makes `aisland setup` add the matching extra to this project's install.
+#
+# TWO SIBLING AXES, deliberately never merged: `frameworks` is what a machine TRAINS WITH,
+# `trackers` is where its results GO. They are unrelated choices, and folding the backends into
+# `frameworks` would install a tracking client because someone picked a training engine.
+#
+# `frameworks` lists the per-framework TRACKING helpers (matrainer.lightning / .keras).
+# `trackers` lists the Tracker backends; `CsvTracker` is absent on purpose — it is stdlib-only,
+# always available, and has no extra to select.
+[tool.aisland]
+frameworks = ["torch", "lightning", "keras", "tensorflow"]
+trackers = ["mlflow", "tensorboard", "aim", "clearml", "wandb"]
 
 [tool.setuptools.packages.find]
 where = ["."]
-include = ["marainer*"]
+include = ["matrainer*"]
 
 [tool.setuptools.package-data]
-marainer = ["py.typed"]
+matrainer = ["py.typed"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
+# --cov-branch is REQUIRED here, not a preference: `branch = true` below is read by the
+# pytest process only, while pytest-cov tells CHILD processes which mode to use through
+# COV_CORE_BRANCH, which it exports only when the flag is on the command line. Tests that
+# spawn a real python child (test_console, test_sweep_runner, test_light_import, …) otherwise
+# write statement data beside the parent's branch data, and the final combine refuses to merge
+# them — measured on Linux CI 2026-09-27: INTERNALERROR "Can't combine statement coverage data
+# with branch data". See AGENTS.md.
+addopts = "--cov-branch"
 
 [tool.coverage.run]
-source = ["marainer"]
+source = ["matrainer"]
 branch = true
+# The discovery test writes a real backend module into the package directory and deletes it
+# again (mocking the scan would test the mock) — coverage records the file, then finds no source
+# for it and warns on every run. The stem is `TEMP_BACKEND_STEM` in tests/tracking/test_discovery.py;
+# rename the two together.
+omit = ["*/zzztemp_backend.py"]
 
 [tool.coverage.report]
 show_missing = true
@@ -89,6 +208,11 @@ show_error_codes = true
 strict_optional = true
 explicit_package_bases = true
 
+# Optional-extra libraries CI does not install. CI runs `mypy .` HERE with only the extras its
+# install line names, so every module an extra-gated subpackage imports must be listed, or CI
+# fails on `import-not-found` while the workspace-root run (everything installed) passes —
+# measured 2026-09-27 on the first release PR. `mlx` and pyobjc (`objc`/`Foundation`/
+# `CoreFoundation`) cannot be installed on Linux at all.
 [[tool.mypy.overrides]]
 module = [
     "mlflow.*",
@@ -96,6 +220,18 @@ module = [
     "torchmetrics.*",
     "pytorch_lightning.*",
     "tabulate.*",
-    "matplotlib.*"
+    "matplotlib.*",
+    "wandb.*",
+    "tensorflow.*",
+    "coolname.*",
+    "fastai.*",
+    "transformers.*",
+    "jax.*",
+    "flax.*",
+    "optax.*",
+    "mlx.*",
+    "objc.*",
+    "Foundation.*",
+    "CoreFoundation.*",
 ]
 ignore_missing_imports = true
