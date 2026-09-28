@@ -22,10 +22,12 @@ what this port cares about would be useless at the next one.
 ## Installation
 
 ```bash
-pip install --pre matrainer
+pip install matrainer
 ```
 
-`--pre` is needed while matrainer (and its `recordstream` dependency) ship as pre-releases.
+matrainer and its `recordstream` dependency are on PyPI as pre-releases; pip installs them without
+`--pre`, because no final release exists yet. Leave `--pre` off: it lets pip take pre-releases of *every*
+dependency too, and `pip install --pre "matrainer[all]"` then fails outright building an `aim` alpha.
 
 The core install carries **no** training framework and **no** tracker library: `import matrainer`
 pulls in no torch, pytorch-lightning, tensorflow, mlflow or wandb. It is not small on disk —
@@ -55,7 +57,7 @@ imported the first time you use its backend:
 `matrainer[aim]` — and `matrainer[all]`, which includes it — install on Python 3.12 only. Every other
 extra installs on both.
 
-Install one with `pip install --pre "matrainer[mlflow]"` (several: `"matrainer[lightning,mlflow]"`).
+Install one with `pip install "matrainer[mlflow]"` (several: `"matrainer[lightning,mlflow]"`).
 A missing backend library raises one clear error naming the extra to install — never a bare
 `ModuleNotFoundError`.
 
