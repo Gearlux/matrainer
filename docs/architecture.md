@@ -300,7 +300,8 @@ path against the working directory, so a Hub reference would be registered as a 
 does not exist. The projection would therefore be an empty versioned entity holding wrong paths,
 strictly less informative than the comparable hyperparameter section it would sit beside. That is
 also why the model half gates on an addressable scheme rather than passing every URI through.
-See matrainer's `AGENTS.md` for the full reasoning.
+The live-server measurement is recorded beside `ADDRESSABLE_SCHEMES` in
+`tracking/clearml_backend.py`.
 
 ---
 
@@ -1038,3 +1039,52 @@ you may not do is reintroduce a checkpoint root that is independent of it, or dr
 on the grounds that the metric path does not read it. Pinned by
 `tests/lightning/test_trackers.py::test_checkpoints_land_under_the_trackers_save_dir_not_the_launch_directory`,
 which asserts against Lightning's REAL resolution rather than a restatement of the rule.
+
+## 12. The checkpoint loader reads generic formats and learns no library's own (2026-09-27)
+
+### Context
+
+`matrainer.torch.load_lightning_checkpoint` loads weights into a model from three generic
+shapes: a Lightning `.ckpt` (its `model.` prefix stripped), an Ultralytics `.pt` (a live module
+under `model`), and a plain state dict. When the wrapper's keys do not overlap the file's, it
+retargets the load to a named child. Missing and unexpected keys are logged at INFO;
+`strict=True` makes a mismatch raise.
+
+Model libraries also write their OWN training files. One detection library's
+`{model, optimizer, lr_scheduler, epoch, args}` file reads, through this function, as a
+five-key state dict. Measured: it landed 1 of 465 tensors, with only the INFO lines to show
+for it, while that library's own loader landed all 465.
+
+### Decision
+
+A library's own checkpoint format is loaded by the model wrapper that owns that library,
+through the library's own loader. The wrapper recognises the file by its shape and routes it;
+only the generic shapes reach this function. This function learns no per-library format, and a
+load that matches zero keys stays an INFO line rather than an error (user ruling, 2026-09-27).
+
+### Consequences
+
+* The function's scope stays three generic shapes. It does not grow a format table that every
+  new model library would have to extend.
+* The routing lives in the wrapper, the one place that knows both the file and the library.
+* A caller that needs a mismatch to be fatal passes `strict=True`.
+* No test pins the zero-match behaviour yet.
+
+### Example
+
+```python
+from matrainer.torch import load_lightning_checkpoint
+
+class DetectorWrapper(nn.Module):
+    def solidify(self) -> None:
+        if is_library_checkpoint(self.checkpoint_path):    # the library's own shape
+            self.detector = library.load(self.checkpoint_path)
+        else:                                              # .ckpt / .pt / plain state dict
+            load_lightning_checkpoint(self, self.checkpoint_path)
+```
+
+### What you may change
+
+A fourth GENERIC shape (one no single library owns), and better diagnostics on a poor match.
+What you may not do is add a library-specific branch here, or make a zero-match load raise by
+default.
