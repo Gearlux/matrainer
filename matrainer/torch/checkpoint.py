@@ -5,7 +5,7 @@ Three on-disk formats are tolerated by a single helper:
 1. **PyTorch Lightning ``.ckpt``** — produced by ``trainer.save_checkpoint``.
    Top-level ``state_dict`` key whose entries are prefixed with ``model.``
    (Lightning's :class:`pytorch_lightning.LightningModule` wrapper adds it via
-   ``self.model = model`` inside :class:`matrainer.lightning.LightningMatrainer`).
+   ``self.model = model`` inside :class:`matrainer.lightning.LightningRunnable`).
    This helper strips that prefix so model classes can load their own weights
    directly in ``__init__`` without dragging the Lightning wrapper into the picture.
 

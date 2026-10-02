@@ -19,21 +19,24 @@ so the "shared" loop was a delegation maze, not a simplification. (b) A project 
 *tracking* (log params, git hash, config artifacts, system metrics) still paid the full Lightning
 import cost and couldn't be removed without gutting the training code.
 
-**Decision.** Matrainer is an **experiment-tracking library only** — no training loop, no
-trainer/evaluator class, no CLI. A class that trains reads like a standard example for its framework
-and lives in the *consuming* project; it reaches for Matrainer solely to track the run. The runnable
-protocol (`TorchRunner`, `ProgressReporting`, the `entrypoint` method-annotation mechanism), the
-workflow combinators, and `DatasetProcessor` moved to `recordstream`; the generic runner is
-`recordstream run <config>` binding a top-level `runnable:` key.
+**Decision.** Matrainer's core is an **experiment-tracking library**: no training loop, no
+trainer/evaluator class and no CLI live in the light core. A class that trains reads like a standard
+example for its framework and reaches for Matrainer solely to track the run. The runnable protocol
+(`TorchRunner`, `ProgressReporting`, the `entrypoint` method-annotation mechanism), the workflow
+combinators, and `DatasetProcessor` moved to `recordstream`; the generic runner is
+`recordstream run <config>` binding a top-level `runnable:` key. Record 9 later added the shared
+trainer machinery ABOVE this core, in extras-gated framework subpackages, and record 10 the factory
+behind the `matrainer` console script; the core's contract below is unchanged.
 
 **Consequences.**
-- The guiding invariant is testable: **removing Matrainer costs a consumer only a couple of line
-  changes** — it keeps training (with loggair logging), losing only the rich tracking. If a change
-  makes Matrainer load-bearing for *training*, it's in the wrong project.
+- The tracking half stays usable on its own: a plain training class can use any tracker through a
+  framework hookup (the example below) and keep training with the callback deleted. If a change makes the *tracking*
+  modules load-bearing for training, it's in the wrong layer.
 - `import matrainer` imports no torch/lightning/mlflow (see record 2). The light core is
   `confluid`/`liquifai`/`loggair`/`coolname`/`numpy`.
-- There is exactly one thing to reintroduce-and-reject in review: a `training_step`, a `run()` loop,
-  or a `matrainer.cli`. None belong here.
+- A `training_step`, a `run()` loop or command-line wiring is rejected in review when it lands in the
+  tracking core (`matrainer.tracking` and the framework hookups); the machinery has its homes in the
+  framework subpackages (record 9) and `matrainer.cli` / `matrainer.console` (record 10).
 
 **Example.** A consumer's standard `LightningModule` opts into tracking without inheriting anything
 from Matrainer:
@@ -51,8 +54,10 @@ trainer.fit(MyStandardLightningModule(), datamodule=dm)   # delete the callback 
 ```
 
 **What you may change.** New tracking helpers, backends, provenance sources, and framework hookup
-styles are all in scope. What you may *not* add back: a training/evaluation loop, a step function, a
-`run()` dispatcher, a `DatasetProcessor`/workflow combinator (those live in `recordstream`), or a CLI.
+styles are all in scope. What you may *not* add to the tracking core: a training/evaluation loop, a
+step function, a `run()` dispatcher, or a `DatasetProcessor`/workflow combinator (those live in
+`recordstream`); trainer machinery belongs in a framework subpackage's base (record 9) and command-line
+wiring in the CLI factory (record 10).
 
 ---
 
@@ -648,8 +653,9 @@ The cut is by WHAT THE CODE QUERIES, and both sides of it are sharp:
   are queries against a TRACKER, which is the thing this package abstracts, and the vocabulary the
   report folds on (`epoch` / `runtime` / `total_flos`, Lightning's `_step` suffix) is
   `matrainer.metric_names`' own.
-* **`python -m matrainer.sweep`, not a console script.** This package deliberately ships no binary —
-  the workspace retired its CLI — and a module main is neither a binary nor an entry-point group.
+* **`python -m matrainer.sweep` is a module main.** It is neither a binary nor an entry-point group of
+  its own; the `matrainer` console script's `sweep` group (see the amendment below) dispatches to the
+  same code.
 * **The two constants became PARAMETERS.** A `./sweep_logs` path and a `http://127.0.0.1:5005`
   MLflow URI are fine as an example script's module constants and wrong in a library, so they are
   defaulted arguments (`save_dir` / `tracking_uri`) with the old values as the defaults.
@@ -657,7 +663,8 @@ The cut is by WHAT THE CODE QUERIES, and both sides of it are sharp:
   `collect` branched on string literals; it is now what `collect` reads, so the advertised set and
   the implemented one cannot disagree.
 * The consuming drivers each dropped ~290 lines and one test file; what they kept — `all_backends.yaml`
-  and `run_sweep.sh` — is exactly the half that differs between tasks, which is why the split holds.
+  and the matrix spec (`examples/sweep/sweep.yaml`, below) — is exactly the half that differs between
+  tasks, which is why the split holds.
 
 ### Example
 
@@ -714,7 +721,8 @@ protecting the fleet's behavioural agreement (one name per quantity, per-split m
 reset-at-epoch-start) had to be enforced by per-project AST drift tests because no code was shared.
 
 **Decision (user-authorized reversal of record 1's scope).** Matrainer owns the shared trainer
-machinery, in a strict three-layer shape:
+machinery, in a strict three-layer shape (layers 1-3 below), under a fourth layer that a consuming
+project owns:
 
 1. **`matrainer.runnable.TrainerRunnable`** — ONE abstract, framework-free base defining the
    NEUTRAL half of the API: the neutral constructor slots (stored verbatim), `run()` →
@@ -754,17 +762,22 @@ machinery, in a strict three-layer shape:
 ```python
 @configurable(task="classification", role="trainer", framework="torch")
 class LightningClassifier(ClassificationTorchHooks, ClassificationBase, LightningRunnable):
-    def __init__(self, model, train_set=None, ..., num_classes=None, label_map=None):
+    def __init__(self, model: Optional[Mandatory[Partial[nn.Module]]] = None, train_set=None, ...,
+                 num_classes=None, label_map=None):
         super().__init__(model=model, train_set=train_set, ...)   # shared slots, stored verbatim
         self.num_classes = num_classes                            # task-specific state
         self.label_map = label_map
 ```
 
+The `model` slot is `Mandatory` but defaulted: confluid still reports it as required to form-specs
+and MCP schemas, while the `None` default keeps the class zero-arg constructible. An empty slot
+fails at the start of `run()` with a clear error (`TrainerRunnable._require_model`).
+
 **What you may change.** New hooks (added with a safe default so every family base keeps
 working), new family bases, and base behaviour — shipped together with the consumer updates.
 What you may *not* do: introduce an abstract trainer object above the family bases, share code
-*between* family bases except via module functions, grow task semantics (what a loss/metric/label
-IS for a task) into any base, or reintroduce a matrainer CLI binary.
+*between* family bases except via module functions, or grow task semantics (what a loss/metric/label
+IS for a task) into any base.
 
 **Amendment (2026-08-07).** The second machinery base landed: `matrainer.torch.loop.TorchLoopRunnable`,
 the bare-torch epoch written in the open. Its one design addition to the shape above is the
