@@ -1,14 +1,16 @@
 # Matrainer
 
-**Experiment-tracking library** for machine-learning runs — parameters, git provenance, log
+**Experiment tracking** for machine-learning runs — parameters, git provenance, log
 files, config artifacts, figures, metric values, and system metrics — logged to whichever backend
-you use (MLflow, TensorBoard, CSV, Weights & Biases), across whichever training platform you run
+you use (MLflow, TensorBoard, CSV, Weights & Biases, Aim, ClearML), across whichever training platform you run
 (PyTorch Lightning, TensorFlow/Keras, Ultralytics, a bare training loop).
 
-Matrainer holds **no training loop, no trainer/evaluator class, and no CLI.** A class that trains
-reads like a standard example for its framework and lives in *your* project; it reaches for Matrainer
-only to *track* the run. The guiding invariant: **removing Matrainer should cost only a couple of
-line changes** — the run keeps training (with loggair logging), it just loses the rich tracking.
+Tracking is the core and it stands alone: `import matrainer` loads no training framework and no
+tracker library, and a class that trains can reach for Matrainer only to *track* the run. Matrainer
+also ships the shared trainer machinery a task project builds its runnables on — one abstract API
+base and one concrete base per framework (see [the trainer API](#the-trainer-api--one-abstract-base-one-concrete-base-per-framework))
+— and a `matrainer` console script, the generic runner and the sweep driver. Every framework and
+tracker library sits behind an extra.
 
 ## The name
 
