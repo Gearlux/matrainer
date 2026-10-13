@@ -4,6 +4,16 @@ All notable changes to this project are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and the versioning is
 [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Model packages
+- **`matrainer.model_package`** — a model's whole inference graph (a flow graph: preprocessing, the
+  predictor, postprocessing), its weights and its class names in one folder. `PackageModel` (a
+  runnable) writes one, copying or referencing the graph files and the weights files separately;
+  `package.yaml` lists every file with its SHA-256 and the installed versions of the graph's
+  distributions. `ModelPackage` (an op) runs a package as one step, with `overrides` into its graph
+  applied last. `read_package` returns the package file as plain data.
+
 ## [0.1.0a1] — 2026-09-27
 
 First public pre-release. The surface it ships:

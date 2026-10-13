@@ -133,6 +133,9 @@ matrainer-tracking = "matrainer.tracking"
 # The whole-model file loader (role="model" object member; torch-only, so its own module keeps
 # a light install's discovery scan torch-free).
 matrainer-torch-model-file = "matrainer.torch.model_file"
+# Model packages: the PackageModel runnable and the ModelPackage op (confluid + recordstream only, no
+# framework), so a graph editor's palette and an MCP discovery service list them.
+matrainer-model-package = "matrainer.model_package"
 # (The predictions sink moved to recordstream 2026-07-29 — see `recordstream.predictions`, which
 # recordstream discovers through its own entry point; there is no matrainer-sinks group any more.)
 # The Lightning platform: registers the deferred runtime members (torch optimizers / DataLoader /
