@@ -6,6 +6,14 @@ All notable changes to this project are documented here. The format follows
 
 ## [Unreleased]
 
+### Tracking
+- **`ResilientTracker`** — wraps one tracker so a slow or unreachable tracking server never stops a
+  run or loses a value: a time limit per call (an artifact's grows with its size), a call the
+  network lost queued and replayed in order, a queued artifact's bytes kept (and backed up under
+  `runs/<experiment>/<run>/pending_artifacts/`) so a deleted file still uploads, a 5xx turning off
+  only that kind of call, and a run that cannot start turning tracking off instead of stopping
+  training.
+
 ### Model packages
 - **`matrainer.model_package`** — a model's whole inference graph (a flow graph: preprocessing, the
   predictor, postprocessing), its weights and its class names in one folder. `PackageModel` (a

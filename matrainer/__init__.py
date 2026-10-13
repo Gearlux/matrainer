@@ -17,7 +17,7 @@ from typing import Any, List
 from matrainer.checkpoints import CheckpointPolicy, SaveBest, SaveEveryEpoch, SaveLast
 from matrainer.metric_names import MetricNames
 from matrainer.run_names import generate_run_name
-from matrainer.tracking import RunManifest, Tracker, TrackerGroup, discover_backends, log_run_context
+from matrainer.tracking import ResilientTracker, RunManifest, Tracker, TrackerGroup, discover_backends, log_run_context
 
 try:
     # Single source of truth: the installed distribution's metadata, i.e. pyproject.toml's
@@ -30,6 +30,7 @@ __all__ = [
     "__version__",
     "Tracker",
     "TrackerGroup",
+    "ResilientTracker",
     "RunManifest",
     "log_run_context",
     "generate_run_name",

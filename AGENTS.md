@@ -11,7 +11,7 @@ Experiment tracking plus the workspace's shared trainer machinery (user-authoriz
 
 | area | modules |
 |---|---|
-| tracking | `tracking/`: `Tracker` + `TrackerGroup` (`base.py`); six backends, one file each (csv, mlflow, tensorboard, wandb, aim, clearml); `manifest.py`, `provenance.py`, `render.py`, `system.py` |
+| tracking | `tracking/`: `Tracker` + `TrackerGroup` (`base.py`); `ResilientTracker` (`resilient.py`); six backends, one file each (csv, mlflow, tensorboard, wandb, aim, clearml); `manifest.py`, `provenance.py`, `render.py`, `system.py` |
 | trainer API | `TrainerRunnable` (`runnable.py`) → family bases `TorchTrainerRunnable`, `KerasTrainerRunnable` → machinery bases `LightningRunnable`, `TorchLoopRunnable`, `FastaiRunnable`, `KerasRunnable`, `TensorFlowRunnable`, `HuggingFaceRunnable`, `JaxLoopRunnable`, `MlxLoopRunnable` |
 | framework-free | `metric_slots`, `metric_names`, `metric_functions`, `uri`, `run_names`, `checkpoints`, `artifacts`, `model_package` |
 | `matrainer.torch` | `load_lightning_checkpoint`, `TorchModelFile`, metric helpers, `resolve_device`, dump spellings |
@@ -26,6 +26,11 @@ task semantics. A collate or batch reader written here belongs in recordstream.
 
 ## Tracking
 
+- `ResilientTracker` (`tracking/resilient.py`) is a composite `Tracker` like `TrackerGroup`, not a
+  layer over the abstraction (the next rule's "no wrapper layer" means no adapter of NON-trackers).
+  Every wrapped call goes through `run_with_timeout`; a new call never overtakes a queued one; the
+  wrapper never raises into a loop except for a missing `tracker:`; its name, run name, `save_dir`
+  and `log_dir` are the wrapped tracker's (`tests/tracking/test_resilient.py`). §14.
 - `Tracker` is the whole abstraction; no wrapper layer over it. Backends are zero-arg, build their
   handle on first `.experiment`, and import their library inside methods via `require(module,
   extra)`. `import matrainer` loads no tracker or framework (`tests/test_light_import.py`). §2.
