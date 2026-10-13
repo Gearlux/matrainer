@@ -37,7 +37,7 @@ import shutil
 from datetime import datetime, timezone
 from importlib import metadata
 from pathlib import Path
-from typing import Any, Dict, List, Literal, Optional, Sequence, Set, Tuple, Union, get_args
+from typing import Any, Dict, List, Literal, Mapping, NamedTuple, Optional, Sequence, Set, Tuple, Union, get_args
 
 import confluid
 import yaml
@@ -73,9 +73,11 @@ __all__ = [
     "PACKAGE_FILE",
     "PACKAGE_FORMAT",
     "WEIGHTS_DIR",
+    "LoadedPackage",
     "ModelPackage",
     "PackageFiles",
     "PackageModel",
+    "load_package_graph",
     "read_package",
 ]
 
@@ -114,6 +116,67 @@ def read_package(path: Union[str, Path]) -> Dict[str, Any]:
     if not isinstance(info, dict):
         raise ValueError(f"{package_file} is not a package file: it holds no mapping")
     return info
+
+
+class LoadedPackage(NamedTuple):
+    """A package's graph, loaded the one way: ``Subgraph(steps=document["flow"], result=result)`` runs it.
+
+    ``request`` is what ``confluid.load`` was given — the entry graph included, each weight slot, the
+    caller's overrides, in that order — so a reader that needs the graph in another form (its markers
+    with their file locations, through ``confluid.load(request, until="document")``) loads the same thing.
+    """
+
+    root: Path  # the package folder, absolute
+    info: Dict[str, Any]  # its package file, as :func:`read_package` returns it
+    request: Dict[str, Any]  # the document ``confluid.load`` was given
+    document: Dict[str, Any]  # the loaded graph, its ops built: ``flow``, ``outputs``, the included blocks
+    result: str  # the one step the package returns
+
+
+def load_package_graph(
+    path: str, overrides: Optional[Mapping[str, Any]] = None, *, owner: str = "load_package_graph"
+) -> LoadedPackage:
+    """Load the graph of the package at ``path`` with its weights in their slots and ``overrides`` written last.
+
+    The ONE loader of a package: the op that runs a package and a compiler that reads one both call it,
+    so the loading rule — confluid's document order, the last spec winning — is written once.
+
+    Args:
+        path: The package folder (``$VAR`` and ``~`` expanded).
+        overrides: Dotted keys into the package's graph and their values, applied after it and its weight slots.
+        owner: Who asks, as a refusal names it (``"ModelPackage"``).
+
+    Raises:
+        ValueError: ``path`` is blank, names no package, a package of another format, or a graph that
+            returns more than one step.
+
+    Example::
+
+        loaded = load_package_graph("runs/a/package", {"flow.detect.op.device": "mps"})
+        Subgraph(steps=loaded.document["flow"], result=loaded.result)(record)
+    """
+    if not path:
+        raise ValueError(f"{owner}: 'path' is blank — name the package folder")
+    try:
+        info = read_package(path)
+    except ValueError as refusal:
+        raise ValueError(f"{owner}: {refusal}") from refusal
+    root = _absolute(_expand(path))
+    if info.get("format") != PACKAGE_FORMAT:
+        raise ValueError(
+            f"{owner}: {root} is a package of format {info.get('format')}, this matrainer reads format {PACKAGE_FORMAT}"
+        )
+    request: Dict[str, Any] = {"include": [str(_absolute(root / info["graph"]))]}
+    for slot, entry in (info.get("weights") or {}).items():
+        request[slot] = str(_absolute(root / entry["path"]))
+    request.update(copy.deepcopy(dict(overrides or {})))
+    document = confluid.load(copy.deepcopy(request))
+    outputs = document.get("outputs") or ""
+    if isinstance(outputs, (list, tuple)):
+        if len(outputs) != 1:
+            raise ValueError(f"{owner}: {root}'s graph returns {list(outputs)} — a package returns ONE step")
+        outputs = outputs[0]
+    return LoadedPackage(root=root, info=info, request=request, document=document, result=str(outputs))
 
 
 def _targets(node: Any, found: Set[str]) -> None:
@@ -362,31 +425,10 @@ class ModelPackage:
         wanted = (self.path, self.overrides)
         if self._inner is not None and self._loaded_with == wanted:
             return self._inner
-        if not self.path:
-            raise ValueError("ModelPackage: 'path' is blank — name the package folder")
-        try:
-            info = read_package(self.path)
-        except ValueError as refusal:
-            raise ValueError(f"ModelPackage: {refusal}") from refusal
-        root = _absolute(_expand(self.path))
-        if info.get("format") != PACKAGE_FORMAT:
-            raise ValueError(
-                f"ModelPackage: {root} is a package of format {info.get('format')}, "
-                f"this matrainer reads format {PACKAGE_FORMAT}"
-            )
-        data: Dict[str, Any] = {"include": [str(_absolute(root / info["graph"]))]}
-        for slot, entry in (info.get("weights") or {}).items():
-            data[slot] = str(_absolute(root / entry["path"]))
-        data.update(copy.deepcopy(self.overrides))
-        document = confluid.load(data)
-        outputs = document.get("outputs") or ""
-        if isinstance(outputs, (list, tuple)):
-            if len(outputs) != 1:
-                raise ValueError(f"ModelPackage: {root}'s graph returns {list(outputs)} — a package returns ONE step")
-            outputs = outputs[0]
-        self._inner = Subgraph(steps=document["flow"], result=str(outputs))
+        loaded = load_package_graph(self.path, self.overrides, owner="ModelPackage")
+        self._inner = Subgraph(steps=loaded.document["flow"], result=loaded.result)
         self._loaded_with = (self.path, copy.deepcopy(self.overrides))
-        logger.debug(f"ModelPackage: loaded {root}")
+        logger.debug(f"ModelPackage: loaded {loaded.root}")
         return self._inner
 
     def __call__(self, record: Record) -> Optional[Record]:
