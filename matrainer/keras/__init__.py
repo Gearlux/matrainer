@@ -1,10 +1,12 @@
-"""Keras tracking utilities (``pip install matrainer[keras]``).
+"""Keras support (``pip install matrainer[keras]``): the tracking callback and the Keras family.
 
-matrainer does NOT own a TensorFlow training loop — a consumer's model is a plain
-compiled ``keras.Model``. This subpackage provides the optional Keras tracking
-helper: :func:`keras_tracking_callback`, a ``keras.callbacks.Callback`` that forwards
-epoch logs (and, on train begin, run provenance) to matrainer trackers — the
-Keras analogue of :class:`~matrainer.lightning.callbacks.TrackingCallback`.
+This module provides :func:`keras_tracking_callback`, a ``keras.callbacks.Callback`` that
+forwards epoch logs (and, on train begin, run provenance) to matrainer trackers — the Keras
+analogue of :class:`~matrainer.lightning.callbacks.TrackingCallback`. It works on its own, on a
+plain compiled ``keras.Model``. The Keras family of the trainer API lives beside it:
+:mod:`matrainer.keras.runnable` (``KerasTrainerRunnable``, the family base),
+:mod:`matrainer.keras.trainer` (``KerasRunnable``, which owns the compile/fit loop) and, for the
+hand-written loop, :mod:`matrainer.tensorflow.loop` (``TensorFlowRunnable``).
 
 ``keras`` is imported lazily (raised with a clear ``pip install
 matrainer[keras]`` message when the callback is built).

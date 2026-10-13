@@ -23,7 +23,7 @@ is the one :mod:`matrainer.metric_names` already owns — the same argument that
 :mod:`matrainer.metric_slots` here. Three task projects had byte-identical copies of it (verified by
 an AST comparison with docstrings stripped) differing only in prose.
 
-Usage — it is a module main rather than a console script, because matrainer ships no binary::
+Usage — the module main (the ``matrainer`` console script's ``sweep`` group dispatches to the same code)::
 
     python -m matrainer.sweep next-experiment mlflow Thu_Aug_6_2026
     python -m matrainer.sweep report mlflow Thu_Aug_6_2026_1
