@@ -1101,3 +1101,86 @@ class DetectorWrapper(nn.Module):
 A fourth GENERIC shape (one no single library owns), and better diagnostics on a poor match.
 What you may not do is add a library-specific branch here, or make a zero-match load raise by
 default.
+
+## 13. A model package is a folder of a flow graph and its weights, run as one sealed op (2026-10-12)
+
+### Context
+
+A trained checkpoint answers correctly only on inputs made the way its training inputs were made —
+a detector trained on spectrogram pictures needs the same FFT, the same grey scale, the same
+picture size — and its raw outputs (pixel boxes) mean something only after the steps that project
+them back into the caller's units. Both sides already existed as a recordstream flow graph, but
+every consumer that ran the checkpoint rebuilt that graph by hand around a bare checkpoint path:
+the same includes, the same orientation override, the same class list, three times over for one
+model. Measured on one consumer: its review graph and the package built from the same files gave
+the same table on 81 captures, box for box — and the same graph read from the workspace a day
+later, after an edit of the picture size, scored 48 fewer boxes right, with nothing in the run
+telling that the picture had changed under the checkpoint.
+
+### Decision
+
+A **model package** is a folder: `package.yaml` (the entry graph, every graph file and weights
+file with its SHA-256, the class names, the versions of the distributions the graph's classes
+come from), plus `graphs/` and `weights/` when they are copied in. `PackageModel` (a runnable)
+writes it; `ModelPackage` (an op) runs it.
+
+* **The graph stays the file its author wrote.** The weights are not written into it:
+  `package.yaml` maps each predictor slot (a dotted key, `flow.detect.op.model.checkpoint_path`)
+  to its file, and the op fills the slot with the absolute path when it loads the graph. Copied
+  graph files keep their layout below the folder holding them all, so every relative `include:`
+  resolves inside the package unchanged — no file is rewritten.
+* **Loading is confluid's own rule.** The op loads `{include: [entry graph], <slot>: <weights>,
+  **overrides}`: document order, the last spec wins. No new spelling, no precedence of its own.
+* **Copy or reference, per kind.** `graphs` and `weight_files` each take `copy` (frozen: a later
+  edit of the source changes nothing) or `reference` (relative paths: the package follows the
+  sources). Freezing is the point of a package; referencing is what a person iterating on the
+  graph wants — both are legitimate, so it is a setting, not a rule.
+* **A sealed op, not a `Subgraph` subclass.** A step-through tracer rebuilds a subgraph through its
+  constructor with `steps=` (its current inside); a package has no such constructor argument, and
+  giving it one would make the package's graph editable in place, which is what a package exists
+  to prevent. The op holds a private `Subgraph` and delegates `consumes` / `produces` / `flags`
+  to it, so chain checks still see the package's own declarations.
+* **In matrainer, framework-free.** A package is the hand-off between a training run and its
+  consumers — the same place as the run manifest, `class_names.json` and the checkpoint policies —
+  and it needs only confluid, recordstream and pyyaml, all core dependencies. It reuses
+  `save_class_names` and the manifest's `file_digest` / `command_line` / `contract_roots`.
+
+Rejected: a pickled pipeline object (unreadable, tied to the class layout of the moment it was
+written); an exported network (ONNX, TorchScript) — that is the compilation project's job and
+leaves out the pre- and postprocessing a recordstream graph expresses; writing the weights path
+into a rewritten copy of the graph (a second file per package to keep in step with its source).
+
+### Consequences
+
+* Any pipeline runs a model as one step with one path; a settings form needs two fields (the
+  package, the overrides) whatever the model.
+* A copied package keeps giving the answers it gave when it was made; a referencing one does not.
+* A package is only as right as the graph it was made from: package a checkpoint from a graph
+  that has since drifted from the one it was trained with and the package freezes the drift.
+* A file a graph reaches other than by `include:` (a path in a setting) is not collected; an
+  absolute include stays absolute, so it is not frozen.
+* The version list over-names: a namespace several distributions install into lists them all.
+
+### Example
+
+```yaml
+# package.yaml — the writer
+runnable: !class:matrainer.model_package.PackageModel
+  graph: config/model.yaml
+  weights: {flow.detect.op.model.checkpoint_path: ./runs/a/checkpoint_best_total.pth}
+  output_dir: ./runs/a/package
+```
+
+```python
+from matrainer.model_package import ModelPackage
+
+op = ModelPackage(path="runs/a/package", overrides={"flow.detect.op.device": "mps"})
+record = op(record)          # the package's graph, its weights, the override applied last
+```
+
+### What you may change
+
+New fields in `package.yaml` that a reader may ignore (bump `PACKAGE_FORMAT` when a field changes
+meaning); a transport form (a zip of the folder); collecting more kinds of referenced files. What
+you may not do is give the op a precedence rule of its own, rewrite the author's graph files, or
+make it a `Subgraph` whose inside a tracer can replace.
