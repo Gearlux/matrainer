@@ -115,6 +115,14 @@ task semantics. A collate or batch reader written here belongs in recordstream.
   `<output_dir>.partial` and moves it into place last
   (`::test_a_folder_that_is_not_a_package_is_never_written_into`). `package.yaml` carries the
   generated-file header (`::test_the_package_file_carries_the_generator_header`).
+- `load_package_graph(path, overrides, owner=)` is the ONE loader of a package: the op calls it, and so
+  does torpaido's compiler (`owner="CompilePackage"`), so the loading rule is written once. Its
+  `request` is what `confluid.load` was given (the entry graph included, the weight slots, the
+  overrides), for a reader that needs the same document at another stage
+  (`::test_load_package_graph_gives_the_graph_the_op_runs`, `::test_load_package_graph_names_its_caller_in_a_refusal`).
+- A compiled form of a package (torpaido's `compiled.yaml` + artifact) lives in `<package>/compiled/<name>/`
+  by default; `PackageModel` replacing the package deletes them, as intended — they were of the old weights
+  (§13 amendment). matrainer never reads or writes that folder.
 
 ## Backend behaviour (measured; the docstrings say why)
 

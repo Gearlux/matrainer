@@ -17,7 +17,14 @@ from recordstream import LabelMap
 from recordstream.flow.subgraph import Subgraph
 
 from matrainer.artifacts import CLASS_NAMES_FILE
-from matrainer.model_package import PACKAGE_FILE, PACKAGE_FORMAT, ModelPackage, PackageModel, read_package
+from matrainer.model_package import (
+    PACKAGE_FILE,
+    PACKAGE_FORMAT,
+    ModelPackage,
+    PackageModel,
+    load_package_graph,
+    read_package,
+)
 from matrainer.tracking.provenance import file_digest
 
 _HALF = """\
@@ -400,3 +407,32 @@ runnable: !class:matrainer.model_package.PackageModel
     subprocess.run(["bash", "-c", command], check=True, capture_output=True)
 
     assert (tmp_path / "pkg" / "weights" / "best.pth").read_bytes() == b"weights v1"
+
+
+# --------------------------------------------------------------------------- #
+# The ONE loader the op and a compiler share
+# --------------------------------------------------------------------------- #
+
+
+def test_load_package_graph_gives_the_graph_the_op_runs(source: Path, tmp_path: Path) -> None:
+    out = _package(source, tmp_path / "pkg")
+
+    loaded = load_package_graph(str(out), overrides={"flow.post.op.value": "y"})
+
+    assert loaded.root == out
+    assert loaded.result == "post"
+    assert loaded.info["format"] == PACKAGE_FORMAT
+    assert loaded.request == {
+        "include": [str(out / "graphs" / "cfg" / "model.yaml")],
+        _SLOT: str(out / "weights" / "best.pth"),
+        "flow.post.op.value": "y",
+    }
+    record = Subgraph(steps=loaded.document["flow"], result=loaded.result)({})
+    assert _values(record) == {"a": 1, "weights": str(out / "weights" / "best.pth"), "b": "y"}
+
+
+def test_load_package_graph_names_its_caller_in_a_refusal(tmp_path: Path) -> None:
+    with pytest.raises(ValueError, match="CompilePackage: 'path' is blank — name the package folder"):
+        load_package_graph("", owner="CompilePackage")
+    with pytest.raises(ValueError, match=f"CompilePackage: no package at {tmp_path / 'nowhere'}"):
+        load_package_graph(str(tmp_path / "nowhere"), owner="CompilePackage")

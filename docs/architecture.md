@@ -1184,3 +1184,12 @@ New fields in `package.yaml` that a reader may ignore (bump `PACKAGE_FORMAT` whe
 meaning); a transport form (a zip of the folder); collecting more kinds of referenced files. What
 you may not do is give the op a precedence rule of its own, rewrite the author's graph files, or
 make it a `Subgraph` whose inside a tracer can replace.
+
+**Amendment (2026-10-13).** The op's loading moved into `load_package_graph(path, overrides, owner=)`,
+the ONE loader: a compiler that reads a package loads exactly the graph the op runs, through the same
+call, and names itself in the refusals (`owner`). It returns the `request` it gave `confluid.load` — the
+entry graph included, each weight slot, the overrides — so a reader needing the same document at
+another stage (its markers with their file locations) loads the same thing. A compiled form of a package
+is a compiler's own folder under `<package>/compiled/<name>/` by default; `PackageModel` replacing the
+package deletes it, which is right — it was of the old weights — and this module never reads or writes
+that folder.
