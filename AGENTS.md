@@ -13,7 +13,7 @@ Experiment tracking plus the workspace's shared trainer machinery (user-authoriz
 |---|---|
 | tracking | `tracking/`: `Tracker` + `TrackerGroup` (`base.py`); six backends, one file each (csv, mlflow, tensorboard, wandb, aim, clearml); `manifest.py`, `provenance.py`, `render.py`, `system.py` |
 | trainer API | `TrainerRunnable` (`runnable.py`) → family bases `TorchTrainerRunnable`, `KerasTrainerRunnable` → machinery bases `LightningRunnable`, `TorchLoopRunnable`, `FastaiRunnable`, `KerasRunnable`, `TensorFlowRunnable`, `HuggingFaceRunnable`, `JaxLoopRunnable`, `MlxLoopRunnable` |
-| framework-free | `metric_slots`, `metric_names`, `metric_functions`, `uri`, `run_names`, `checkpoints`, `artifacts` |
+| framework-free | `metric_slots`, `metric_names`, `metric_functions`, `uri`, `run_names`, `checkpoints`, `artifacts`, `model_package` |
 | `matrainer.torch` | `load_lightning_checkpoint`, `TorchModelFile`, metric helpers, `resolve_device`, dump spellings |
 | CLI | `cli.py` (factory), `console.py` (the `matrainer` binary), `_exports.py`, `sweep/` |
 
@@ -94,6 +94,27 @@ task semantics. A collate or batch reader written here belongs in recordstream.
 - Torch dump spellings (`torch/spellings.py`): each recipe gets a dump → load → equivalence test;
   tensors decline above `TENSOR_DUMP_CAP`; metrics never use the generic slot walk
   (`tests/test_dump_spellings.py`).
+
+## Model packages (§13)
+
+- A package is a FOLDER: `package.yaml` + `graphs/` / `weights/` when copied + `class_names.json`
+  (via `save_class_names`). The author's graph files are copied byte for byte in their own layout,
+  never rewritten; the weights path is never written into a graph — `package.yaml` maps the slot
+  (`tests/test_model_package.py::test_a_copied_package_holds_every_graph_file_the_weights_and_the_class_names`).
+- `ModelPackage` loads `{include: [graph], <slot>: <weights>, **overrides}` through `confluid.load`:
+  the one document-order rule, overrides last. Never a precedence or a spelling of its own
+  (`::test_overrides_are_applied_last`, `::test_an_override_naming_an_included_block_reaches_it`).
+- `graphs` and `weight_files` stay two separate `copy | reference` settings (user choice
+  2026-10-12: both must be possible) (`::test_graphs_and_weights_are_copied_or_referenced_independently`).
+- `ModelPackage` is a sealed op holding a private `Subgraph`, NOT a `Subgraph` subclass (a tracer
+  rebuilds subgraphs with `steps=`); its constructor reads nothing, it reloads when `path` or
+  `overrides` change, and it pickles without the loaded graph
+  (`::test_constructing_the_op_reads_nothing`, `::test_a_changed_override_takes_effect_on_the_next_record`,
+  `::test_an_op_that_has_run_pickles_without_its_loaded_graph`).
+- The writer replaces a package and refuses any other non-empty folder untouched; it writes into
+  `<output_dir>.partial` and moves it into place last
+  (`::test_a_folder_that_is_not_a_package_is_never_written_into`). `package.yaml` carries the
+  generated-file header (`::test_the_package_file_carries_the_generator_header`).
 
 ## Backend behaviour (measured; the docstrings say why)
 
