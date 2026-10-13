@@ -1193,3 +1193,63 @@ another stage (its markers with their file locations) loads the same thing. A co
 is a compiler's own folder under `<package>/compiled/<name>/` by default; `PackageModel` replacing the
 package deletes it, which is right — it was of the old weights — and this module never reads or writes
 that folder.
+
+---
+
+## 14. A resilient wrapper, not a resilient backend (2026-10-13)
+
+### Context
+
+A tracker that talks to a remote server puts the network inside the training loop: a call that
+hangs holds the loop, a call that fails loses its value, and a server that is down for ten minutes
+of a ten-hour run should cost nothing. The same four answers — a time limit per call, a queue that
+replays what the network lost in order, the bytes of a deleted artifact kept for that replay, one
+broken endpoint turned off without the others — apply to every remote backend, and none of them is
+about any backend's library.
+
+### Decision
+
+`ResilientTracker` (`tracking/resilient.py`) is a `Tracker` that holds ONE tracker and calls it
+through a thread with a time limit (`run_with_timeout`). A failure is classified once, in the
+wrapper: a network failure (`is_network_error`: a timeout, a connection error, or a message saying
+so — client libraries wrap socket errors in their own types) queues the call; a 5xx
+(`is_server_error`) turns that method off for the run; anything else is dropped with a warning. A
+new call made while the queue is not empty goes BEHIND it, so values keep their order. After
+`max_retries` failures in a row no call is attempted until `finalize`, which retries the queue and
+then ends the wrapped run. Starting the run is the wrapped tracker's first `.experiment` access,
+done once with `start_timeout`; if it fails, the wrapper is off for the run (nothing queued could
+be replayed without a run). It is a composite like `TrackerGroup`, inside the `Tracker`
+abstraction — record 2's "no view/adapter layer" is about adapting things that are NOT trackers,
+and still holds.
+
+Rejected: resilience inside each backend (it would be written six times and differ); resilience in
+`TrackerGroup` (a group's job is fan-out, and a single tracker needs it too).
+
+### Consequences
+
+- The wrapper sees only what the wrapped call raises. A backend that catches its own failures (the
+  in-tree backends log them at debug level) gets the time limits but nothing queued; a backend
+  written to be wrapped lets its failures raise.
+- A call that timed out keeps running on its thread and may still land, so a replay can record the
+  same value twice. Accepted: deduplicating would need per-call identities on the server side.
+- The wrapper owns no identity: name, run name, `save_dir`, tags and `log_dir` are the wrapped
+  tracker's, so `TrackerLogger.save_dir` (record 11) still places checkpoints under `runs/`, and the
+  artifact backups land in the same run directory.
+- `finalize` may wait `max_retries × finalize_retry_delay` plus the calls' own limits at run end.
+
+### Example
+
+```python
+from matrainer import MlflowTracker, ResilientTracker
+
+tracker = ResilientTracker(tracker=MlflowTracker(experiment_name="exp"), timeout=5.0)
+tracker.log_metrics({"val/loss": 0.4}, step=3)   # queued if the server is unreachable
+tracker.finalize()                               # the queue sent, then the run ended
+```
+
+### What you may change
+
+The classification words, the defaults, a new `Tracker` method (route it through `_call` with its
+time limit). What you may not do: let the wrapper raise into a training loop (a missing `tracker:`
+is the one configuration error it raises), call the wrapped tracker outside `run_with_timeout`, or
+let a new call overtake a queued one.

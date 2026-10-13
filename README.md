@@ -158,6 +158,54 @@ tracker.finalize("FINISHED")
 
 Trackers are `@configurable`, so they also wire straight from YAML.
 
+### A tracking server that drops out — `ResilientTracker`
+
+A tracker that talks to a remote server makes the training loop wait on the network. Wrap it in
+`ResilientTracker` and a slow or unreachable server never stops a run or loses a value:
+
+```yaml
+trackers:
+  - !class:matrainer.ResilientTracker
+    timeout: 5.0                 # seconds per call; an artifact's limit grows with its size
+    tracker: !class:matrainer.MlflowTracker
+      experiment_name: drone-classify
+      tracking_uri: https://mlflow.example.org
+```
+
+| What happens | What the wrapper does |
+|---|---|
+| a call hangs or the connection fails | after `timeout` s it queues the call; the next call replays the queue first, in order |
+| `max_retries` (10) failures in a row | stops calling the server, only queues; `finalize` makes `max_retries` more tries |
+| an artifact's file is deleted after logging | its bytes were read when it was logged, so it still uploads under its name |
+| the process dies before the queue is sent | a queued artifact has a copy under `runs/<experiment>/<run>/pending_artifacts/` |
+| the server answers 5xx on one kind of call | that kind is off for the run; every other call goes on |
+| the server refuses a call for another reason | the call is dropped with a warning |
+| the run cannot be started (`start_timeout`, 30 s) | tracking is off for this run; training carries on |
+
+What the log shows when the network drops for a while:
+
+```
+WARNING Network error in log_metrics, queued it (1/10): log_metrics timed out after 5 s
+INFO    Sent 3 queued tracking call(s) (0 still queued).
+```
+
+| Setting | Default | Meaning |
+|---|---|---|
+| `tracker` | — | the tracker to protect (required to run) |
+| `timeout` | `5.0` | seconds per metric / parameter / tag call (figures and text: at least 30 s) |
+| `start_timeout` | `30.0` | seconds to start the run |
+| `artifact_timeout` | `None` | a fixed upload limit; `None` = `max(timeout, 60 + size_MB / artifact_upload_rate_mbps)` |
+| `artifact_upload_rate_mbps` | `5.0` | the slowest upload rate the scaled limit allows for |
+| `max_retries` | `10` | failures in a row before only queueing; tries at `finalize` |
+| `finalize_retry_delay` | `1.0` | seconds between `finalize`'s tries |
+| `backup_artifacts` | `True` | write the on-disk copy of a queued artifact |
+
+**The wrapped tracker must let its failures raise** — the wrapper queues only what raises.
+`MlflowTracker` (and the other in-tree backends) catch a failed call and log it at debug level, so
+around them the wrapper bounds the time a call can take but has nothing to queue. A call that timed
+out may still land later, so its replay can record the same value twice. Rationale:
+[architecture record 14](https://github.com/Gearlux/matrainer/blob/main/docs/architecture.md).
+
 ## Choosing a backend
 
 The `Tracker` surface is the same everywhere, so the choice is about **where the results live** and

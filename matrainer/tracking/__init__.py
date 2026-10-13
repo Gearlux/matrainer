@@ -6,6 +6,8 @@ training platform.
 
 * :class:`Tracker` / :class:`TrackerGroup` — the backend ABC (shaped like
   ``pytorch_lightning.loggers.Logger``) + a fan-out composite.
+* :class:`ResilientTracker` — a composite around ONE tracker that time-limits each call and
+  queues what the network loses, replaying it in order (``resilient.py``).
 * :class:`RunManifest` — the crash-safe union of everything static about a run
   (``manifest.yaml`` + ``manifest.json``), of which each backend's native slots are
   a projection.
@@ -54,6 +56,7 @@ from matrainer.tracking.render import (
     report_matrices,
     report_vectors,
 )
+from matrainer.tracking.resilient import ResilientTracker
 from matrainer.tracking.system import MpsMetricsSampler, enable_mlflow_system_metrics, start_system_metrics_monitor
 
 #: Suffix marking a module in this package as holding a backend.
@@ -65,6 +68,7 @@ BACKEND_SUFFIX = "_backend"
 __all__ = [
     "Tracker",
     "TrackerGroup",
+    "ResilientTracker",
     "RunManifest",
     "RunStatus",
     "MpsMetricsSampler",
