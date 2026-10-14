@@ -933,6 +933,28 @@ seeded numbers recorded before this amendment are not bit-comparable across it (
 fleet's canonical moved from 2.30023455619812 to 2.285114049911499). Pinned by
 `tests/test_keras_family.py::test_the_fit_never_lets_keras_shuffle_batch_order`.
 
+
+**Amendment (2026-10-14, seventh — `_before_run`, and a setting on every torch trainer without a constructor
+change).** On a Mac, torch keeps the Apple GPU's cached memory, which is the machine's memory: an RF-DETR
+segmentation smoke run held 11 GB of an 18 GB laptop and swapped (8 min 42 s an epoch); with the allocator's LOW
+watermark at 0.5 it held 9.1-9.5 GB and the whole run took 2 min 45 s. torch reads that value from
+`PYTORCH_MPS_LOW_WATERMARK_RATIO` when the GPU is first used, so it must be set before the model is built. Two
+decisions follow. The neutral `TrainerRunnable` gains a `_before_run()` hook, no-op by default, that EVERY `run()`
+calls first (the API base's, the owned loop's, fastai's) — the one place a family can act before `initialize`.
+And the setting, `mps_low_watermark`, is a BODY slot of `TorchTrainerRunnable`, not a constructor parameter: a
+constructor parameter would have meant the same new argument in every concrete trainer's flat `__init__` (about
+sixteen classes in four consuming projects), while confluid configures a body slot from a config or the command line
+and lists it in the form-specs the same way. A hard memory LIMIT was measured and rejected:
+`torch.mps.set_per_process_memory_fraction(0.6)` stopped the run with `MPS backend out of memory`.
+
+```yaml
+runnable: !class:your.project.Trainer
+  mps_low_watermark: 0.5     # or on the command line: runnable.mps_low_watermark=0.5
+```
+
+What you may change: what a family does in `_before_run`. Not: calling it after `initialize`, or turning the
+setting into a constructor parameter of the base (every consumer's flat constructor would have to follow).
+
 ---
 
 ## 10. The trainer CLI is a factory; a project CLI is its FRAMEWORKS table (2026-08-07)

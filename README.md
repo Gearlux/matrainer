@@ -924,6 +924,27 @@ only the copy on its way to a tracker is renamed.
   who wrote `cuda` on a machine without it gets torch's own error instead of a silent fallback that
   would make the benchmark meaningless. A `Trainer` makes this choice for you; a hand-written loop
   has to make it itself, and every such loop was making it identically.
+- `apply_mps_low_watermark(value)` — on Apple's GPU, torch keeps the memory it has cached, and on a
+  Mac that memory is the machine's: a training run can swap the laptop. Every torch trainer
+  (Lightning, the owned loop, fastai, Hugging Face) takes `mps_low_watermark` and hands it to torch
+  before the model is built, so torch gives its cache back above that share of the GPU's working
+  set. Measured on an 18 GB M3 Pro (a segmentation smoke run, batch 1): unset, 11 GB, swapping, an
+  8 min 42 s epoch; `0.5`, 9.1-9.5 GB and 2 min 45 s for the whole run.
+
+  ```yaml
+  runnable: !class:your.project.Trainer
+    mps_low_watermark: 0.5      # unset: torch's default (1.4); ignored off Apple's GPU
+  ```
+
+  ```bash
+  recordstream run cfg.yaml runnable.mps_low_watermark=0.5
+  ```
+
+  It is `PYTORCH_MPS_LOW_WATERMARK_RATIO`: a value already in the environment wins (the log says
+  so), a value above the high watermark (`PYTORCH_MPS_HIGH_WATERMARK_RATIO`, torch's default 1.7)
+  is refused naming both, and a process that already used the GPU gets a warning — torch read the
+  variable then. Not a memory LIMIT: `torch.mps.set_per_process_memory_fraction(0.6)` stopped the
+  same run with `MPS backend out of memory`.
 
 ```python
 from matrainer.torch import build_metric_collection, resolve_device, scalar_metrics

@@ -141,6 +141,7 @@ class TorchLoopRunnable(TorchTrainerRunnable):
 
     # ---- run dispatch: the device brackets around the task's own initialize --------------- #
     def run(self) -> None:
+        self._before_run()
         self._device = resolve_device(self.device_choice)
         logger.info(f"{self.log_label} torch backend on {self._device}.")
         self._require_model()

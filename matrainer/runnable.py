@@ -154,7 +154,15 @@ class TrainerRunnable(ProgressReporting, ABC):
                 "`model: !lazy:your.package.YourModel {…}`, or pass `model=` to the constructor."
             )
 
+    def _before_run(self) -> None:
+        """What a family must do before the task's ``initialize`` builds anything. Default: nothing.
+
+        The torch family hands the Apple-GPU allocator its setting here — torch reads it when the GPU is first used,
+        so after ``initialize`` it would be too late.
+        """
+
     def run(self) -> None:
+        self._before_run()
         self._require_model()
         self.initialize()
         # The `@entrypoint` markers below ARE the dispatch table — a hand-written
