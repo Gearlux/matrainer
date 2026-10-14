@@ -201,6 +201,12 @@ task semantics. A collate or batch reader written here belongs in recordstream.
   line, never an error (user ruling 2026-09-27, do not re-litigate). §12. *(unpinned)*
 - `TorchModelFile`: `role="model"`, `framework="torch"`, no task; refuses a dict-holding file
   naming the `checkpoint_path` fix; own entry point (`tests/test_model_file.py`).
+- `mps_low_watermark` is a BODY slot of `TorchTrainerRunnable` (never a constructor parameter: every concrete
+  trainer gets it without its flat `__init__` listing it) and is applied by `_before_run()`, which every torch
+  `run()` calls FIRST, before `initialize` builds the model — torch reads the variable at the GPU's first use.
+  `apply_mps_low_watermark` only sets `PYTORCH_MPS_LOW_WATERMARK_RATIO`; a shell value wins; never use
+  `set_per_process_memory_fraction` (a hard limit: measured OOM). Pins: `tests/test_device.py`, the
+  `test_the_run_hands_mps_low_watermark_to_torch_before_the_task_starts` in each base's suite.
 - `resolve_device` takes an explicit choice at its word
   (`tests/test_device.py::test_an_explicit_choice_is_taken_at_its_word`).
 - `TrackerLogger.save_dir` returns `self.tracker.save_dir`, which places Lightning checkpoints

@@ -6,6 +6,12 @@ All notable changes to this project are documented here. The format follows
 
 ## [Unreleased]
 
+### Trainers
+- **`mps_low_watermark`** on every torch trainer (`TorchTrainerRunnable`: the Lightning, owned-loop, fastai and
+  Hugging Face bases) and **`matrainer.torch.apply_mps_low_watermark`** — on Apple's GPU, torch gives its cached
+  memory back above that share of the GPU's working set (`PYTORCH_MPS_LOW_WATERMARK_RATIO`, set before the model is
+  built). A config or the command line sets it (`runnable.mps_low_watermark=0.5`); unset leaves torch's default.
+
 ### Tracking
 - **`ResilientTracker`** — wraps one tracker so a slow or unreachable tracking server never stops a
   run or loses a value: a time limit per call (an artifact's grows with its size), a call the
