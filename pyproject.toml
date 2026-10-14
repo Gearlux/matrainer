@@ -36,7 +36,7 @@ dependencies = [
     "confluid>=0.3.1",
     # recordstream ships as a pre-release (0.1.0a1). Under PEP 440 a plain `>=0.1.0`
     # EXCLUDES every pre-release of 0.1.0, so it would resolve to nothing.
-    "recordstream>=0.1.0a1",
+    "recordstream>=0.1.0a3",
     "numpy",
     # coolname generates the default random run names (e.g. ``train_funny_rabbit``) in
     # matrainer.run_names — offline adjective_noun slugs, no network.
@@ -90,7 +90,7 @@ clearml = ["clearml>=2.0"]
 # `recordstream[keras]` is declared because the callback imports keras THROUGH
 # `recordstream.keras`, which sets KERAS_BACKEND before keras loads (that extra adds only the
 # same `keras` named above; recordstream itself is already a hard dependency).
-keras = ["keras>=3.0", "recordstream[keras]>=0.1.0a1"]
+keras = ["keras>=3.0", "recordstream[keras]>=0.1.0a3"]
 # Only for a consumer that genuinely wants the TensorFlow ENGINE underneath Keras 3.
 tensorflow = ["matrainer[keras]", "tensorflow>=2.16"]
 # The remaining framework-family runnable bases (the per-framework trainer machinery that
@@ -100,7 +100,7 @@ tensorflow = ["matrainer[keras]", "tensorflow>=2.16"]
 # the fastcore major the first bound excludes) — removable when upstream fixes them.
 fastai = ["matrainer[torch]", "fastai", "fastcore<2", "fastprogress<1.1"]
 huggingface = ["matrainer[torch]", "transformers>=4.49", "accelerate"]
-jax = ["flax", "optax", "recordstream[keras]>=0.1.0a1"]
+jax = ["flax", "optax", "recordstream[keras]>=0.1.0a3"]
 mlx = ["mlx; sys_platform == 'darwin' and platform_machine == 'arm64'"]
 # Everything a workspace install wants.
 all = ["matrainer[lightning,mlflow,tensorboard,wandb,aim,clearml,keras,plot]"]
