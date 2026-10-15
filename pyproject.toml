@@ -5,7 +5,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "matrainer"
-version = "0.1.0a1"
+version = "0.1.0a2"
 description = "Experiment tracking for any training platform (MLflow / TensorBoard / CSV / W&B)."
 readme = "README.md"
 authors = [{name = "Gert Behiels"}]
@@ -27,16 +27,18 @@ classifiers = [
 # library — those live behind the extras below, each imported lazily (matrainer._imports.require).
 # It is not small on disk: recordstream is core (the runnable base and the label-map artifacts
 # import it) and brings its data stack — measured 2026-09-26, a bare install is 65 packages / 457 MB.
-# Floors are what the suite actually runs against — measured 2026-09-27 in a clean venv
-# resolving from PyPI alone (825 passed). The old `liquifai>=0.1.0` / `loggair>=0.1.0`
-# described a combination nobody could install: recordstream 0.1.0a1 requires liquifai>=0.2.0.
+# Floors are what the suite actually runs against — measured 2026-10-14 in a clean Python 3.12 venv:
+# the 0.1.0a2 wheel with every workspace dependency AT its floor (liquifai 0.3.0, loggair 0.2.0,
+# confluid 0.4.1, recordstream 0.1.0a3) and CI's extras, from PyPI alone (1015 passed, 4 skipped).
 dependencies = [
     "liquifai>=0.3.0",
     "loggair>=0.2.0",
-    "confluid>=0.3.1",
-    # recordstream ships as a pre-release (0.1.0a1). Under PEP 440 a plain `>=0.1.0`
-    # EXCLUDES every pre-release of 0.1.0, so it would resolve to nothing.
-    "recordstream>=0.1.0a1",
+    # recordstream 0.1.0a3 requires confluid>=0.4.1, so nothing older can be installed beside it.
+    "confluid>=0.4.1",
+    # recordstream ships as pre-releases (0.1.0aN). Under PEP 440 a plain `>=0.1.0` EXCLUDES every
+    # pre-release of 0.1.0, so it would resolve to nothing. 0.1.0a3 is the first with
+    # `recordstream.flow.subgraph`, which the model packages import.
+    "recordstream>=0.1.0a3",
     "numpy",
     # coolname generates the default random run names (e.g. ``train_funny_rabbit``) in
     # matrainer.run_names — offline adjective_noun slugs, no network.
@@ -90,7 +92,7 @@ clearml = ["clearml>=2.0"]
 # `recordstream[keras]` is declared because the callback imports keras THROUGH
 # `recordstream.keras`, which sets KERAS_BACKEND before keras loads (that extra adds only the
 # same `keras` named above; recordstream itself is already a hard dependency).
-keras = ["keras>=3.0", "recordstream[keras]>=0.1.0a1"]
+keras = ["keras>=3.0", "recordstream[keras]>=0.1.0a3"]
 # Only for a consumer that genuinely wants the TensorFlow ENGINE underneath Keras 3.
 tensorflow = ["matrainer[keras]", "tensorflow>=2.16"]
 # The remaining framework-family runnable bases (the per-framework trainer machinery that
@@ -100,7 +102,7 @@ tensorflow = ["matrainer[keras]", "tensorflow>=2.16"]
 # the fastcore major the first bound excludes) — removable when upstream fixes them.
 fastai = ["matrainer[torch]", "fastai", "fastcore<2", "fastprogress<1.1"]
 huggingface = ["matrainer[torch]", "transformers>=4.49", "accelerate"]
-jax = ["flax", "optax", "recordstream[keras]>=0.1.0a1"]
+jax = ["flax", "optax", "recordstream[keras]>=0.1.0a3"]
 mlx = ["mlx; sys_platform == 'darwin' and platform_machine == 'arm64'"]
 # Everything a workspace install wants.
 all = ["matrainer[lightning,mlflow,tensorboard,wandb,aim,clearml,keras,plot]"]

@@ -33,6 +33,7 @@ from torchmetrics import Metric, MetricCollection
 from matrainer.metric_names import MetricNames
 from matrainer.metric_slots import merge_metric_specs
 from matrainer.runnable import TrainerRunnable
+from matrainer.torch.device import apply_mps_low_watermark
 from matrainer.torch.metrics import MetricsSpec, build_metric_collection, scalar_metrics, write_collection_sidecar
 from matrainer.tracking.base import Tracker
 
@@ -93,6 +94,10 @@ class TorchTrainerRunnable(TrainerRunnable, TorchRunner):
         # only ever comes from the base's own zero-arg construction — hence the cast rather
         # than an `Optional` that would force a None-check on every downstream read.
         self.model: Partial[nn.Module] = cast(Partial[nn.Module], model)
+        # A BODY slot, not a constructor parameter: every torch trainer gets it without its flat constructor listing it
+        # (a config or the command line sets `runnable.mps_low_watermark: 0.5`; the form-specs list it all the same).
+        # Handed to torch by `_before_run`; `None` leaves torch's own default (see `apply_mps_low_watermark`).
+        self.mps_low_watermark: Optional[float] = None
         # Sentinel: `None` means "not chosen" — a live default could not be told apart from a
         # user's explicit choice; `_resolve_task_defaults()` fills it via the task hooks.
         # `Partial[...]`: a `!class:` loss stays a deferred marker until the run flows it.
@@ -119,6 +124,10 @@ class TorchTrainerRunnable(TrainerRunnable, TorchRunner):
     def __needs_autograd__(self) -> bool:  # type: ignore[override]  # dynamic per-task override of the marker
         """Only ``fit`` needs autograd; evaluate / test / predict are inference-only."""
         return self.task == "fit"
+
+    def _before_run(self) -> None:
+        """The Apple-GPU allocator's low watermark, set before ``initialize`` builds the model."""
+        apply_mps_low_watermark(self.mps_low_watermark)
 
     # ---- the torch-typed task hooks ------------------------------------------------------- #
     def _targets(self, batch: Record) -> Tensor:

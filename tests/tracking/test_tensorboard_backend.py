@@ -144,3 +144,41 @@ def test_log_hyperparams_drops_what_tensorboard_rejects(fake_tb: Any, tmp_path: 
     finally:
         monkey.undo()
     assert recorded == [{"lr": 0.1, "name": "x"}]
+
+
+# --- raise_errors: a refused call is a debug line, and raised as well when asked ----------------
+
+SAID_NO = RuntimeError("tensorboard said no")
+
+
+def _said_no(*args: Any, **kwargs: Any) -> Any:
+    raise SAID_NO
+
+
+def _manifest(tmp_path: Path) -> Any:
+    from matrainer.tracking.manifest import RunManifest
+
+    return RunManifest(run_dir=tmp_path / "manifest-home", handle_interrupts=False)
+
+
+#: (writer method refused, the tracker call that writes through it)
+_ONE_REQUEST = [
+    ("add_hparams", lambda t, tmp: t.log_hyperparams({"lr": 0.1})),
+    ("add_figure", lambda t, tmp: t.log_figure("val/cm", object())),
+    ("add_text", lambda t, tmp: t.log_text("val/report", "|a|")),
+    ("add_text", lambda t, tmp: t.log_manifest(_manifest(tmp))),
+]
+
+
+@pytest.mark.parametrize("raise_errors", [False, True])
+@pytest.mark.parametrize("method, call", _ONE_REQUEST, ids=[f"{m}-{i}" for i, (m, _) in enumerate(_ONE_REQUEST)])
+def test_a_refused_write_is_raised_only_when_asked(
+    fake_tb: Any, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, method: str, call: Any, raise_errors: bool
+) -> None:
+    tracker = TensorBoardTracker(save_dir=str(tmp_path / "tb"), raise_errors=raise_errors)
+    monkeypatch.setattr(tracker.experiment, method, _said_no)
+    if raise_errors:
+        with pytest.raises(RuntimeError, match="tensorboard said no"):
+            call(tracker, tmp_path)
+    else:
+        call(tracker, tmp_path)

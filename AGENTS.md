@@ -7,11 +7,11 @@ repeated here.
 ## Current state
 
 Experiment tracking plus the workspace's shared trainer machinery (user-authorized 2026-08-06,
-§9). On PyPI as pre-release `0.1.0a1`; the repo is private.
+§9). On PyPI as pre-releases (`0.1.0aN`, the version in `pyproject.toml`); the repo is private.
 
 | area | modules |
 |---|---|
-| tracking | `tracking/`: `Tracker` + `TrackerGroup` (`base.py`); six backends, one file each (csv, mlflow, tensorboard, wandb, aim, clearml); `manifest.py`, `provenance.py`, `render.py`, `system.py` |
+| tracking | `tracking/`: `Tracker` + `TrackerGroup` (`base.py`); `ResilientTracker` (`resilient.py`); six backends, one file each (csv, mlflow, tensorboard, wandb, aim, clearml); `manifest.py`, `provenance.py`, `render.py`, `system.py` |
 | trainer API | `TrainerRunnable` (`runnable.py`) → family bases `TorchTrainerRunnable`, `KerasTrainerRunnable` → machinery bases `LightningRunnable`, `TorchLoopRunnable`, `FastaiRunnable`, `KerasRunnable`, `TensorFlowRunnable`, `HuggingFaceRunnable`, `JaxLoopRunnable`, `MlxLoopRunnable` |
 | framework-free | `metric_slots`, `metric_names`, `metric_functions`, `uri`, `run_names`, `checkpoints`, `artifacts`, `model_package` |
 | `matrainer.torch` | `load_lightning_checkpoint`, `TorchModelFile`, metric helpers, `resolve_device`, dump spellings |
@@ -26,6 +26,23 @@ task semantics. A collate or batch reader written here belongs in recordstream.
 
 ## Tracking
 
+- `ResilientTracker` (`tracking/resilient.py`) is a composite `Tracker` like `TrackerGroup`, not a
+  layer over the abstraction (the next rule's "no wrapper layer" means no adapter of NON-trackers).
+  Every wrapped call goes through `run_with_timeout`; a new call never overtakes a queued one; the
+  wrapper never raises into a loop except for a missing `tracker:`; its name, run name, `save_dir`
+  and `log_dir` are the wrapped tracker's (`tests/tracking/test_resilient.py`). §14.
+- `raise_errors` (every tracker's constructor, default `False`): off, a failed backend call is a
+  debug line and the call returns — never change that default; on, the error is raised after the
+  same line. A loop over names tries every name and raises the first failure; a call made of parts
+  (`log_manifest`) runs them through `Tracker._run_all`. `ResilientTracker.inner` turns it on.
+  Quiet even when on: Aim's starting tags, W&B's `_add_reference`, MLflow's monitor shutdown. A new
+  backend's failure handler logs, then calls `self._raise_failure(exc)`
+  (`tests/tracking/test_base.py::test_every_backend_takes_raise_errors_in_its_constructor`, each
+  backend's `test_a_refused_*`, `tests/tracking/test_mlflow_backend.py::test_a_resilient_tracker_replays_the_metric_mlflow_could_not_send`). §14.
+- `is_server_error` reads the status the error carries (`status_code`, `response.status_code`,
+  `get_http_status_code()`); a message counts only when it writes a 5xx status, never a bare 500
+  (`tests/tracking/test_resilient.py::test_a_server_error_is_read_from_its_status`,
+  `::test_a_refusal_naming_500_drops_that_call_only`).
 - `Tracker` is the whole abstraction; no wrapper layer over it. Backends are zero-arg, build their
   handle on first `.experiment`, and import their library inside methods via `require(module,
   extra)`. `import matrainer` loads no tracker or framework (`tests/test_light_import.py`). §2.
@@ -196,6 +213,12 @@ task semantics. A collate or batch reader written here belongs in recordstream.
   line, never an error (user ruling 2026-09-27, do not re-litigate). §12. *(unpinned)*
 - `TorchModelFile`: `role="model"`, `framework="torch"`, no task; refuses a dict-holding file
   naming the `checkpoint_path` fix; own entry point (`tests/test_model_file.py`).
+- `mps_low_watermark` is a BODY slot of `TorchTrainerRunnable` (never a constructor parameter: every concrete
+  trainer gets it without its flat `__init__` listing it) and is applied by `_before_run()`, which every torch
+  `run()` calls FIRST, before `initialize` builds the model — torch reads the variable at the GPU's first use.
+  `apply_mps_low_watermark` only sets `PYTORCH_MPS_LOW_WATERMARK_RATIO`; a shell value wins; never use
+  `set_per_process_memory_fraction` (a hard limit: measured OOM). Pins: `tests/test_device.py`, the
+  `test_the_run_hands_mps_low_watermark_to_torch_before_the_task_starts` in each base's suite.
 - `resolve_device` takes an explicit choice at its word
   (`tests/test_device.py::test_an_explicit_choice_is_taken_at_its_word`).
 - `TrackerLogger.save_dir` returns `self.tracker.save_dir`, which places Lightning checkpoints
@@ -235,9 +258,11 @@ task semantics. A collate or batch reader written here belongs in recordstream.
   library goes behind an extra plus a lazy `require(...)`.
 - Releases use the hand-written `release.yml` (scaffold owns only `ci.yml`/`Jenkinsfile*`), with
   recordstream's discipline: an extra may name only a PyPI package (the release resolves every
-  extra); every workspace spec on matrainer, extras included, reads `>=0.1.0a1` (aisland
-  `tests/test_workspace_dependency_specs.py`) until a final `0.1.0`, then all change in one pass;
-  floors state what the suite runs against; README links are absolute
+  extra); a workspace spec on matrainer reads the first pre-release with what that project imports
+  (`>=0.1.0a2` for torpaido and waivefront, which use the model packages; `>=0.1.0a1` elsewhere) and
+  rises only when the project starts importing something newer (user choice 2026-10-14; aisland
+  `tests/test_workspace_dependency_specs.py` checks each is satisfiable); floors state what the
+  suite runs against; README links are absolute
   (`tests/test_docs_links.py`); the newest CHANGELOG entry is the version (`tests/test_packaging.py`).
 - CI runs `mypy .` here with only its extras and stricter flags: list every extra-gated import CI
   lacks in `[[tool.mypy.overrides]] ignore_missing_imports`, and reproduce CI in a throwaway

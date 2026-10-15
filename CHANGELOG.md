@@ -4,7 +4,26 @@ All notable changes to this project are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and the versioning is
 [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [Unreleased]
+## [0.1.0a2] — 2026-10-15
+
+### Trainers
+- **`mps_low_watermark`** on every torch trainer (`TorchTrainerRunnable`: the Lightning, owned-loop, fastai and
+  Hugging Face bases) and **`matrainer.torch.apply_mps_low_watermark`** — on Apple's GPU, torch gives its cached
+  memory back above that share of the GPU's working set (`PYTORCH_MPS_LOW_WATERMARK_RATIO`, set before the model is
+  built). A config or the command line sets it (`runnable.mps_low_watermark=0.5`); unset leaves torch's default.
+
+### Tracking
+- **`ResilientTracker`** — wraps one tracker so a slow or unreachable tracking server never stops a
+  run or loses a value: a time limit per call (an artifact's grows with its size), a call the
+  network lost queued and replayed in order, a queued artifact's bytes kept (and backed up under
+  `runs/<experiment>/<run>/pending_artifacts/`) so a deleted file still uploads, a 5xx turning off
+  only that kind of call (the status read from the error, never a 500 in its message), and a run
+  that cannot start turning tracking off instead of stopping training. It turns the wrapped
+  tracker's `raise_errors` on, so a failed MLflow, W&B, Aim or ClearML call is queued and replayed.
+- **`raise_errors`** on every tracker, off by default: a failed backend call is logged at debug
+  level and the run goes on, as before; on, the error is raised as well. A call that sends several
+  values tries every one and raises the first failure; `log_manifest` sends every part before it
+  raises.
 
 ### Model packages
 - **`matrainer.model_package`** — a model's whole inference graph (a flow graph: preprocessing, the
@@ -12,7 +31,14 @@ All notable changes to this project are documented here. The format follows
   runnable) writes one, copying or referencing the graph files and the weights files separately;
   `package.yaml` lists every file with its SHA-256 and the installed versions of the graph's
   distributions. `ModelPackage` (an op) runs a package as one step, with `overrides` into its graph
-  applied last. `read_package` returns the package file as plain data.
+  applied last. `read_package` returns the package file as plain data. `load_package_graph` loads a
+  package's graph the one way the op runs it — for another reader of packages, such as a compiler —
+  and returns a `LoadedPackage` holding the document it gave `confluid.load`, so another stage of the
+  same document can be loaded.
+
+### Dependencies
+- `recordstream>=0.1.0a3` (core, `[keras]`, `[jax]`) — the first release with the flow subgraph the
+  model packages run; `confluid>=0.4.1`, which that recordstream requires.
 
 ## [0.1.0a1] — 2026-09-27
 

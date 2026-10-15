@@ -29,7 +29,7 @@ it?" — is a per-backend concern and lives in the consuming runnable as an over
 
 import matrainer.torch.spellings  # noqa: F401 — registers the torch-family dump spellings (see that module)
 from matrainer.torch.checkpoint import load_lightning_checkpoint
-from matrainer.torch.device import Device, resolve_device
+from matrainer.torch.device import Device, apply_mps_low_watermark, resolve_device
 from matrainer.torch.loop import TorchLoopRunnable
 from matrainer.torch.metrics import (
     MetricPreset,
@@ -52,6 +52,7 @@ __all__ = [
     "build_metric_collection",
     "coerce_metric_value",
     "load_lightning_checkpoint",
+    "apply_mps_low_watermark",
     "resolve_device",
     "scalar_metrics",
     "write_collection_sidecar",

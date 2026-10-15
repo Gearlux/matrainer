@@ -17,7 +17,7 @@
 #
 # Publish ORDER: loggair -> confluid -> liquifai -> recordstream are all on PyPI
 # already, and this package declares floors on all four, so it publishes after
-# them. The task packages that declare `matrainer>=0.1.0a1` publish after THIS one.
+# them. The packages that declare a `matrainer` floor publish after THIS one.
 # =========================================================================
 name: Release to PyPI
 
@@ -83,6 +83,21 @@ jobs:
         run_dir = Path(tracker.log_dir)
         for name in ("manifest.yaml", "manifest.json", "metrics.csv"):
             assert (run_dir / name).is_file(), f"{name} missing from {sorted(p.name for p in run_dir.iterdir())}"
+
+        # The resilient wrapper around the same backend: it switches the backend's `raise_errors` on,
+        # and a call that reached it leaves nothing queued.
+        from matrainer import ResilientTracker
+        wrapped = ResilientTracker(tracker=CsvTracker(experiment_name="smoke", run_name="resilient", save_dir=tempfile.mkdtemp()))
+        wrapped.log_metrics({"train/loss": 1.0}, step=0)
+        assert wrapped.inner.raise_errors and wrapped.pending == [], wrapped.pending
+        assert (Path(wrapped.log_dir) / "metrics.csv").is_file()
+
+        # The model packages: importable on the core install, and listed through the entry point a
+        # discovery service reads — an install whose metadata lacks it lists nothing.
+        from importlib.metadata import entry_points
+        from matrainer.model_package import ModelPackage, PackageModel
+        listed = {ep.value for ep in entry_points(group="confluid.configurables")}
+        assert "matrainer.model_package" in listed, sorted(listed)
 
         # `__version__` is the RELEASED number: read from the wheel's own metadata, which the
         # tag guard above matched to pyproject.toml. Missing or typed-in-and-stale fails here,

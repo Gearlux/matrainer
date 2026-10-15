@@ -144,6 +144,22 @@ line, no `__all__` entry, and no registry edit. `discover_backends()` returns th
 it. A backend shipped by a *different* distribution is discovered through the
 `confluid.configurables` entry point instead, with no change here at all.
 
+**A failed call never stops the run.** A backend call the server refused or never answered is
+logged at debug level and the call returns, so a tracking outage costs a value, not a training run.
+Set `raise_errors` on a tracker to have the error raised as well, after its debug line:
+
+```yaml
+trackers:
+  - !class:matrainer.MlflowTracker
+    tracking_uri: https://mlflow.example.org
+    raise_errors: true      # default false; a failed call now raises into the training loop
+```
+
+A call that sends several values (MLflow sends each parameter, metric and tag on a request of its
+own) still tries every one and raises the first failure, and `log_manifest` sends every part — the
+files, the parameters, each native slot — before it raises. `ResilientTracker` (below) turns
+`raise_errors` on for the tracker it wraps: what a call raises is what the wrapper can queue.
+
 `TrackerGroup([...])` fans one call out to several backends behind the same surface.
 
 ```python
@@ -157,6 +173,55 @@ tracker.finalize("FINISHED")
 ```
 
 Trackers are `@configurable`, so they also wire straight from YAML.
+
+### A tracking server that drops out — `ResilientTracker`
+
+A tracker that talks to a remote server makes the training loop wait on the network. Wrap it in
+`ResilientTracker` and a slow or unreachable server never stops a run or loses a value:
+
+```yaml
+trackers:
+  - !class:matrainer.ResilientTracker
+    timeout: 5.0                 # seconds per call; an artifact's limit grows with its size
+    tracker: !class:matrainer.MlflowTracker
+      experiment_name: drone-classify
+      tracking_uri: https://mlflow.example.org
+```
+
+| What happens | What the wrapper does |
+|---|---|
+| a call hangs or the connection fails | after `timeout` s it queues the call; the next call replays the queue first, in order |
+| `max_retries` (10) failures in a row | stops calling the server, only queues; `finalize` makes `max_retries` more tries |
+| an artifact's file is deleted after logging | its bytes were read when it was logged, so it still uploads under its name |
+| the process dies before the queue is sent | a queued artifact has a copy under `runs/<experiment>/<run>/pending_artifacts/` |
+| the server answers 5xx on one kind of call | that kind is off for the run; every other call goes on (the status is read from the error, never a 500 in its message) |
+| the server refuses a call for another reason | the call is dropped with a warning |
+| the run cannot be started (`start_timeout`, 30 s) | tracking is off for this run; training carries on |
+
+What the log shows when the network drops for a while:
+
+```
+WARNING Network error in log_metrics, queued it (1/10): log_metrics timed out after 5 s
+INFO    Sent 3 queued tracking call(s) (0 still queued).
+```
+
+| Setting | Default | Meaning |
+|---|---|---|
+| `tracker` | — | the tracker to protect (required to run) |
+| `timeout` | `5.0` | seconds per metric / parameter / tag call (figures and text: at least 30 s) |
+| `start_timeout` | `30.0` | seconds to start the run |
+| `artifact_timeout` | `None` | a fixed upload limit; `None` = `max(timeout, 60 + size_MB / artifact_upload_rate_mbps)` |
+| `artifact_upload_rate_mbps` | `5.0` | the slowest upload rate the scaled limit allows for |
+| `max_retries` | `10` | failures in a row before only queueing; tries at `finalize` |
+| `finalize_retry_delay` | `1.0` | seconds between `finalize`'s tries |
+| `backup_artifacts` | `True` | write the on-disk copy of a queued artifact |
+
+**The wrapper turns the wrapped tracker's `raise_errors` on** the first time it uses it — a tracker
+keeps a failed call to itself by default, which would leave nothing to queue — so the configuration
+above needs nothing more. A replayed call is sent whole: a call that timed out may still land later,
+and a call that names several values may have sent some before the network dropped, so a replay can
+record a metric point twice (MLflow accepts a parameter re-sent with the same value). Rationale:
+[architecture record 14](https://github.com/Gearlux/matrainer/blob/main/docs/architecture.md).
 
 ## Choosing a backend
 
@@ -876,6 +941,27 @@ only the copy on its way to a tracker is renamed.
   who wrote `cuda` on a machine without it gets torch's own error instead of a silent fallback that
   would make the benchmark meaningless. A `Trainer` makes this choice for you; a hand-written loop
   has to make it itself, and every such loop was making it identically.
+- `apply_mps_low_watermark(value)` — on Apple's GPU, torch keeps the memory it has cached, and on a
+  Mac that memory is the machine's: a training run can swap the laptop. Every torch trainer
+  (Lightning, the owned loop, fastai, Hugging Face) takes `mps_low_watermark` and hands it to torch
+  before the model is built, so torch gives its cache back above that share of the GPU's working
+  set. Measured on an 18 GB M3 Pro (a segmentation smoke run, batch 1): unset, 11 GB, swapping, an
+  8 min 42 s epoch; `0.5`, 9.1-9.5 GB and 2 min 45 s for the whole run.
+
+  ```yaml
+  runnable: !class:your.project.Trainer
+    mps_low_watermark: 0.5      # unset: torch's default (1.4); ignored off Apple's GPU
+  ```
+
+  ```bash
+  recordstream run cfg.yaml runnable.mps_low_watermark=0.5
+  ```
+
+  It is `PYTORCH_MPS_LOW_WATERMARK_RATIO`: a value already in the environment wins (the log says
+  so), a value above the high watermark (`PYTORCH_MPS_HIGH_WATERMARK_RATIO`, torch's default 1.7)
+  is refused naming both, and a process that already used the GPU gets a warning — torch read the
+  variable then. Not a memory LIMIT: `torch.mps.set_per_process_memory_fraction(0.6)` stopped the
+  same run with `MPS backend out of memory`.
 
 ```python
 from matrainer.torch import build_metric_collection, resolve_device, scalar_metrics

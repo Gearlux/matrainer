@@ -473,3 +473,163 @@ def test_a_zoo_uri_is_not_registered_as_an_input_model(fake_clearml: Any, tmp_pa
     section = _FakeTask.instances[0].connected["models"]
     assert section["0.uri"] == "hf://models/timm/x.r224", "the zoo model must stay in the section"
     assert section["1.uri"] == weights.as_uri()
+
+
+# --- raise_errors: a refused call is a debug line, and raised as well when asked ----------------
+
+SAID_NO = RuntimeError("clearml said no")
+
+
+def _said_no(*args: Any, **kwargs: Any) -> Any:
+    raise SAID_NO
+
+
+def _file(tmp_path: Path) -> Path:
+    path = tmp_path / "a.txt"
+    path.write_text("A")
+    return path
+
+
+#: (where the refusal is put, its method, the tracker call that sends one request there)
+_ONE_REQUEST = [
+    ("task", "connect", lambda t, tmp: t.log_hyperparams({"lr": 0.1})),
+    ("task", "add_tags", lambda t, tmp: t.set_tags({"stage": "smoke"})),
+    ("task", "upload_artifact", lambda t, tmp: t.log_artifact(_file(tmp))),
+    ("task", "upload_artifact", lambda t, tmp: t.log_text("val/report", "|a|")),
+    ("logger", "report_matplotlib_figure", lambda t, tmp: t.log_figure("val/cm", object())),
+    ("task", "close", lambda t, tmp: t.finalize("success")),
+]
+
+
+@pytest.mark.parametrize("raise_errors", [False, True])
+@pytest.mark.parametrize(
+    "where, method, call", _ONE_REQUEST, ids=[f"{m}-{i}" for i, (_, m, _) in enumerate(_ONE_REQUEST)]
+)
+def test_a_refused_request_is_raised_only_when_asked(
+    fake_clearml: Any,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    where: str,
+    method: str,
+    call: Any,
+    raise_errors: bool,
+) -> None:
+    tracker = ClearMLTracker(log_system_metrics=False, raise_errors=raise_errors)
+    task = tracker.experiment
+    monkeypatch.setattr(task if where == "task" else task.logger, method, _said_no)
+    if raise_errors:
+        with pytest.raises(RuntimeError, match="clearml said no"):
+            call(tracker, tmp_path)
+    else:
+        call(tracker, tmp_path)
+
+
+@pytest.mark.parametrize("raise_errors", [False, True])
+def test_a_refused_metric_does_not_stop_the_others(
+    fake_clearml: Any, monkeypatch: pytest.MonkeyPatch, raise_errors: bool
+) -> None:
+    tracker = ClearMLTracker(log_system_metrics=False, raise_errors=raise_errors)
+    reporter = tracker.experiment.logger
+    reporting = reporter.report_scalar
+
+    def report(**kwargs: Any) -> None:
+        if kwargs["series"] == "b":
+            raise SAID_NO
+        reporting(**kwargs)
+
+    monkeypatch.setattr(reporter, "report_scalar", report)
+    if raise_errors:
+        with pytest.raises(RuntimeError, match="clearml said no"):
+            tracker.log_metrics({"train/a": 1.0, "train/b": 2.0, "train/c": 3.0}, step=1)
+    else:
+        tracker.log_metrics({"train/a": 1.0, "train/b": 2.0, "train/c": 3.0}, step=1)
+    assert [series for _, series, _, _ in reporter.scalars] == ["a", "c"]
+
+
+@pytest.mark.parametrize("raise_errors", [False, True])
+def test_a_refused_configuration_does_not_stop_the_sections(
+    fake_clearml: Any, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, raise_errors: bool
+) -> None:
+    tracker = ClearMLTracker(log_system_metrics=False, raise_errors=raise_errors)
+    task = tracker.experiment
+    monkeypatch.setattr(task, "connect_configuration", _said_no)
+    if raise_errors:
+        with pytest.raises(RuntimeError, match="clearml said no"):
+            tracker.log_manifest(build_manifest(tmp_path))
+    else:
+        tracker.log_manifest(build_manifest(tmp_path))
+    assert {"datasets", "models"} <= set(task.connected)
+
+
+def _manifest_with_two_files(tmp_path: Any) -> Any:
+    from matrainer.tracking.manifest import RunManifest
+
+    m = RunManifest(run_dir=tmp_path / "run", handle_interrupts=False)
+    for name in ("a", "b"):
+        m.add("models", {"kind": "file", "name": f"/w/{name}.ckpt", "uri": f"file:///w/{name}.ckpt", "role": name})
+    return m
+
+
+@pytest.mark.parametrize("raise_errors", [False, True])
+def test_a_refused_registration_does_not_stop_the_others(
+    fake_clearml: Any, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, raise_errors: bool
+) -> None:
+    importing = _FakeInputModel.import_model
+
+    def import_model(**kwargs: Any) -> Any:
+        if kwargs["weights_url"] == "file:///w/a.ckpt":
+            raise SAID_NO
+        return importing(**kwargs)
+
+    monkeypatch.setattr(_FakeInputModel, "import_model", import_model)
+    tracker = ClearMLTracker(log_system_metrics=False, raise_errors=raise_errors)
+    if raise_errors:
+        with pytest.raises(RuntimeError, match="clearml said no"):
+            tracker.log_manifest(_manifest_with_two_files(tmp_path))
+    else:
+        tracker.log_manifest(_manifest_with_two_files(tmp_path))
+    assert [m["weights_url"] for m in _FakeInputModel.imported] == ["file:///w/b.ckpt"]
+
+
+@pytest.mark.parametrize("raise_errors", [False, True])
+def test_a_refused_model_link_keeps_the_registration(
+    fake_clearml: Any, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, raise_errors: bool
+) -> None:
+    tracker = ClearMLTracker(log_system_metrics=False, raise_errors=raise_errors)
+    task = tracker.experiment
+    connecting = task.connect
+
+    def connect(mutable: Any, name: Optional[str] = None) -> Any:
+        if str(name).startswith("model:"):
+            raise SAID_NO
+        return connecting(mutable, name=name)
+
+    monkeypatch.setattr(task, "connect", connect)
+    if raise_errors:
+        with pytest.raises(RuntimeError, match="clearml said no"):
+            tracker.log_manifest(_manifest_with_models(tmp_path))
+    else:
+        tracker.log_manifest(_manifest_with_models(tmp_path))
+    assert list(tracker._input_models) == ["file:///w/last.ckpt"]  # a retry will not register it again
+
+
+@pytest.mark.parametrize("raise_errors", [False, True])
+def test_a_refused_section_does_not_stop_the_others(
+    fake_clearml: Any, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, raise_errors: bool
+) -> None:
+    tracker = ClearMLTracker(log_system_metrics=False, raise_errors=raise_errors)
+    task = tracker.experiment
+    connecting = task.connect
+
+    def connect(mutable: Any, name: Optional[str] = None) -> Any:
+        if name == "datasets":
+            raise SAID_NO
+        return connecting(mutable, name=name)
+
+    monkeypatch.setattr(task, "connect", connect)
+    if raise_errors:
+        with pytest.raises(RuntimeError, match="clearml said no"):
+            tracker.log_manifest(build_manifest(tmp_path))
+    else:
+        tracker.log_manifest(build_manifest(tmp_path))
+    assert "models" in task.connected and "datasets" not in task.connected

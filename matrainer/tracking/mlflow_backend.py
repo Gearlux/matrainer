@@ -18,6 +18,7 @@ from __future__ import annotations
 import hashlib
 import json
 import re
+from functools import partial
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Dict, Mapping, Optional, Union
 
@@ -72,6 +73,7 @@ class MlflowTracker(Tracker):
         tracking_uri: MLflow tracking URI; ``None`` uses the ambient
             ``MLFLOW_TRACKING_URI`` / local ``mlruns``.
         log_system_metrics: Start CPU/RAM/disk (+ Apple MPS) sampling for the run.
+        raise_errors: Raise a failed call's error after its debug line (see :class:`Tracker`).
     """
 
     def __init__(
@@ -82,8 +84,9 @@ class MlflowTracker(Tracker):
         tags: Optional[Mapping[str, str]] = None,
         tracking_uri: Optional[str] = None,
         log_system_metrics: bool = True,
+        raise_errors: bool = False,
     ) -> None:
-        super().__init__(experiment_name, run_name, save_dir, tags)
+        super().__init__(experiment_name, run_name, save_dir, tags, raise_errors)
         self.tracking_uri = tracking_uri
         self.log_system_metrics = log_system_metrics
         self._client: Optional[Any] = None
@@ -129,28 +132,37 @@ class MlflowTracker(Tracker):
 
     def log_hyperparams(self, params: Mapping[str, Any]) -> None:
         client = self.experiment
+        failed: Optional[Exception] = None
         for key, value in params.items():
             try:
                 client.log_param(self._run_id, str(key), value)
-            except Exception as exc:  # pragma: no cover - mlflow rejects re-logged params
+            except Exception as exc:  # mlflow rejects a re-logged param with a changed value
                 logger.debug(f"MLflow log_param failed for {key}: {exc}")
+                failed = failed or exc
+        self._raise_failure(failed)
 
     def log_metrics(self, metrics: Mapping[str, float], step: Optional[int] = None) -> None:
         client = self.experiment
+        failed: Optional[Exception] = None
         for key, value in metrics.items():
             try:
                 client.log_metric(self._run_id, str(key), float(value), step=step or 0)
-            except Exception as exc:  # pragma: no cover - defensive
+            except Exception as exc:
                 logger.debug(f"MLflow log_metric failed for {key}: {exc}")
+                failed = failed or exc
+        self._raise_failure(failed)
 
     def set_tags(self, tags: Mapping[str, str]) -> None:
         super().set_tags(tags)
         client = self.experiment
+        failed: Optional[Exception] = None
         for key, value in tags.items():
             try:
                 client.set_tag(self._run_id, str(key), str(value))
-            except Exception as exc:  # pragma: no cover - defensive
+            except Exception as exc:
                 logger.debug(f"MLflow set_tag failed for {key}: {exc}")
+                failed = failed or exc
+        self._raise_failure(failed)
 
     def log_artifact(self, path: Union[str, Path], artifact_dir: str = "") -> None:
         src = Path(path)
@@ -160,23 +172,26 @@ class MlflowTracker(Tracker):
         client = self.experiment
         try:
             client.log_artifact(self._run_id, str(src), artifact_dir or None)
-        except Exception as exc:  # pragma: no cover - defensive
+        except Exception as exc:
             logger.debug(f"MLflow log_artifact failed for {src}: {exc}")
+            self._raise_failure(exc)
 
     def log_figure(self, name: str, figure: Any, step: Optional[int] = None) -> None:
         client = self.experiment
         safe = name.replace("/", "_")
         try:
             client.log_figure(self._run_id, figure, f"{safe}.png")
-        except Exception as exc:  # pragma: no cover - defensive
+        except Exception as exc:
             logger.debug(f"MLflow log_figure failed for {name}: {exc}")
+            self._raise_failure(exc)
 
     def log_text(self, name: str, text: str, step: Optional[int] = None) -> None:
         """MLflow's own text artifact — the UI previews a ``.md`` file inline, no download."""
         try:
             self.experiment.log_text(self._run_id, text, f"text/{text_file_stem(name, step)}.md")
-        except Exception as exc:  # pragma: no cover - defensive
+        except Exception as exc:
             logger.debug(f"MLflow log_text failed for {name}: {exc}")
+            self._raise_failure(exc)
 
     def log_manifest(self, manifest: "RunManifest") -> None:
         """Artifact + hyperparameters (the default), PLUS MLflow's own native slots.
@@ -187,10 +202,12 @@ class MlflowTracker(Tracker):
         Both are ADDITIONAL — the manifest artifact still carries everything, so a run
         tracked here stays comparable with the same run tracked to a local directory.
         """
-        super().log_manifest(manifest)
-        self._project_source_tags(manifest)
-        self._project_datasets(manifest)
-        self._project_models(manifest)
+        self._run_all(
+            partial(super().log_manifest, manifest),
+            partial(self._project_source_tags, manifest),
+            partial(self._project_datasets, manifest),
+            partial(self._project_models, manifest),
+        )
 
     def _project_source_tags(self, manifest: "RunManifest") -> None:
         """Fill MLflow's standard source/git tags from the manifest's command + code sections."""
@@ -264,8 +281,9 @@ class MlflowTracker(Tracker):
         client = self.experiment
         try:
             client.log_inputs(self._run_id, inputs)
-        except Exception as exc:  # pragma: no cover - defensive
+        except Exception as exc:
             logger.debug(f"MLflow log_inputs failed: {exc}")
+            self._raise_failure(exc)
 
     def _project_models(self, manifest: "RunManifest") -> None:
         """Log the manifest's model artifacts as MLflow model INPUTS.
@@ -301,6 +319,7 @@ class MlflowTracker(Tracker):
             return
 
         client = self.experiment
+        failed: Optional[Exception] = None
         fresh = []
         for entry in entries:
             key = str(entry.get("uri") or json.dumps(entry, sort_keys=True, default=str))
@@ -317,17 +336,19 @@ class MlflowTracker(Tracker):
                     # silently typing a hand-recorded model as unknown.
                     model_type=str(entry.get("kind") or entry.get("source") or "") or None,
                 )
-            except Exception as exc:  # pragma: no cover - backend-specific
+            except Exception as exc:
                 logger.debug(f"MLflow create_logged_model failed for {key}: {exc}")
+                failed = failed or exc
                 continue
             self._logged_models[key] = model.model_id
             fresh.append(LoggedModelInput(model.model_id))
-        if not fresh:
-            return
-        try:
-            client.log_inputs(self._run_id, models=fresh)
-        except Exception as exc:  # pragma: no cover - defensive
-            logger.debug(f"MLflow log_inputs(models=...) failed: {exc}")
+        if fresh:
+            try:
+                client.log_inputs(self._run_id, models=fresh)
+            except Exception as exc:
+                logger.debug(f"MLflow log_inputs(models=...) failed: {exc}")
+                failed = failed or exc
+        self._raise_failure(failed)
 
     def finalize(self, status: str = "success") -> None:
         if self._mps_sampler is not None:
@@ -336,15 +357,16 @@ class MlflowTracker(Tracker):
         if self._system_monitor is not None:
             try:
                 self._system_monitor.finish()
-            except Exception as exc:  # pragma: no cover - defensive
+            except Exception as exc:  # never raised, even with raise_errors: the run must still end
                 logger.debug(f"system-metrics monitor finish failed: {exc}")
             self._system_monitor = None
         if self._client is not None and self._run_id is not None:
             mlflow_status = "FINISHED" if status == "success" else "FAILED"
             try:
                 self._client.set_terminated(self._run_id, status=mlflow_status)
-            except Exception as exc:  # pragma: no cover - defensive
+            except Exception as exc:
                 logger.debug(f"MLflow set_terminated failed: {exc}")
+                self._raise_failure(exc)
 
 
 __all__ = ["MlflowTracker"]

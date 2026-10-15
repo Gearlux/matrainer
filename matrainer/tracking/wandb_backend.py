@@ -14,6 +14,7 @@ from __future__ import annotations
 
 import os
 import re
+from functools import partial
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Mapping, Optional, Tuple, Union
 
@@ -58,6 +59,7 @@ class WandbTracker(Tracker):
         save_dir: The ``dir=`` passed to ``wandb.init`` (local run files).
         tags: Tags attached to the run.
         entity: Optional W&B entity (team/user); ``None`` uses the default.
+        raise_errors: Raise a failed call's error after its debug line (see :class:`Tracker`).
     """
 
     def __init__(
@@ -67,8 +69,9 @@ class WandbTracker(Tracker):
         save_dir: str = "./runs",
         tags: Optional[Mapping[str, str]] = None,
         entity: Optional[str] = None,
+        raise_errors: bool = False,
     ) -> None:
-        super().__init__(experiment_name, run_name, save_dir, tags)
+        super().__init__(experiment_name, run_name, save_dir, tags, raise_errors)
         self.entity = entity
         self._run: Optional[Any] = None
 
@@ -116,14 +119,16 @@ class WandbTracker(Tracker):
             return
         try:
             self.experiment.save(str(src), base_path=str(src.parent))
-        except Exception as exc:  # pragma: no cover - defensive
+        except Exception as exc:
             logger.debug(f"wandb save failed for {src}: {exc}")
+            self._raise_failure(exc)
 
     def log_figure(self, name: str, figure: Any, step: Optional[int] = None) -> None:
         try:
             self.experiment.log({name: figure}, step=step)
-        except Exception as exc:  # pragma: no cover - defensive
+        except Exception as exc:
             logger.debug(f"wandb log figure failed for {name}: {exc}")
+            self._raise_failure(exc)
 
     def log_manifest(self, manifest: "RunManifest") -> None:
         """Artifact + hyperparameters (the default), PLUS W&B's artifact-lineage graph.
@@ -134,9 +139,11 @@ class WandbTracker(Tracker):
         per the union contract, so a run tracked here stays comparable with one tracked to a
         local directory.
         """
-        super().log_manifest(manifest)
-        self._project_inputs(manifest, "datasets", "dataset")
-        self._project_inputs(manifest, "models", "model")
+        self._run_all(
+            partial(super().log_manifest, manifest),
+            partial(self._project_inputs, manifest, "datasets", "dataset"),
+            partial(self._project_inputs, manifest, "models", "model"),
+        )
 
     def _project_inputs(self, manifest: "RunManifest", section: "ManifestSection", kind: str) -> None:
         """Mark one manifest section's entries as used W&B artifacts of type ``kind``.
@@ -158,14 +165,17 @@ class WandbTracker(Tracker):
             return
         wandb = require("wandb", "wandb", feature="WandbTracker")
         run = self.experiment
+        failed: Optional[Exception] = None
         for entry in entries:
             metadata = {k: v for k, v in entry.items() if v is not None}
             try:
                 artifact = wandb.Artifact(_artifact_name(entry.get("name")), type=kind, metadata=metadata)
                 self._add_reference(artifact, str(entry.get("uri") or ""))
                 run.use_artifact(artifact)
-            except Exception as exc:  # pragma: no cover - backend-specific
+            except Exception as exc:
                 logger.debug(f"wandb use_artifact failed for {entry.get('uri') or entry.get('name')}: {exc}")
+                failed = failed or exc
+        self._raise_failure(failed)
 
     @staticmethod
     def _add_reference(artifact: Any, uri: str) -> None:
@@ -190,17 +200,20 @@ class WandbTracker(Tracker):
             return  # a zoo scheme W&B does not know — metadata alone, deliberately
         try:
             artifact.add_reference(os.path.expandvars(uri))
-        except Exception as exc:
+        except Exception as exc:  # never raised, even with raise_errors: the artifact is still the record
             logger.debug(f"wandb add_reference skipped for {uri}: {exc}")
 
     def finalize(self, status: str = "success") -> None:
         if self._run is not None:
             exit_code = 0 if status == "success" else 1
+            failed: Optional[Exception] = None
             try:
                 self._run.finish(exit_code=exit_code)
-            except Exception as exc:  # pragma: no cover - defensive
+            except Exception as exc:
                 logger.debug(f"wandb finish failed: {exc}")
-            self._run = None
+                failed = exc
+            self._run = None  # let go of the run either way, as before
+            self._raise_failure(failed)
 
 
 __all__ = ["WandbTracker"]

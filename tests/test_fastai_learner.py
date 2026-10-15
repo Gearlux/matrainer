@@ -231,3 +231,21 @@ def test_persistent_workers_is_overridable_and_still_derives_by_default() -> Non
         marker = getattr(forced, split)
         assert marker.kwargs["persistent_workers"] is False, split
         assert marker.kwargs["num_workers"] == 2, split
+
+
+def test_the_run_hands_mps_low_watermark_to_torch_before_the_task_starts(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Before `initialize` builds the model: torch reads the value when the GPU is first used."""
+    seen: List[Any] = []
+    monkeypatch.setattr("matrainer.torch.runnable.apply_mps_low_watermark", seen.append)
+    runnable = _mini(train_set=_records(), task="fit", max_epochs=1)
+    runnable.mps_low_watermark = 0.5
+    at_initialize: List[List[Any]] = []
+    original = runnable.initialize
+
+    def initialize() -> None:
+        at_initialize.append(list(seen))
+        original()
+
+    monkeypatch.setattr(runnable, "initialize", initialize)
+    runnable.run()
+    assert seen == [0.5] and at_initialize == [[0.5]]

@@ -1,10 +1,12 @@
 """Tests for the Tracker ABC and the TrackerGroup fan-out composite."""
 
+import inspect
 from pathlib import Path
 from typing import Any, List, Mapping, Optional
 
 import pytest
 
+from matrainer.tracking import discover_backends
 from matrainer.tracking.base import Tracker, TrackerGroup, text_file_stem
 
 
@@ -179,6 +181,64 @@ def test_tracker_group_swallows_member_failure() -> None:
     group = TrackerGroup([Boom(), good])
     group.log_metrics({"loss": 2.0})  # must not raise
     assert good.metrics == [{"step": None, "loss": 2.0}]
+
+
+def test_a_group_keeps_its_members_apart_whatever_its_raise_errors() -> None:
+    """A group isolates its members; `raise_errors` is a member's own setting (wrap each member)."""
+
+    class Boom(RecordingTracker):
+        def log_metrics(self, metrics: Mapping[str, float], step: Optional[int] = None) -> None:
+            raise RuntimeError("backend down")
+
+    good = RecordingTracker()
+    group = TrackerGroup([Boom(raise_errors=True), good])
+    group.raise_errors = True
+    group.log_metrics({"loss": 2.0})  # must not raise
+    assert good.metrics == [{"step": None, "loss": 2.0}]
+
+
+# --------------------------------------------------------------------------- raise_errors
+
+
+def test_raise_errors_is_off_by_default() -> None:
+    """Off: a failed call is a debug line and the run goes on — tracking never stops training."""
+    assert RecordingTracker().raise_errors is False
+    assert RecordingTracker(raise_errors=True).raise_errors is True
+
+
+def test_raise_failure_raises_only_when_asked() -> None:
+    error = RuntimeError("server said no")
+    RecordingTracker()._raise_failure(error)  # off: nothing
+    RecordingTracker(raise_errors=True)._raise_failure(None)  # on, nothing failed: nothing
+    with pytest.raises(RuntimeError, match="server said no"):
+        RecordingTracker(raise_errors=True)._raise_failure(error)
+
+
+@pytest.mark.parametrize("raise_errors", [False, True])
+def test_a_refused_parameter_costs_the_manifest_its_upload_only_when_off(tmp_path: Path, raise_errors: bool) -> None:
+    """Off, the parts are plain calls, as before: the error stops the rest. On, every part runs first."""
+    from matrainer.tracking.manifest import RunManifest
+
+    class RefusesParams(RecordingTracker):
+        def log_hyperparams(self, params: Mapping[str, Any]) -> None:
+            raise RuntimeError("params refused")
+
+    manifest = RunManifest(run_dir=tmp_path / "run", handle_interrupts=False)
+    manifest.set("params", {"lr": 0.1})
+    tracker = RefusesParams(raise_errors=raise_errors)
+    with pytest.raises(RuntimeError, match="params refused"):
+        tracker.log_manifest(manifest)
+    uploaded = [Path(path).name for path, _ in tracker.artifacts]
+    assert uploaded == (["manifest.yaml", "manifest.json"] if raise_errors else [])
+
+
+@pytest.mark.parametrize("name", sorted(discover_backends()))
+def test_every_backend_takes_raise_errors_in_its_constructor(name: str) -> None:
+    """In the signature, so a config and a form can set it; off unless asked."""
+    backend = discover_backends()[name]
+    assert inspect.signature(backend).parameters["raise_errors"].default is False
+    assert backend().raise_errors is False
+    assert backend(raise_errors=True).raise_errors is True
 
 
 def test_tracker_group_log_dir_returns_first_available(tmp_path: Path) -> None:

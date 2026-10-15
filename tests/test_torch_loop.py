@@ -17,7 +17,7 @@ pytest.importorskip("torch")
 
 import torch  # noqa: E402
 import torch.nn as nn  # noqa: E402
-from confluid import PartialClass, flow  # noqa: E402
+from confluid import PartialClass, configurable, flow  # noqa: E402
 from recordstream import Stream, batch_tensor  # noqa: E402
 from torchmetrics import MetricCollection  # noqa: E402
 from torchmetrics.regression import MeanAbsoluteError  # noqa: E402
@@ -185,3 +185,39 @@ def test_persistent_workers_is_overridable_and_still_derives_by_default() -> Non
         marker = getattr(forced, split)
         assert marker.kwargs["persistent_workers"] is False, split
         assert marker.kwargs["num_workers"] == 2, split
+
+
+def test_the_run_hands_mps_low_watermark_to_torch_before_the_task_starts(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Before `initialize` builds the model: torch reads the value when the GPU is first used."""
+    seen: List[Any] = []
+    monkeypatch.setattr("matrainer.torch.runnable.apply_mps_low_watermark", seen.append)
+    runnable = _mini(train_set=_records(), task="fit", max_epochs=1)
+    runnable.mps_low_watermark = 0.5
+    at_initialize: List[List[Any]] = []
+    original = runnable.initialize
+
+    def initialize() -> None:
+        at_initialize.append(list(seen))
+        original()
+
+    monkeypatch.setattr(runnable, "initialize", initialize)
+    runnable.run()
+    assert seen == [0.5] and at_initialize == [[0.5]]
+
+
+@configurable
+class _FlatRestorer(_MiniRestorer):
+    """A real trainer's shape: every setting named in its own constructor, no ``**kwargs``."""
+
+    def __init__(self, *, model: Any = None, max_epochs: int = 1, batch_size: int = 4) -> None:
+        super().__init__(model=model, max_epochs=max_epochs, batch_size=batch_size)
+
+
+def test_mps_low_watermark_is_a_setting_a_config_names() -> None:
+    """A body slot of the torch family base: no concrete constructor lists it, every config can set it."""
+    from confluid import load, to_pydantic
+
+    assert _mini().mps_low_watermark is None
+    assert "mps_low_watermark" in to_pydantic(_FlatRestorer).model_fields
+    runnable = load("runnable: !class:tests.test_torch_loop._FlatRestorer\n  mps_low_watermark: 0.5\n")["runnable"]
+    assert isinstance(runnable, _FlatRestorer) and runnable.mps_low_watermark == 0.5

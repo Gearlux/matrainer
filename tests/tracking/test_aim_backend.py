@@ -303,3 +303,112 @@ def test_the_status_is_not_projected_at_log_time(fake_aim: Any, tmp_path: Path) 
     assert "status" not in fake_aim.instances[0].values  # not yet — the run has not ended
     tracker.finalize("success")
     assert fake_aim.instances[0].values["status"] == "success"
+
+
+# --- raise_errors: a refused call is a debug line, and raised as well when asked ----------------
+
+SAID_NO = RuntimeError("aim said no")
+
+
+def _said_no(*args: Any, **kwargs: Any) -> Any:
+    raise SAID_NO
+
+
+def _refuse_one(real: Any, name: Any) -> Any:
+    """``real`` refused for the one call naming ``name``, passed through for every other."""
+
+    def refused(run: Any, *args: Any, **kwargs: Any) -> Any:
+        if name in args or name in kwargs.values():
+            raise SAID_NO
+        return real(run, *args, **kwargs)
+
+    return refused
+
+
+def _file(tmp_path: Path) -> Path:
+    path = tmp_path / "a.txt"
+    path.write_text("A")
+    return path
+
+
+#: (run method refused, the tracker call that sends one request to it)
+_ONE_REQUEST = [
+    ("__setitem__", lambda t, tmp: t.log_hyperparams({"lr": 0.1})),
+    ("log_artifact", lambda t, tmp: t.log_artifact(_file(tmp))),
+    ("track", lambda t, tmp: t.log_figure("val/cm", object())),
+    ("track", lambda t, tmp: t.log_text("val/report", "|a|")),
+    ("close", lambda t, tmp: t.finalize("success")),
+]
+
+
+@pytest.mark.parametrize("raise_errors", [False, True])
+@pytest.mark.parametrize("method, call", _ONE_REQUEST, ids=[f"{m}-{i}" for i, (m, _) in enumerate(_ONE_REQUEST)])
+def test_a_refused_request_is_raised_only_when_asked(
+    fake_aim: Any, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, method: str, call: Any, raise_errors: bool
+) -> None:
+    tracker = AimTracker(save_dir=str(tmp_path / "repo"), raise_errors=raise_errors)
+    _ = tracker.experiment
+    monkeypatch.setattr(fake_aim, method, _said_no)  # on the class: Python looks `__setitem__` up there
+    if raise_errors:
+        with pytest.raises(RuntimeError, match="aim said no"):
+            call(tracker, tmp_path)
+    else:
+        call(tracker, tmp_path)
+
+
+@pytest.mark.parametrize("raise_errors", [False, True])
+def test_a_refused_metric_does_not_stop_the_others(
+    fake_aim: Any, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, raise_errors: bool
+) -> None:
+    tracker = AimTracker(save_dir=str(tmp_path / "repo"), raise_errors=raise_errors)
+    monkeypatch.setattr(fake_aim, "track", _refuse_one(fake_aim.track, "b"))
+    if raise_errors:
+        with pytest.raises(RuntimeError, match="aim said no"):
+            tracker.log_metrics({"a": 1.0, "b": 2.0, "c": 3.0}, step=0)
+    else:
+        tracker.log_metrics({"a": 1.0, "b": 2.0, "c": 3.0}, step=0)
+    assert [name for name, _, _ in fake_aim.instances[0].tracked] == ["a", "c"]
+
+
+@pytest.mark.parametrize("raise_errors", [False, True])
+def test_a_refused_tag_does_not_stop_the_others(
+    fake_aim: Any, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, raise_errors: bool
+) -> None:
+    tracker = AimTracker(save_dir=str(tmp_path / "repo"), raise_errors=raise_errors)
+    _ = tracker.experiment
+    monkeypatch.setattr(fake_aim, "add_tag", _refuse_one(fake_aim.add_tag, "b=2"))
+    if raise_errors:
+        with pytest.raises(RuntimeError, match="aim said no"):
+            tracker.set_tags({"a": "1", "b": "2", "c": "3"})
+    else:
+        tracker.set_tags({"a": "1", "b": "2", "c": "3"})
+    assert fake_aim.instances[0].tags == ["a=1", "c=3"]
+
+
+def test_a_tag_refused_while_the_run_starts_never_raises(
+    fake_aim: Any, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Starting the run must not fail on a tag: a wrapper would turn tracking off for the whole run."""
+    monkeypatch.setattr(fake_aim, "add_tag", _said_no)
+    tracker = AimTracker(save_dir=str(tmp_path / "repo"), tags={"stage": "smoke"}, raise_errors=True)
+    assert tracker.experiment is fake_aim.instances[0]
+
+
+@pytest.mark.parametrize("raise_errors", [False, True])
+def test_a_refused_section_does_not_stop_the_others(
+    fake_aim: Any, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, raise_errors: bool
+) -> None:
+    from matrainer.tracking.manifest import RunManifest
+
+    m = RunManifest(run_dir=tmp_path / "run", handle_interrupts=False)
+    m.set("env", {"python": "3.13"})
+    m.add("code", {"name": "pkg", "commit": "abc", "dirty": False})
+    tracker = AimTracker(save_dir=str(tmp_path / "repo"), raise_errors=raise_errors)
+    monkeypatch.setattr(fake_aim, "__setitem__", _refuse_one(fake_aim.__setitem__, "code"))
+    if raise_errors:
+        with pytest.raises(RuntimeError, match="aim said no"):
+            tracker.log_manifest(m)
+    else:
+        tracker.log_manifest(m)
+    values = fake_aim.instances[0].values
+    assert values["env"] == {"python": "3.13"} and "code" not in values

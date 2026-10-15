@@ -235,6 +235,7 @@ class FastaiRunnable(TorchTrainerRunnable):
     # ---- run dispatch ----------------------------------------------------------------------- #
     def run(self) -> None:
         logger.info(f"{self.log_label} fastai backend.")
+        self._before_run()
         self._require_model()
         self.initialize()
         # The `@entrypoint` markers (inherited from the API base) ARE the dispatch table.
