@@ -4,7 +4,7 @@ All notable changes to this project are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and the versioning is
 [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [0.1.0a2] — 2026-10-14
+## [0.1.0a2] — 2026-10-15
 
 ### Trainers
 - **`mps_low_watermark`** on every torch trainer (`TorchTrainerRunnable`: the Lightning, owned-loop, fastai and
