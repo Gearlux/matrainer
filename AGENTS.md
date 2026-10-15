@@ -7,7 +7,7 @@ repeated here.
 ## Current state
 
 Experiment tracking plus the workspace's shared trainer machinery (user-authorized 2026-08-06,
-§9). On PyPI as pre-release `0.1.0a1`; the repo is private.
+§9). On PyPI as pre-releases (`0.1.0aN`, the version in `pyproject.toml`); the repo is private.
 
 | area | modules |
 |---|---|
@@ -258,9 +258,11 @@ task semantics. A collate or batch reader written here belongs in recordstream.
   library goes behind an extra plus a lazy `require(...)`.
 - Releases use the hand-written `release.yml` (scaffold owns only `ci.yml`/`Jenkinsfile*`), with
   recordstream's discipline: an extra may name only a PyPI package (the release resolves every
-  extra); every workspace spec on matrainer, extras included, reads `>=0.1.0a1` (aisland
-  `tests/test_workspace_dependency_specs.py`) until a final `0.1.0`, then all change in one pass;
-  floors state what the suite runs against; README links are absolute
+  extra); a workspace spec on matrainer reads the first pre-release with what that project imports
+  (`>=0.1.0a2` for torpaido and waivefront, which use the model packages; `>=0.1.0a1` elsewhere) and
+  rises only when the project starts importing something newer (user choice 2026-10-14; aisland
+  `tests/test_workspace_dependency_specs.py` checks each is satisfiable); floors state what the
+  suite runs against; README links are absolute
   (`tests/test_docs_links.py`); the newest CHANGELOG entry is the version (`tests/test_packaging.py`).
 - CI runs `mypy .` here with only its extras and stricter flags: list every extra-gated import CI
   lacks in `[[tool.mypy.overrides]] ignore_missing_imports`, and reproduce CI in a throwaway
