@@ -348,9 +348,12 @@ class PackageModel:
             for path in paths:
                 files.append({"path": os.path.relpath(path, out), "sha256": file_digest(path)})
             return files, os.path.relpath(entry, out)
-        common = Path(os.path.commonpath([str(path.parent) for path in paths]))
-        for path in paths:
-            relative = Path(GRAPHS_DIR) / path.relative_to(common)
+        # Laid out by the files' REAL paths, symlinks followed on both sides: confluid reports the files it
+        # read resolved, while `entry` keeps the path as written (macOS's `/var` is `/private/var`).
+        real = [path.resolve() for path in paths]
+        common = Path(os.path.commonpath([str(path.parent) for path in real]))
+        for path, resolved in zip(paths, real):
+            relative = Path(GRAPHS_DIR) / resolved.relative_to(common)
             (staging / relative).parent.mkdir(parents=True, exist_ok=True)
             shutil.copy2(path, staging / relative)
             files.append(
@@ -360,7 +363,7 @@ class PackageModel:
                     "source": contract_roots(str(path)),
                 }
             )
-        return files, (Path(GRAPHS_DIR) / entry.relative_to(common)).as_posix()
+        return files, (Path(GRAPHS_DIR) / entry.resolve().relative_to(common)).as_posix()
 
     def _place_weights(self, weights: Dict[str, Path], staging: Path, out: Path) -> Dict[str, Dict[str, Any]]:
         """Copy (or reference) each weights file; returns slot -> its entry (path, size, digest)."""

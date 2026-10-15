@@ -186,6 +186,23 @@ def test_a_referencing_package_follows_an_edit_of_its_source(source: Path, tmp_p
     }
 
 
+@pytest.mark.parametrize("graphs", ["copy", "reference"])
+def test_a_graph_under_a_symlinked_folder_is_packaged(source: Path, tmp_path: Path, graphs: str) -> None:
+    """The graph named through a symlink — macOS's temporary folders are one (`/var` -> `/private/var`).
+
+    confluid reports the files it read with the symlink followed, the graph setting keeps the path as
+    written; copied, the package must still lay the files out below the folder holding them all.
+    """
+    linked = tmp_path / "linked"
+    linked.symlink_to(source, target_is_directory=True)
+
+    out = _package(linked, tmp_path / "pkg", graphs=graphs)
+
+    if graphs == "copy":
+        assert read_package(out)["graph"] == "graphs/cfg/model.yaml"
+    assert _values(ModelPackage(path=str(out))({}))["a"] == 1
+
+
 def test_graphs_and_weights_are_copied_or_referenced_independently(source: Path, tmp_path: Path) -> None:
     out = _package(source, tmp_path / "pkg", graphs="reference", weight_files="copy")
 
