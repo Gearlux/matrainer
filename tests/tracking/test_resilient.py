@@ -159,18 +159,49 @@ class ResponseError(Exception):
         self.response = StatusError(status_code)
 
 
+class DeclaredStatusError(Exception):
+    """MLflow's shape: the status is a method's answer, and the text may hold any number."""
+
+    def __init__(self, status: int, message: str) -> None:
+        super().__init__(message)
+        self.status = status
+
+    def get_http_status_code(self) -> int:
+        return self.status
+
+
+#: MLflow refusing a changed parameter whose new value happens to be 500 (measured 2026-10-14).
+CHANGED_PARAM = (
+    "Changing param values is not allowed. Param with key='epochs' was already logged with value='100'. "
+    "Attempted logging new value '500'."
+)
+
+
 @pytest.mark.parametrize(
     "error, server_side",
     [
         (StatusError(503), True),
         (ResponseError(500), True),
         (StatusError(400), False),
+        (DeclaredStatusError(503, "database is down"), True),
+        (DeclaredStatusError(400, CHANGED_PARAM), False),
         (RuntimeError("500 Internal Server Error"), True),
+        (RuntimeError("500 Server Error: Internal Server Error for url: http://host/api"), True),
+        (RuntimeError("503 Service Unavailable"), True),
+        (RuntimeError(CHANGED_PARAM), False),
         (RuntimeError("bad request"), False),
     ],
 )
 def test_a_server_error_is_read_from_its_status(error: BaseException, server_side: bool) -> None:
+    """A status the error carries decides; a text counts only where it writes a 5xx status, never a bare 500."""
     assert is_server_error(error) is server_side
+
+
+def test_mlflows_own_exceptions_are_read_by_their_status() -> None:
+    exceptions = pytest.importorskip("mlflow.exceptions")
+    refused = exceptions.RestException({"error_code": "INVALID_PARAMETER_VALUE", "message": CHANGED_PARAM})
+    broken = exceptions.RestException({"error_code": "INTERNAL_ERROR", "message": "database is down"})
+    assert not is_server_error(refused) and is_server_error(broken)
 
 
 def test_run_with_timeout_returns_raises_and_gives_up() -> None:
@@ -213,6 +244,15 @@ def test_a_deferred_marker_is_built_once() -> None:
     first = t.inner
     assert isinstance(first, ScriptedServer) and first.experiment_name == "deferred"
     assert t.inner is first  # written back: a second look does not build a second run
+    assert first.raise_errors is True
+
+
+def test_the_wrapped_tracker_is_switched_to_raise_its_errors_on_first_use(server: ScriptedServer) -> None:
+    """The wrapper sees only what a call raises; a tracker keeps a failure to itself unless asked."""
+    t = wrap(server)
+    assert server.raise_errors is False  # building the wrapper touches nothing
+    t.log_metrics({"a": 1.0})
+    assert server.raise_errors is True
 
 
 def test_a_config_nests_the_wrapped_tracker() -> None:
@@ -397,6 +437,17 @@ def test_any_other_refusal_drops_the_call_and_goes_on(server: ScriptedServer, lo
     t.log_metrics({"a": 2.0}, step=1)
     assert metrics(server) == [({"a": 2.0}, 1)] and t.pending == []
     assert "Dropping log_metrics: invalid metric value" in log.lines["warning"]
+
+
+def test_a_refusal_naming_500_drops_that_call_only(server: ScriptedServer, log: Recorder) -> None:
+    """A refused value of 500 is not a server error: later parameter calls still go through."""
+    server.script["log_hyperparams"] = [ValueError(CHANGED_PARAM)]
+    t = wrap(server)
+    t.log_hyperparams({"epochs": 500})
+    t.log_hyperparams({"lr": 0.1})
+    assert [args for name, args in server.calls if name == "log_hyperparams"] == [({"lr": 0.1},)]
+    assert f"Dropping log_hyperparams: {CHANGED_PARAM}" in log.lines["warning"]
+    assert not any("Turning off" in line for line in log.lines["warning"])
 
 
 # --------------------------------------------------------------------------- artifacts

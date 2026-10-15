@@ -4,6 +4,8 @@ import csv
 import json
 from pathlib import Path
 
+import pytest
+
 from matrainer.tracking.csv_backend import CsvTracker
 
 
@@ -72,3 +74,17 @@ def test_log_figure_saves_png(tmp_path: Path) -> None:
 def test_log_dir_is_run_dir(tmp_path: Path) -> None:
     t = _tracker(tmp_path)
     assert t.log_dir == tmp_path / "exp" / "run1"
+
+
+@pytest.mark.parametrize("raise_errors", [False, True])
+def test_a_figure_that_cannot_be_saved_is_raised_only_when_asked(tmp_path: Path, raise_errors: bool) -> None:
+    class RefusingFig:
+        def savefig(self, path: object) -> None:
+            raise RuntimeError("disk said no")
+
+    t = CsvTracker(experiment_name="exp", run_name="run1", save_dir=str(tmp_path), raise_errors=raise_errors)
+    if raise_errors:
+        with pytest.raises(RuntimeError, match="disk said no"):
+            t.log_figure("test/cm", RefusingFig())
+    else:
+        t.log_figure("test/cm", RefusingFig())

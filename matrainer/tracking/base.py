@@ -27,7 +27,8 @@ constructor stores config only; the native backend handle is created on first
 from __future__ import annotations
 
 from abc import ABC, abstractmethod
-from collections.abc import Iterable
+from collections.abc import Callable, Iterable
+from functools import partial
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, List, Mapping, Optional, Union, cast
 
@@ -105,6 +106,12 @@ class Tracker(ABC):
     debug-logged no-op so a backend that cannot serve one degrades quietly rather
     than raising mid-run (tracking must never abort a real training run).
 
+    A backend call that fails is logged at debug level and the run goes on. With
+    :attr:`raise_errors` on, the failure is raised as well (a call that loops over names
+    tries every name first and raises the first failure) — what
+    :class:`~matrainer.tracking.resilient.ResilientTracker` needs to queue and replay it, and
+    why it turns the setting on for the tracker it wraps.
+
     Args:
         experiment_name: The experiment / project this run belongs to.
         run_name: This run's name. ``None`` (default) draws a random human-friendly
@@ -112,7 +119,13 @@ class Tracker(ABC):
             :func:`matrainer.run_names.generate_run_name`.
         save_dir: Local directory a file-backed backend writes under.
         tags: Optional key→value tags stamped on the run at creation.
+        raise_errors: Raise a failed call's error after its debug line, instead of only
+            logging it. Off by default: a tracking failure never stops a run.
     """
+
+    #: Class-level default for a subclass that skips ``__init__`` (a composite such as
+    #: ``ResilientTracker`` takes its names from the tracker it wraps).
+    raise_errors: bool = False
 
     def __init__(
         self,
@@ -120,11 +133,36 @@ class Tracker(ABC):
         run_name: Optional[str] = None,
         save_dir: str = "./runs",
         tags: Optional[Mapping[str, str]] = None,
+        raise_errors: bool = False,
     ) -> None:
         self.experiment_name = experiment_name
         self.run_name = run_name if run_name is not None else generate_run_name(prefix="run")
         self.save_dir = save_dir
         self.tags = dict(tags) if tags else {}
+        self.raise_errors = raise_errors
+
+    def _raise_failure(self, error: Optional[BaseException]) -> None:
+        """Raise ``error`` — a call's failure, already logged at debug level — when :attr:`raise_errors` is on."""
+        if error is not None and self.raise_errors:
+            raise error
+
+    def _run_all(self, *parts: Callable[[], Any]) -> None:
+        """Run the parts of one call (``log_manifest``: the files, the parameters, each native slot) in order.
+
+        With :attr:`raise_errors` off, each part is a plain call, exactly as before. With it on, a
+        part that raises does not stop the parts after it: the first failure is raised once they
+        have all run, so a refused parameter never costs the manifest its upload.
+        """
+        failed: Optional[Exception] = None
+        for part in parts:
+            if not self.raise_errors:
+                part()
+                continue
+            try:
+                part()
+            except Exception as exc:
+                failed = failed or exc
+        self._raise_failure(failed)
 
     # -- pytorch_lightning.loggers.Logger shape -----------------------------------------------
 
@@ -244,18 +282,20 @@ class Tracker(ABC):
         that directory in the first place.
         """
         manifest.write()
+        parts: List[Callable[[], Any]] = []
         params = manifest.section("params")
         if params:
-            self.log_hyperparams(params)
+            parts.append(partial(self.log_hyperparams, params))
         log_dir = self.log_dir
         for path in (manifest.path, manifest.json_path):
             if log_dir is not None and path.is_relative_to(log_dir):
                 continue
-            self.log_artifact(path)
+            parts.append(partial(self.log_artifact, path))
         for path in manifest.artifacts():
             if log_dir is not None and path.is_relative_to(log_dir):
                 continue
-            self.log_artifact(path, artifact_dir=path.parent.name)
+            parts.append(partial(self.log_artifact, path, artifact_dir=path.parent.name))
+        self._run_all(*parts)
 
     @property
     def log_dir(self) -> Optional[Path]:

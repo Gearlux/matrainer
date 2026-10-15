@@ -32,6 +32,7 @@ Two constructor choices differ from ClearML's defaults, both deliberately:
 from __future__ import annotations
 
 import os
+from functools import partial
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Dict, Mapping, Optional, Tuple, Union
 
@@ -84,6 +85,7 @@ class ClearMLTracker(Tracker):
             on an unconfigured machine, so a process that went offline stays offline.
         log_system_metrics: Let ClearML sample CPU/GPU/memory itself. ``False`` disables it,
             so it does not duplicate :mod:`matrainer.tracking.system` when that is running.
+        raise_errors: Raise a failed call's error after its debug line (see :class:`Tracker`).
     """
 
     def __init__(
@@ -94,8 +96,9 @@ class ClearMLTracker(Tracker):
         tags: Optional[Mapping[str, str]] = None,
         offline: bool = False,
         log_system_metrics: bool = True,
+        raise_errors: bool = False,
     ) -> None:
-        super().__init__(experiment_name, run_name, save_dir, tags)
+        super().__init__(experiment_name, run_name, save_dir, tags, raise_errors)
         self.offline = offline
         self.log_system_metrics = log_system_metrics
         self._task: Optional[Any] = None
@@ -134,11 +137,13 @@ class ClearMLTracker(Tracker):
         self._hparams.update(dict(params))
         try:
             self.experiment.connect(self._hparams, name=HPARAMS_SECTION)
-        except Exception as exc:  # pragma: no cover - clearml rejects unserializable values
+        except Exception as exc:  # clearml rejects unserializable values
             logger.debug(f"ClearML connect(hparams) failed: {exc}")
+            self._raise_failure(exc)
 
     def log_metrics(self, metrics: Mapping[str, float], step: Optional[int] = None) -> None:
         reporter = self.experiment.get_logger()
+        failed: Optional[Exception] = None
         for key, value in metrics.items():
             # ClearML plots are (title, series): "train/loss" becomes the `train` graph with a
             # `loss` line, which is how its UI groups related curves.
@@ -150,8 +155,10 @@ class ClearMLTracker(Tracker):
                     value=float(value),
                     iteration=int(step or 0),
                 )
-            except Exception as exc:  # pragma: no cover - defensive
+            except Exception as exc:
                 logger.debug(f"ClearML report_scalar failed for {key}: {exc}")
+                failed = failed or exc
+        self._raise_failure(failed)
 
     def set_tags(self, tags: Mapping[str, str]) -> None:
         # Resolve the task BEFORE merging into self.tags: creating it applies whatever
@@ -160,8 +167,9 @@ class ClearMLTracker(Tracker):
         super().set_tags(tags)
         try:
             task.add_tags([f"{key}={value}" for key, value in tags.items()])
-        except Exception as exc:  # pragma: no cover - defensive
+        except Exception as exc:
             logger.debug(f"ClearML add_tags failed: {exc}")
+            self._raise_failure(exc)
 
     def log_artifact(self, path: Union[str, Path], artifact_dir: str = "") -> None:
         src = Path(path)
@@ -173,16 +181,18 @@ class ClearMLTracker(Tracker):
         name = f"{artifact_dir}/{src.name}" if artifact_dir else src.name
         try:
             self.experiment.upload_artifact(name=name, artifact_object=src)
-        except Exception as exc:  # pragma: no cover - defensive
+        except Exception as exc:
             logger.debug(f"ClearML upload_artifact failed for {src}: {exc}")
+            self._raise_failure(exc)
 
     def log_figure(self, name: str, figure: Any, step: Optional[int] = None) -> None:
         try:
             self.experiment.get_logger().report_matplotlib_figure(
                 title=name, series=name, figure=figure, iteration=int(step or 0)
             )
-        except Exception as exc:  # pragma: no cover - matplotlib/clearml conversion
+        except Exception as exc:  # matplotlib/clearml conversion
             logger.debug(f"ClearML report_matplotlib_figure failed for {name}: {exc}")
+            self._raise_failure(exc)
 
     def log_text(self, name: str, text: str, step: Optional[int] = None) -> None:
         """``upload_artifact``, NOT ``report_text``.
@@ -195,8 +205,9 @@ class ClearMLTracker(Tracker):
         """
         try:
             self.experiment.upload_artifact(name=f"text/{text_file_stem(name, step)}.md", artifact_object=text)
-        except Exception as exc:  # pragma: no cover - defensive
+        except Exception as exc:
             logger.debug(f"ClearML log_text failed for {name}: {exc}")
+            self._raise_failure(exc)
 
     def log_manifest(self, manifest: "RunManifest") -> None:
         """Artifact + hyperparameters (the default), PLUS ClearML's own native slots.
@@ -210,12 +221,20 @@ class ClearMLTracker(Tracker):
         Both are ADDITIONAL — the manifest artifact still carries everything, so a run
         tracked here stays comparable with the same run tracked to a local directory.
         """
-        super().log_manifest(manifest)
+        self._run_all(partial(super().log_manifest, manifest), partial(self._project_sections, manifest))
+
+    def _project_sections(self, manifest: "RunManifest") -> None:
+        """The manifest as a configuration, its datasets and models as sections and input models.
+
+        Every part is tried; the first failure is raised afterwards when :attr:`raise_errors` is on.
+        """
         task = self.experiment
+        failed: Optional[Exception] = None
         try:
             task.connect_configuration(manifest.path, name="manifest")
-        except Exception as exc:  # pragma: no cover - defensive
+        except Exception as exc:
             logger.debug(f"ClearML connect_configuration failed: {exc}")
+            failed = exc
         for section in ("datasets", "models"):
             entries = manifest.section(section)
             if not entries:
@@ -224,11 +243,13 @@ class ClearMLTracker(Tracker):
                 # Flattened to `0.name` / `1.name`: ClearML sections are flat key/value maps.
                 flat = {f"{i}.{k}": v for i, entry in enumerate(entries) for k, v in entry.items()}
                 task.connect(flat, name=section)
-            except Exception as exc:  # pragma: no cover - defensive
+            except Exception as exc:
                 logger.debug(f"ClearML connect({section}) failed: {exc}")
-        self._project_input_models(manifest)
+                failed = failed or exc
+        failed = failed or self._project_input_models(manifest)
+        self._raise_failure(failed)
 
-    def _project_input_models(self, manifest: "RunManifest") -> None:
+    def _project_input_models(self, manifest: "RunManifest") -> Optional[Exception]:
         """Register the manifest's models as ClearML ``InputModel``s — a SERVER-ONLY enrichment.
 
         The hyperparameter section above is comparable across runs but is still just key/value
@@ -247,18 +268,22 @@ class ClearMLTracker(Tracker):
         Models are remembered per URI for the same reason MLflow's are: :meth:`log_manifest` runs
         at least twice per run, and a second registration of the same weights would be a second
         entry rather than the same one.
+
+        Every model is tried; the first failure is returned (each is logged) for
+        :meth:`log_manifest` to raise or not.
         """
         entries = manifest.section("models")
         if not entries:
-            return
+            return None
         clearml = require("clearml", "clearml", feature="ClearMLTracker")
         if self.offline or clearml.Task.is_offline():
             logger.debug(
                 "ClearML is offline: skipping InputModel registration, which needs a server. "
                 "The models are still connected as a comparable hyperparameter section."
             )
-            return
+            return None
         task = self.experiment
+        failed: Optional[Exception] = None
         for entry in entries:
             uri = str(entry.get("uri") or "")
             if not uri or uri in self._input_models:
@@ -285,8 +310,9 @@ class ClearMLTracker(Tracker):
                     comment=str(entry.get("role") or ""),
                     tags=[str(entry["role"])] if entry.get("role") else None,
                 )
-            except Exception as exc:  # pragma: no cover - server-specific
+            except Exception as exc:
                 logger.debug(f"ClearML InputModel registration failed for {uri}: {exc}")
+                failed = failed or exc
                 continue
             # Memoised the moment the REGISTRATION succeeds, before the link is attempted: it is
             # the registration that would duplicate on a retry, so a failure to link must not send
@@ -294,8 +320,10 @@ class ClearMLTracker(Tracker):
             self._input_models[uri] = getattr(model, "id", uri)
             try:
                 task.connect(model, name=f"model:{entry.get('role') or 'input'}")
-            except Exception as exc:  # pragma: no cover - server-specific
+            except Exception as exc:
                 logger.debug(f"ClearML could not link the input model for {uri}: {exc}")
+                failed = failed or exc
+        return failed
 
     def finalize(self, status: str = "success") -> None:
         if self._task is None:
@@ -306,8 +334,9 @@ class ClearMLTracker(Tracker):
             else:
                 self._task.mark_failed(status_reason=status)
             self._task.close()
-        except Exception as exc:  # pragma: no cover - defensive
+        except Exception as exc:
             logger.debug(f"ClearML task close failed: {exc}")
+            self._raise_failure(exc)
 
 
 __all__ = ["HPARAMS_SECTION", "ClearMLTracker"]

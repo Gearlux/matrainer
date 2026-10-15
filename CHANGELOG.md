@@ -17,8 +17,13 @@ All notable changes to this project are documented here. The format follows
   run or loses a value: a time limit per call (an artifact's grows with its size), a call the
   network lost queued and replayed in order, a queued artifact's bytes kept (and backed up under
   `runs/<experiment>/<run>/pending_artifacts/`) so a deleted file still uploads, a 5xx turning off
-  only that kind of call, and a run that cannot start turning tracking off instead of stopping
-  training.
+  only that kind of call (the status read from the error, never a 500 in its message), and a run
+  that cannot start turning tracking off instead of stopping training. It turns the wrapped
+  tracker's `raise_errors` on, so a failed MLflow, W&B, Aim or ClearML call is queued and replayed.
+- **`raise_errors`** on every tracker, off by default: a failed backend call is logged at debug
+  level and the run goes on, as before; on, the error is raised as well. A call that sends several
+  values tries every one and raises the first failure; `log_manifest` sends every part before it
+  raises.
 
 ### Model packages
 - **`matrainer.model_package`** — a model's whole inference graph (a flow graph: preprocessing, the

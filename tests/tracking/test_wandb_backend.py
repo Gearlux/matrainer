@@ -214,7 +214,8 @@ def test_an_unresolvable_reference_still_reaches_the_lineage_graph(fake_wandb: A
 
     m = RunManifest(run_dir=tmp_path / "run", handle_interrupts=False)
     m.record_model(source="file", name="gone.ckpt", uri="file:///nowhere/gone.ckpt", role="checkpoint")
-    WandbTracker().log_manifest(m)
+    # Even with raise_errors on: a reference is an optimisation on top of the artifact, never a failure.
+    WandbTracker(raise_errors=True).log_manifest(m)
 
     used = fake_wandb.runs[0].used
     assert [a.name for a in used] == ["gone.ckpt"], "the entry was dropped instead of degrading"
@@ -247,3 +248,75 @@ def test_a_portable_uri_is_expanded_before_it_is_referenced(
     artifact = fake_wandb.runs[0].used[0]
     assert artifact.metadata["uri"] == "file://$MODEL_ROOT/last.ckpt", "the manifest must stay portable"
     assert artifact.references == [f"file://{root}/last.ckpt"], "the reference must name the real file"
+
+
+# --- raise_errors: a refused call is a debug line, and raised as well when asked ----------------
+
+SAID_NO = RuntimeError("wandb said no")
+
+
+def _said_no(*args: Any, **kwargs: Any) -> Any:
+    raise SAID_NO
+
+
+def _file(tmp_path: Path) -> Path:
+    path = tmp_path / "a.txt"
+    path.write_text("A")
+    return path
+
+
+#: (run method refused, the tracker call that sends one request to it)
+_ONE_REQUEST = {
+    "save": lambda t, tmp: t.log_artifact(_file(tmp)),
+    "log": lambda t, tmp: t.log_figure("val/cm", object()),
+    "finish": lambda t, tmp: t.finalize("success"),
+}
+
+
+@pytest.mark.parametrize("raise_errors", [False, True])
+@pytest.mark.parametrize("method", sorted(_ONE_REQUEST))
+def test_a_refused_request_is_raised_only_when_asked(
+    fake_wandb: Any, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, method: str, raise_errors: bool
+) -> None:
+    tracker = WandbTracker(raise_errors=raise_errors)
+    monkeypatch.setattr(tracker.experiment, method, _said_no)
+    if raise_errors:
+        with pytest.raises(RuntimeError, match="wandb said no"):
+            _ONE_REQUEST[method](tracker, tmp_path)
+    else:
+        _ONE_REQUEST[method](tracker, tmp_path)
+
+
+@pytest.mark.parametrize("raise_errors", [False, True])
+def test_a_refused_finish_still_lets_go_of_the_run(
+    fake_wandb: Any, monkeypatch: pytest.MonkeyPatch, raise_errors: bool
+) -> None:
+    tracker = WandbTracker(raise_errors=raise_errors)
+    monkeypatch.setattr(tracker.experiment, "finish", _said_no)
+    try:
+        tracker.finalize("success")
+    except RuntimeError:
+        assert raise_errors
+    assert tracker._run is None
+
+
+@pytest.mark.parametrize("raise_errors", [False, True])
+def test_a_refused_lineage_entry_does_not_stop_the_others(
+    fake_wandb: Any, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, raise_errors: bool
+) -> None:
+    tracker = WandbTracker(raise_errors=raise_errors)
+    run = tracker.experiment
+    using = run.use_artifact
+
+    def use(artifact: Any) -> Any:
+        if artifact.type == "dataset":
+            raise SAID_NO
+        return using(artifact)
+
+    monkeypatch.setattr(run, "use_artifact", use)
+    if raise_errors:
+        with pytest.raises(RuntimeError, match="wandb said no"):
+            tracker.log_manifest(_manifest_with_lineage(tmp_path))
+    else:
+        tracker.log_manifest(_manifest_with_lineage(tmp_path))
+    assert [a.type for a in run.used] == ["model", "model"]

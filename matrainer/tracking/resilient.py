@@ -14,23 +14,27 @@ around ANY :class:`~matrainer.tracking.base.Tracker` and gives it four guarantee
   (a rendered figure) still uploads on replay; with ``backup_artifacts`` a copy is written
   under the run's own directory so it survives a crash before the queue is sent.
 * **A server error (5xx) turns off only that kind of call** — a broken metrics endpoint does
-  not stop artifact uploads. Any other error is logged and the call dropped.
+  not stop artifact uploads. The status is read from the error (:func:`is_server_error`), never
+  from a number its message happens to hold. Any other error is logged and the call dropped.
 
 A run that cannot be started (the server refuses, or ``start_timeout`` passes) turns the
 wrapper off: every later call is skipped and training carries on.
 
-**The wrapped tracker must let its failures RAISE.** The wrapper only sees what the wrapped
-call raises or how long it takes: a tracker that catches its own errors (``MlflowTracker``
-logs a failed ``log_metric`` at debug level and returns) gets the time limits but nothing
-queued. Rationale: ``docs/architecture.md`` → "A resilient wrapper, not a resilient backend".
+**The wrapper turns the wrapped tracker's ``raise_errors`` on** (on first use). It only sees
+what a call raises or how long it takes, and a tracker keeps a failed call to itself by
+default (``MlflowTracker`` logs a failed ``log_metric`` at debug level and returns) — which
+would leave nothing to queue. Rationale: ``docs/architecture.md`` → "A resilient wrapper, not
+a resilient backend".
 """
 
 from __future__ import annotations
 
+import re
 import tempfile
 import threading
 import time
 from dataclasses import dataclass
+from http import HTTPStatus
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Callable, Dict, List, Mapping, Optional, Set, Tuple, Union
 
@@ -49,6 +53,15 @@ logger = get_logger(__name__)
 #: alone does not tell.
 NETWORK_ERROR_WORDS = ("max retries", "timeout", "timed out", "connection")
 
+#: A 5xx status as an error's MESSAGE writes one when no attribute carries it: the code and its
+#: reason phrase (``503 Service Unavailable``), or requests' own ``500 Server Error``. Never a bare
+#: number — a refused value of 500 is in the message of a 400 (MLflow, measured 2026-10-14).
+_SERVER_STATUS_TEXT = re.compile(
+    r"\b5\d\d (?:Server Error|"
+    + "|".join(re.escape(status.phrase) for status in HTTPStatus if 500 <= status < 600)
+    + r")\b"
+)
+
 #: How often (in queued calls) the cache-only mode says it is still on — it makes no live
 #: calls, so nothing else would mention it until the run ends.
 _STILL_QUEUEING_EVERY = 25
@@ -62,12 +75,30 @@ def is_network_error(error: BaseException) -> bool:
     return any(word in text for word in NETWORK_ERROR_WORDS)
 
 
+def _http_status(error: BaseException) -> Optional[int]:
+    """The HTTP status ``error`` carries: its ``status_code``, its ``response``'s, or the one
+    MLflow's exceptions declare (``get_http_status_code()``); ``None`` when it carries none."""
+    for status in (getattr(error, "status_code", None), getattr(getattr(error, "response", None), "status_code", None)):
+        if isinstance(status, int):
+            return status
+    declared = getattr(error, "get_http_status_code", None)
+    if callable(declared):
+        status = declared()
+        if isinstance(status, int):
+            return status
+    return None
+
+
 def is_server_error(error: BaseException) -> bool:
-    """Whether ``error`` carries a 5xx status — the endpoint is broken, not the network."""
-    status = getattr(error, "status_code", None) or getattr(getattr(error, "response", None), "status_code", None)
-    if isinstance(status, int):
+    """Whether ``error`` is a 5xx — the endpoint is broken, not the network.
+
+    The status ``error`` carries decides (:func:`_http_status`); without one, only a message that
+    writes a 5xx status counts (:data:`_SERVER_STATUS_TEXT`), never a 500 anywhere in it.
+    """
+    status = _http_status(error)
+    if status is not None:
         return 500 <= status < 600
-    return "500" in str(error)
+    return _SERVER_STATUS_TEXT.search(str(error)) is not None
 
 
 def run_with_timeout(func: Callable[..., Any], args: Tuple[Any, ...], kwargs: Mapping[str, Any], timeout: float) -> Any:
@@ -179,6 +210,9 @@ class ResilientTracker(Tracker):
         # Written back: re-flowing a deferred marker on every call would build a new tracker
         # (a new run) each time — the reason `flow_trackers` writes back too.
         self.tracker = flow(self.tracker)
+        # The wrapper sees only what a call raises: a tracker that kept a failure to itself
+        # would leave nothing to queue.
+        self.tracker.raise_errors = True
         return self.tracker
 
     @property
