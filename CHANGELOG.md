@@ -4,7 +4,7 @@ All notable changes to this project are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and the versioning is
 [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [Unreleased]
+## [0.1.0a2] — 2026-10-14
 
 ### Trainers
 - **`mps_low_watermark`** on every torch trainer (`TorchTrainerRunnable`: the Lightning, owned-loop, fastai and
@@ -31,7 +31,14 @@ All notable changes to this project are documented here. The format follows
   runnable) writes one, copying or referencing the graph files and the weights files separately;
   `package.yaml` lists every file with its SHA-256 and the installed versions of the graph's
   distributions. `ModelPackage` (an op) runs a package as one step, with `overrides` into its graph
-  applied last. `read_package` returns the package file as plain data.
+  applied last. `read_package` returns the package file as plain data. `load_package_graph` loads a
+  package's graph the one way the op runs it — for another reader of packages, such as a compiler —
+  and returns a `LoadedPackage` holding the document it gave `confluid.load`, so another stage of the
+  same document can be loaded.
+
+### Dependencies
+- `recordstream>=0.1.0a3` (core, `[keras]`, `[jax]`) — the first release with the flow subgraph the
+  model packages run; `confluid>=0.4.1`, which that recordstream requires.
 
 ## [0.1.0a1] — 2026-09-27
 
