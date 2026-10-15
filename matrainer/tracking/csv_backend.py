@@ -44,6 +44,7 @@ class CsvTracker(Tracker):
         run_name: Run name; ``None`` draws a random slug.
         save_dir: Root directory for all runs.
         tags: Optional tags written to ``tags.json``.
+        raise_errors: Raise a failed call's error after its debug line (see :class:`Tracker`).
     """
 
     def __init__(
@@ -52,8 +53,9 @@ class CsvTracker(Tracker):
         run_name: Optional[str] = None,
         save_dir: str = "./runs",
         tags: Optional[Mapping[str, str]] = None,
+        raise_errors: bool = False,
     ) -> None:
-        super().__init__(experiment_name, run_name, save_dir, tags)
+        super().__init__(experiment_name, run_name, save_dir, tags, raise_errors)
         self._run_dir: Optional[Path] = None
         self._metric_columns: List[str] = []
         self._metric_rows: List[dict] = []
@@ -123,8 +125,9 @@ class CsvTracker(Tracker):
         safe = name.replace("/", "_")
         try:
             save(dest_dir / f"{safe}.png")
-        except Exception as exc:  # pragma: no cover - matplotlib backend specific
+        except Exception as exc:  # matplotlib backend specific
             logger.debug(f"CsvTracker.log_figure failed for {name}: {exc}")
+            self._raise_failure(exc)
 
 
 __all__ = ["CsvTracker"]

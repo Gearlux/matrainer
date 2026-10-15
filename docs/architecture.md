@@ -1249,15 +1249,32 @@ Rejected: resilience inside each backend (it would be written six times and diff
 
 ### Consequences
 
-- The wrapper sees only what the wrapped call raises. A backend that catches its own failures (the
-  in-tree backends log them at debug level) gets the time limits but nothing queued; a backend
-  written to be wrapped lets its failures raise.
+- The wrapper sees only what the wrapped call raises, so it turns the wrapped tracker's
+  `raise_errors` on (amendment below); a backend that ignores the setting gets the time limits but
+  nothing queued.
 - A call that timed out keeps running on its thread and may still land, so a replay can record the
   same value twice. Accepted: deduplicating would need per-call identities on the server side.
 - The wrapper owns no identity: name, run name, `save_dir`, tags and `log_dir` are the wrapped
   tracker's, so `TrackerLogger.save_dir` (record 11) still places checkpoints under `runs/`, and the
   artifact backups land in the same run directory.
 - `finalize` may wait `max_retries × finalize_retry_delay` plus the calls' own limits at run end.
+
+**Amendment (2026-10-14).** Every tracker takes `raise_errors`, off by default, and the wrapper
+turns it on for the tracker it wraps on first use (`ResilientTracker.inner`). Off, a failed backend
+call is a debug line and the run goes on, exactly as before: a bare tracker must never stop
+training over a value. On, the same debug line is written and the error raised. A call that loops
+over names (MLflow's parameters, metrics and tags, Aim's and ClearML's metrics) tries every name and
+raises the first failure, and a call made of parts (`log_manifest`: the parameters, the files, each
+native slot) runs every part first (`Tracker._run_all`) — the wrapper drops a refused call whole, so
+a refused parameter must not cost the manifest its upload. Three failures stay quiet even when on:
+Aim's starting tags (a failed start turns the wrapper off for the whole run), W&B's reference
+attachment (record 3: the artifact is the record, the reference an optimisation) and MLflow's
+system-metrics shutdown (the run must still be ended). `is_server_error` reads the status the error
+carries — its `status_code`, its response's, or MLflow's `get_http_status_code()` — and, without
+one, only a message that writes a 5xx status (`503 Service Unavailable`): MLflow refuses a changed
+parameter with a 400 whose message holds the new value, and a value of 500 turned parameter logging
+off for the rest of the run (measured). Rejected: raising by default (every bare run would stop on
+a network error that costs one value today).
 
 ### Example
 
@@ -1266,6 +1283,7 @@ from matrainer import MlflowTracker, ResilientTracker
 
 tracker = ResilientTracker(tracker=MlflowTracker(experiment_name="exp"), timeout=5.0)
 tracker.log_metrics({"val/loss": 0.4}, step=3)   # queued if the server is unreachable
+assert tracker.inner.raise_errors                # turned on by the wrapper's first call
 tracker.finalize()                               # the queue sent, then the run ended
 ```
 
@@ -1274,4 +1292,5 @@ tracker.finalize()                               # the queue sent, then the run 
 The classification words, the defaults, a new `Tracker` method (route it through `_call` with its
 time limit). What you may not do: let the wrapper raise into a training loop (a missing `tracker:`
 is the one configuration error it raises), call the wrapped tracker outside `run_with_timeout`, or
-let a new call overtake a queued one.
+let a new call overtake a queued one; turn `raise_errors` on by default, or let a backend's
+`raise_errors` stop the names or parts after a failed one.

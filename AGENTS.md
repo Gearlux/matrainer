@@ -31,6 +31,18 @@ task semantics. A collate or batch reader written here belongs in recordstream.
   Every wrapped call goes through `run_with_timeout`; a new call never overtakes a queued one; the
   wrapper never raises into a loop except for a missing `tracker:`; its name, run name, `save_dir`
   and `log_dir` are the wrapped tracker's (`tests/tracking/test_resilient.py`). §14.
+- `raise_errors` (every tracker's constructor, default `False`): off, a failed backend call is a
+  debug line and the call returns — never change that default; on, the error is raised after the
+  same line. A loop over names tries every name and raises the first failure; a call made of parts
+  (`log_manifest`) runs them through `Tracker._run_all`. `ResilientTracker.inner` turns it on.
+  Quiet even when on: Aim's starting tags, W&B's `_add_reference`, MLflow's monitor shutdown. A new
+  backend's failure handler logs, then calls `self._raise_failure(exc)`
+  (`tests/tracking/test_base.py::test_every_backend_takes_raise_errors_in_its_constructor`, each
+  backend's `test_a_refused_*`, `tests/tracking/test_mlflow_backend.py::test_a_resilient_tracker_replays_the_metric_mlflow_could_not_send`). §14.
+- `is_server_error` reads the status the error carries (`status_code`, `response.status_code`,
+  `get_http_status_code()`); a message counts only when it writes a 5xx status, never a bare 500
+  (`tests/tracking/test_resilient.py::test_a_server_error_is_read_from_its_status`,
+  `::test_a_refusal_naming_500_drops_that_call_only`).
 - `Tracker` is the whole abstraction; no wrapper layer over it. Backends are zero-arg, build their
   handle on first `.experiment`, and import their library inside methods via `require(module,
   extra)`. `import matrainer` loads no tracker or framework (`tests/test_light_import.py`). §2.

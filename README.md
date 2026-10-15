@@ -144,6 +144,22 @@ line, no `__all__` entry, and no registry edit. `discover_backends()` returns th
 it. A backend shipped by a *different* distribution is discovered through the
 `confluid.configurables` entry point instead, with no change here at all.
 
+**A failed call never stops the run.** A backend call the server refused or never answered is
+logged at debug level and the call returns, so a tracking outage costs a value, not a training run.
+Set `raise_errors` on a tracker to have the error raised as well, after its debug line:
+
+```yaml
+trackers:
+  - !class:matrainer.MlflowTracker
+    tracking_uri: https://mlflow.example.org
+    raise_errors: true      # default false; a failed call now raises into the training loop
+```
+
+A call that sends several values (MLflow sends each parameter, metric and tag on a request of its
+own) still tries every one and raises the first failure, and `log_manifest` sends every part — the
+files, the parameters, each native slot — before it raises. `ResilientTracker` (below) turns
+`raise_errors` on for the tracker it wraps: what a call raises is what the wrapper can queue.
+
 `TrackerGroup([...])` fans one call out to several backends behind the same surface.
 
 ```python
@@ -178,7 +194,7 @@ trackers:
 | `max_retries` (10) failures in a row | stops calling the server, only queues; `finalize` makes `max_retries` more tries |
 | an artifact's file is deleted after logging | its bytes were read when it was logged, so it still uploads under its name |
 | the process dies before the queue is sent | a queued artifact has a copy under `runs/<experiment>/<run>/pending_artifacts/` |
-| the server answers 5xx on one kind of call | that kind is off for the run; every other call goes on |
+| the server answers 5xx on one kind of call | that kind is off for the run; every other call goes on (the status is read from the error, never a 500 in its message) |
 | the server refuses a call for another reason | the call is dropped with a warning |
 | the run cannot be started (`start_timeout`, 30 s) | tracking is off for this run; training carries on |
 
@@ -200,10 +216,11 @@ INFO    Sent 3 queued tracking call(s) (0 still queued).
 | `finalize_retry_delay` | `1.0` | seconds between `finalize`'s tries |
 | `backup_artifacts` | `True` | write the on-disk copy of a queued artifact |
 
-**The wrapped tracker must let its failures raise** — the wrapper queues only what raises.
-`MlflowTracker` (and the other in-tree backends) catch a failed call and log it at debug level, so
-around them the wrapper bounds the time a call can take but has nothing to queue. A call that timed
-out may still land later, so its replay can record the same value twice. Rationale:
+**The wrapper turns the wrapped tracker's `raise_errors` on** the first time it uses it — a tracker
+keeps a failed call to itself by default, which would leave nothing to queue — so the configuration
+above needs nothing more. A replayed call is sent whole: a call that timed out may still land later,
+and a call that names several values may have sent some before the network dropped, so a replay can
+record a metric point twice (MLflow accepts a parameter re-sent with the same value). Rationale:
 [architecture record 14](https://github.com/Gearlux/matrainer/blob/main/docs/architecture.md).
 
 ## Choosing a backend

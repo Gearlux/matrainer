@@ -436,3 +436,133 @@ def test_a_failing_create_logged_model_does_not_break_the_run(
     monkeypatch.setattr(client, "create_logged_model", boom)
     tracker.log_manifest(_manifest_with_models(tmp_path))  # no raise
     assert client.model_inputs == []
+
+
+# --------------------------------------------------------------------------- #
+# raise_errors — a refused call is a debug line, and raised as well when asked
+# --------------------------------------------------------------------------- #
+
+SAID_NO = RuntimeError("server said no")
+
+
+def _refuse(monkeypatch: pytest.MonkeyPatch, target: Any, method: str, only: Any = None) -> None:
+    """Make ``target.method`` raise :data:`SAID_NO` — on every call, or only on one naming ``only``."""
+    real = getattr(target, method, None)
+
+    def refused(*args: Any, **kwargs: Any) -> Any:
+        if only is None or only in args or only in kwargs.values():
+            raise SAID_NO
+        return real(*args, **kwargs)  # type: ignore[misc]
+
+    monkeypatch.setattr(target, method, refused, raising=False)
+
+
+def _file(tmp_path: Path) -> Path:
+    path = tmp_path / "a.txt"
+    path.write_text("A")
+    return path
+
+
+#: (client method refused, the tracker call that sends one request to it)
+_ONE_REQUEST = [
+    ("log_artifact", lambda t, tmp: t.log_artifact(_file(tmp))),
+    ("log_figure", lambda t, tmp: t.log_figure("val/cm", object())),
+    ("log_text", lambda t, tmp: t.log_text("val/report", "|a|")),
+    ("log_inputs", lambda t, tmp: t.log_manifest(build_manifest(tmp))),  # the datasets
+    ("log_inputs", lambda t, tmp: t.log_manifest(_manifest_with_models(tmp))),  # the models' link
+    ("set_terminated", lambda t, tmp: t.finalize("success")),
+]
+
+
+@pytest.mark.parametrize("raise_errors", [False, True])
+@pytest.mark.parametrize("method, call", _ONE_REQUEST, ids=[f"{m}-{i}" for i, (m, _) in enumerate(_ONE_REQUEST)])
+def test_a_refused_request_is_raised_only_when_asked(
+    fake_mlflow: Any, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, method: str, call: Any, raise_errors: bool
+) -> None:
+    tracker = MlflowTracker(log_system_metrics=False, raise_errors=raise_errors)
+    _refuse(monkeypatch, tracker.experiment, method)
+    if raise_errors:
+        with pytest.raises(RuntimeError, match="server said no"):
+            call(tracker, tmp_path)
+    else:
+        call(tracker, tmp_path)  # a debug line, as always
+
+
+#: (client method refused for the name `b`, the tracker call naming a, b and c, what the client holds)
+_PER_NAME = {
+    "log_param": (lambda t: t.log_hyperparams({"a": 1, "b": 2, "c": 3}), lambda c: c.params),
+    "log_metric": (
+        lambda t: t.log_metrics({"a": 1.0, "b": 2.0, "c": 3.0}, step=4),
+        lambda c: [key for key, _, _ in c.metrics],
+    ),
+    "set_tag": (lambda t: t.set_tags({"a": "1", "b": "2", "c": "3"}), lambda c: c.tags),
+}
+
+
+@pytest.mark.parametrize("raise_errors", [False, True])
+@pytest.mark.parametrize("method", sorted(_PER_NAME))
+def test_a_refused_name_does_not_stop_the_others(
+    fake_mlflow: Any, monkeypatch: pytest.MonkeyPatch, method: str, raise_errors: bool
+) -> None:
+    """Every name is tried, as before; with raise_errors the first refusal is raised afterwards."""
+    tracker = MlflowTracker(log_system_metrics=False, raise_errors=raise_errors)
+    client = tracker.experiment
+    _refuse(monkeypatch, client, method, only="b")
+    call, held = _PER_NAME[method]
+    if raise_errors:
+        with pytest.raises(RuntimeError, match="server said no"):
+            call(tracker)
+    else:
+        call(tracker)
+    assert sorted(held(client)) == ["a", "c"]
+
+
+@pytest.mark.parametrize("raise_errors", [False, True])
+def test_a_refused_model_does_not_stop_the_others(
+    fake_mlflow: Any, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, raise_errors: bool
+) -> None:
+    tracker = MlflowTracker(log_system_metrics=False, raise_errors=raise_errors)
+    client = tracker.experiment
+    _refuse(monkeypatch, client, "create_logged_model", only="timm_resnet50_a1_in1k")
+    if raise_errors:
+        with pytest.raises(RuntimeError, match="server said no"):
+            tracker.log_manifest(_manifest_with_models(tmp_path))
+    else:
+        tracker.log_manifest(_manifest_with_models(tmp_path))
+    assert [m.name for m in client.logged_models] == ["w_last_ckpt"] and len(client.model_inputs) == 1
+
+
+def test_a_failed_monitor_shutdown_is_never_raised_and_the_run_still_ends(fake_mlflow: Any) -> None:
+    """The system-metrics monitor is local bookkeeping: its failure must not keep the run open."""
+    tracker = MlflowTracker(log_system_metrics=False, raise_errors=True)
+    client = tracker.experiment
+
+    class Monitor:
+        def finish(self) -> None:
+            raise SAID_NO
+
+    tracker._system_monitor = Monitor()
+    tracker.finalize("success")
+    assert client.terminated == "FINISHED"
+
+
+def test_a_resilient_tracker_replays_the_metric_mlflow_could_not_send(
+    fake_mlflow: Any, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The wrapper turns raise_errors on, so a metric lost to a dropped server is queued and sent later."""
+    from matrainer.tracking.resilient import ResilientTracker
+
+    wrapped = ResilientTracker(tracker=MlflowTracker(log_system_metrics=False), timeout=5.0)
+    wrapped.log_metrics({"loss": 1.0}, step=0)
+    client = fake_mlflow.instances[0]
+    sending = client.log_metric
+
+    def dropped(*args: Any, **kwargs: Any) -> None:
+        raise ConnectionError("Max retries exceeded with url: /api/2.0/mlflow/runs/log-metric (Connection refused)")
+
+    monkeypatch.setattr(client, "log_metric", dropped)
+    wrapped.log_metrics({"loss": 0.5}, step=1)
+    assert [call.method for call in wrapped.pending] == ["log_metrics"]
+    monkeypatch.setattr(client, "log_metric", sending)
+    wrapped.log_metrics({"loss": 0.25}, step=2)
+    assert [step for _, _, step in client.metrics] == [0, 1, 2] and wrapped.pending == []

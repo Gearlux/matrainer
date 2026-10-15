@@ -31,6 +31,7 @@ here because the symptom (a run with no hyperparameters) reads exactly like a bu
 
 from __future__ import annotations
 
+from functools import partial
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Dict, Mapping, Optional, Tuple, Union
 
@@ -74,6 +75,7 @@ class AimTracker(Tracker):
             default, unlike Aim's own default: a tracked run normally has loggair writing
             a log file that :func:`~matrainer.tracking.provenance.capture_log_file` uploads,
             and capturing the same stream twice is noise, not provenance.
+        raise_errors: Raise a failed call's error after its debug line (see :class:`Tracker`).
     """
 
     def __init__(
@@ -84,8 +86,9 @@ class AimTracker(Tracker):
         tags: Optional[Mapping[str, str]] = None,
         log_system_metrics: bool = True,
         capture_terminal_logs: bool = False,
+        raise_errors: bool = False,
     ) -> None:
-        super().__init__(experiment_name, run_name, save_dir, tags)
+        super().__init__(experiment_name, run_name, save_dir, tags, raise_errors)
         self.log_system_metrics = log_system_metrics
         self.capture_terminal_logs = capture_terminal_logs
         self._run: Optional[Any] = None
@@ -112,6 +115,8 @@ class AimTracker(Tracker):
             self._run = run
             logger.info(f"Aim run started: {self.experiment_name}/{self.run_name} ({run.hash})")
             if self.tags:
+                # Never raised: a refused tag must not fail the run's start, which a wrapper
+                # would read as "tracking is off for this run".
                 self._add_tags(self.tags, run)
         return self._run
 
@@ -124,31 +129,41 @@ class AimTracker(Tracker):
         self._hparams.update(dict(params))
         try:
             self.experiment["hparams"] = self._hparams
-        except Exception as exc:  # pragma: no cover - aim rejects unserializable values
+        except Exception as exc:  # aim rejects unserializable values
             logger.debug(f"Aim hparams assignment failed: {exc}")
+            self._raise_failure(exc)
 
     def log_metrics(self, metrics: Mapping[str, float], step: Optional[int] = None) -> None:
         run = self.experiment
+        failed: Optional[Exception] = None
         for key, value in metrics.items():
             try:
                 run.track(float(value), name=str(key), step=step)
-            except Exception as exc:  # pragma: no cover - defensive
+            except Exception as exc:
                 logger.debug(f"Aim track failed for {key}: {exc}")
+                failed = failed or exc
+        self._raise_failure(failed)
 
     def set_tags(self, tags: Mapping[str, str]) -> None:
         # Resolve the run BEFORE merging into self.tags. Creating the run applies whatever
         # self.tags already holds, so merging first would make these tags land twice.
         run = self.experiment
         super().set_tags(tags)
-        self._add_tags(tags, run)
+        self._raise_failure(self._add_tags(tags, run))
 
-    def _add_tags(self, tags: Mapping[str, str], run: Any) -> None:
-        """Aim tags are flat strings, so a key/value pair becomes ``key=value``."""
+    def _add_tags(self, tags: Mapping[str, str], run: Any) -> Optional[Exception]:
+        """Aim tags are flat strings, so a key/value pair becomes ``key=value``.
+
+        Every tag is tried; the first failure is returned (each is logged) for the caller to raise or not.
+        """
+        failed: Optional[Exception] = None
         for key, value in tags.items():
             try:
                 run.add_tag(f"{key}={value}")
-            except Exception as exc:  # pragma: no cover - defensive
+            except Exception as exc:
                 logger.debug(f"Aim add_tag failed for {key}: {exc}")
+                failed = failed or exc
+        return failed
 
     def log_artifact(self, path: Union[str, Path], artifact_dir: str = "") -> None:
         src = Path(path)
@@ -162,8 +177,9 @@ class AimTracker(Tracker):
             # `config/train.yaml` and `logs/train.yaml` would otherwise collide.
             name = f"{artifact_dir}/{src.name}" if artifact_dir else src.name
             run.log_artifact(str(src), name=name)
-        except Exception as exc:  # pragma: no cover - defensive
+        except Exception as exc:
             logger.debug(f"Aim log_artifact failed for {src}: {exc}")
+            self._raise_failure(exc)
 
     def _ensure_artifacts_uri(self, run: Any) -> None:
         """Aim raises unless an artifacts URI is set first; point it beside the repository."""
@@ -178,16 +194,18 @@ class AimTracker(Tracker):
         try:
             aim = require("aim", "aim", feature="AimTracker")
             self.experiment.track(aim.Image(figure), name=name, step=step)
-        except Exception as exc:  # pragma: no cover - matplotlib/aim conversion
+        except Exception as exc:  # matplotlib/aim conversion
             logger.debug(f"Aim log_figure failed for {name}: {exc}")
+            self._raise_failure(exc)
 
     def log_text(self, name: str, text: str, step: Optional[int] = None) -> None:
         """``aim.Text`` — a tracked SEQUENCE, so the run page keeps every step's value."""
         try:
             aim = require("aim", "aim", feature="AimTracker")
             self.experiment.track(aim.Text(text), name=name, step=step)
-        except Exception as exc:  # pragma: no cover - defensive
+        except Exception as exc:
             logger.debug(f"Aim log_text failed for {name}: {exc}")
+            self._raise_failure(exc)
 
     def log_manifest(self, manifest: "RunManifest") -> None:
         """Artifact + hyperparameters (the default), PLUS the sections as Aim run values.
@@ -200,19 +218,25 @@ class AimTracker(Tracker):
         is where Aim's own hyperparameter comparison reads from. Everything is ADDITIONAL to the
         artifact, so a run tracked here stays comparable with the same run tracked elsewhere.
         """
-        super().log_manifest(manifest)
+        self._run_all(partial(super().log_manifest, manifest), partial(self._project_sections, manifest))
+
+    def _project_sections(self, manifest: "RunManifest") -> None:
+        """Each of :data:`PROJECTED_SECTIONS` as a run value; every one tried, the first failure raised when asked."""
         run = self.experiment
+        failed: Optional[Exception] = None
         for name in PROJECTED_SECTIONS:
             value = manifest.section(name)
             if not value:
                 continue
             try:
                 run[name] = value
-            except Exception as exc:  # pragma: no cover - aim rejects an unrepresentable value
+            except Exception as exc:  # aim rejects an unrepresentable value
                 logger.debug(f"Aim could not record the {name!r} section: {exc}")
+                failed = failed or exc
         # The run's STATUS is deliberately not projected here: `log_manifest` is called while
         # the run is still going, so it would record `running` forever and a filter on it would
         # match nothing. `finalize()` writes `run["status"]` at the one moment it is true.
+        self._raise_failure(failed)
 
     def finalize(self, status: str = "success") -> None:
         if self._run is None:
@@ -221,8 +245,9 @@ class AimTracker(Tracker):
             # Aim has no run status of its own; record it where a query can reach it.
             self._run["status"] = status
             self._run.close()
-        except Exception as exc:  # pragma: no cover - defensive
+        except Exception as exc:
             logger.debug(f"Aim run close failed: {exc}")
+            self._raise_failure(exc)
 
 
 __all__ = ["AIM_SYSTEM_INTERVAL", "PROJECTED_SECTIONS", "AimTracker"]
