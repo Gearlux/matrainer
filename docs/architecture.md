@@ -310,6 +310,34 @@ The live-server measurement is recorded beside `ADDRESSABLE_SCHEMES` in
 
 ---
 
+### Amendment (2026-10-16): a remote-only run keeps its manifest beside its checkpoints
+
+**Context.** The manifest was written to the first tracker's `log_dir`, else `runs/<experiment>/<run>` under the
+launch directory. A run tracked on a server alone (a remote-only backend has no `log_dir`) therefore landed in
+two folders: the trainer's checkpoints and metrics in its `output_dir`, the manifest, config and package freeze in a
+second tree named after the experiment — and nothing tied the two together (measured on a real RF-DETR run: the
+checkpoint folder held an empty `hparams.yaml`, and the model's size and machine were only in the other tree).
+
+**Decision.** `log_run_context` builds the manifest in the first tracker's `log_dir`; when that tracker keeps none,
+in the runnable's `output_dir`; only without either in `runs/<experiment>/<run>`. `capture_log_file` copies the log
+file into `<manifest folder>/logs/` as well as uploading it. Rejected: a remote-only tracker reporting its
+`save_dir` as `log_dir` — `log_dir` means "this backend's own local tree", and `log_manifest` skips uploading the
+files inside it, so the manifest would never reach the server; a per-trainer manifest built by each consumer — the
+rule would be written once per trainer.
+
+**Consequences.** A trainer with an `output_dir` and only remote tracking writes ONE folder per run. A run with a
+local tracker is unchanged. The copied log is not a manifest artifact, so it is not uploaded twice.
+
+**Example.**
+
+```python
+manifest = log_run_context([server_tracker], runnable=trainer)   # trainer.output_dir = "runs/project/nano"
+manifest.path   # runs/project/nano/manifest.yaml, beside checkpoint_best_total.pth
+```
+
+**What you may change.** Which runnable attribute names the output folder (today `output_dir`); the copy's
+folder name. Not: the manifest skipping a local tracker's folder, or a second folder for a run that has one.
+
 ## 4. Backends are separately installable: tolerate, declare, select (2026-08-01)
 
 > **Status: all three layers ship.** Tolerance was already there; discovery + `[tool.aisland]

@@ -128,6 +128,57 @@ def test_log_run_context_derives_params_from_a_runnable(tmp_path: Path, monkeypa
     assert (manifest.directory / "config" / "final.yaml").exists()
 
 
+class _OutputFolderToy:
+    """A runnable that writes its run — checkpoints, metrics — into ONE folder of its own."""
+
+    def __init__(self, output_dir: str = "") -> None:
+        self.output_dir = output_dir
+
+
+def test_a_remote_only_tracker_puts_the_manifest_in_the_runnables_output_folder(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A remote-only tracker (``log_dir`` None, the Melody kind) keeps no local folder, so the manifest, the resolved
+    config and the package freeze go beside the checkpoints — never into a second ``runs/<experiment>/<run>``."""
+    monkeypatch.chdir(tmp_path)
+    tracker = RecordingTracker(experiment_name="exp", run_name="r")
+    out = tmp_path / "runs" / "project" / "nano"
+
+    manifest = provenance.log_run_context([tracker], runnable=_OutputFolderToy(str(out)), capture_code=False)
+
+    assert manifest is not None
+    assert manifest.path == out / "manifest.yaml"
+    assert (out / "config" / "final.yaml").is_file() and (out / "environment" / "requirements.txt").is_file()
+    assert not (tmp_path / "runs" / "exp").exists()
+
+
+def test_a_tracker_with_a_local_folder_keeps_the_manifest_beside_it(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The output folder is only the fallback: a tracker that HAS a local tree keeps the manifest beside its files."""
+    monkeypatch.chdir(tmp_path)
+    tracker = CsvTracker(experiment_name="exp", run_name="r", save_dir=str(tmp_path / "runs"))
+
+    manifest = provenance.log_run_context(
+        [tracker], runnable=_OutputFolderToy(str(tmp_path / "out")), capture_code=False
+    )
+
+    assert manifest is not None and manifest.path == tmp_path / "runs" / "exp" / "r" / "manifest.yaml"
+
+
+@pytest.mark.parametrize("runnable", [None, object(), _OutputFolderToy("")])
+def test_without_an_output_folder_the_manifest_goes_to_runs_experiment_run(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, runnable: Any
+) -> None:
+    monkeypatch.chdir(tmp_path)
+    tracker = RecordingTracker(experiment_name="exp", run_name="r")
+
+    manifest = provenance.log_run_context([tracker], runnable=runnable, capture_code=False)
+
+    assert manifest is not None
+    assert manifest.path.resolve() == (tmp_path / "runs" / "exp" / "r" / "manifest.yaml").resolve()
+
+
 def test_explicit_params_win_over_derived_ones(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     from confluid import configurable
 
@@ -297,6 +348,39 @@ def test_capture_log_file_uploads_both_the_log_and_the_manifest(
     provenance.capture_log_file([t], manifest=m)
     assert (str(log), "logs") in t.artifacts
     assert len(t.artifacts) == 3
+
+
+def test_capture_log_file_copies_the_log_into_the_run_folder(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """The run folder holds the run's log too — uploaded once, copied once, never uploaded twice."""
+    from matrainer.tracking.manifest import RunManifest
+
+    log = tmp_path / "logs" / "recordstream.log"
+    log.parent.mkdir()
+    log.write_text("epoch 1\nepoch 2\n")
+    monkeypatch.setattr(provenance, "resolve_log_file", lambda: log)
+    m = RunManifest(run_dir=tmp_path / "run", handle_interrupts=False)
+    t = RecordingTracker()
+
+    provenance.capture_log_file([t], manifest=m)
+
+    assert (tmp_path / "run" / "logs" / "recordstream.log").read_text() == "epoch 1\nepoch 2\n"
+    assert [a for a in t.artifacts if a[1] == "logs"] == [(str(log), "logs")]
+
+
+def test_capture_log_file_leaves_a_log_already_in_the_run_folder(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from matrainer.tracking.manifest import RunManifest
+
+    log = tmp_path / "run" / "logs" / "run.log"
+    log.parent.mkdir(parents=True)
+    log.write_text("line")
+    monkeypatch.setattr(provenance, "resolve_log_file", lambda: log)
+    m = RunManifest(run_dir=tmp_path / "run", handle_interrupts=False)
+
+    provenance.capture_log_file([RecordingTracker()], manifest=m)
+
+    assert sorted(p.name for p in (tmp_path / "run" / "logs").iterdir()) == ["run.log"]
 
 
 def test_capture_log_file_noop_without_file(monkeypatch: pytest.MonkeyPatch) -> None:

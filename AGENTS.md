@@ -75,6 +75,12 @@ task semantics. A collate or batch reader written here belongs in recordstream.
 
 - Every fact lands in the manifest; a native slot is written ALSO, never instead. The base
   `log_manifest` projects `params` via `log_hyperparams`; an override calls `super()` first.
+- The manifest's folder (`provenance._manifest_folder`): the first tracker's `log_dir`; else (a remote-only
+  tracker) the runnable's `output_dir`, beside its checkpoints; else `runs/<experiment>/<run>`. Never a second
+  folder for a run whose trainer has one. `capture_log_file` copies the log into that folder's `logs/` — a copy,
+  never a manifest artifact (the trackers already receive the log), a log already there left alone, a failed copy
+  a debug line (`tests/tracking/test_provenance.py::test_a_remote_only_tracker_puts_the_manifest_in_the_runnables_output_folder`,
+  `::test_a_tracker_with_a_local_folder_keeps_the_manifest_beside_it`, `::test_capture_log_file_copies_the_log_into_the_run_folder`). §3.
 - `log_run_context` is the one entry and captures datasets, models and packages itself; never a
   per-consumer `record_dataset`/`record_model` call. `kind`/`name` come from the URI, so capture
   holds no source-specific code. A capture failure is a debug log, never a raise.

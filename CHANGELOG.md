@@ -4,6 +4,14 @@ All notable changes to this project are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and the versioning is
 [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Tracking
+- **A run tracked only on a server keeps its manifest beside its checkpoints**: when the first tracker keeps
+  no local folder, `log_run_context` writes `manifest.yaml`, `config/final.yaml` and
+  `environment/requirements.txt` into the runnable's `output_dir` instead of `runs/<experiment>/<run>`.
+- **`capture_log_file` copies the run's log into the run folder's `logs/`**, beside the manifest.
+
 ## [0.1.0a2] — 2026-10-15
 
 ### Trainers

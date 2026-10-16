@@ -423,6 +423,22 @@ A mistyped section name raises rather than silently creating a key, and `set` on
 `add` on a mapping one) tells you which to use. `run_dir=None` derives
 `runs/<experiment_name>/<run_name>`; the directory is created on first write, not at construction.
 
+**Where `log_run_context` writes it.** Beside the first tracker's own files when that tracker keeps a
+local folder (`log_dir`: CSV, TensorBoard, MLflow's local store). A tracker that only sends to a server
+keeps none, and then the manifest goes into the runnable's own `output_dir` — the folder holding its
+checkpoints — so one folder holds the whole run:
+
+```
+<output_dir>/
+  checkpoint_best_total.pth  metrics.csv  …        # the trainer's own files
+  manifest.yaml  manifest.json                      # the run manifest
+  config/final.yaml  environment/requirements.txt   # its side files
+  logs/<the run's log>                              # copied by capture_log_file
+```
+
+Without either, it is `runs/<experiment_name>/<run_name>`. `capture_log_file` also copies the run's log
+file into `logs/` of that folder (the trackers still receive it as an artifact).
+
 ### What the `capture_*` calls collect
 
 **`capture_environment()`** — `argv`, cwd, interpreter, platform, and the accelerator, read from

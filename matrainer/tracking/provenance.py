@@ -795,6 +795,19 @@ def resolve_log_file() -> Optional[Path]:
     return path if path.exists() else None
 
 
+def _output_folder(runnable: Any) -> Optional[Path]:  # any runnable: the attribute is read by name
+    """The folder a runnable writes its run into (``output_dir``: checkpoints, metrics), or ``None`` without one."""
+    folder = getattr(runnable, "output_dir", None)
+    return Path(folder) if isinstance(folder, (str, os.PathLike)) and str(folder) else None
+
+
+def _manifest_folder(first: Tracker, runnable: Any) -> Optional[Path]:  # any runnable, as `log_run_context`
+    """Where a manifest built for ``first`` is written: beside that tracker's own files when it keeps a local folder;
+    else — a remote-only tracker, which keeps none — in the runnable's output folder, so the manifest, the resolved
+    config and the package freeze sit beside the checkpoints; ``None`` (``runs/<experiment>/<run>``) without either."""
+    return first.log_dir or _output_folder(runnable)
+
+
 def log_run_context(
     trackers: Sequence[Tracker],
     params: Optional[Mapping[str, Any]] = None,
@@ -825,7 +838,8 @@ def log_run_context(
             record, for something this can read.
         manifest: Reuse an existing manifest instead of building one. Without it, one is
             built from the FIRST tracker's identity and ``log_dir``, so the manifest lands
-            beside that backend's own artifacts.
+            beside that backend's own artifacts — or, when that tracker is remote-only (no
+            ``log_dir``), in the runnable's ``output_dir``, beside the checkpoints.
         capture_code: Probe every editable install's git state. Costs roughly a second in
             a large workspace (one ``git`` call set per repository, once per run); set
             ``False`` where that matters more than knowing which code ran.
@@ -844,7 +858,7 @@ def log_run_context(
             return None
         first = trackers[0]
         manifest = RunManifest(
-            run_dir=first.log_dir,
+            run_dir=_manifest_folder(first, runnable),
             experiment_name=first.experiment_name,
             run_name=first.run_name,
             # Read off the runnable rather than left blank: `task` is what tells a training
@@ -891,6 +905,20 @@ def log_run_context(
     return manifest
 
 
+def _copy_into_run_folder(log_file: Path, folder: Path) -> None:
+    """A copy of the run's log in its run folder (``logs/``), so the folder holds the whole run even where the
+    trackers only upload it. Not a manifest artifact: the trackers already receive the log itself. A log already in
+    that folder is left alone, and a copy that fails costs the run nothing."""
+    target = folder / log_file.name
+    if target.exists() and target.resolve() == log_file.resolve():
+        return
+    try:
+        folder.mkdir(parents=True, exist_ok=True)
+        shutil.copy2(log_file, target)
+    except OSError as exc:
+        logger.debug(f"could not copy the log {log_file} into {folder}: {exc}")
+
+
 def capture_log_file(
     trackers: Sequence[Tracker],
     manifest: Optional["RunManifest"] = None,
@@ -898,6 +926,8 @@ def capture_log_file(
     finalize: bool = True,
 ) -> None:
     """Close a run out: upload the log file, finish + re-project the manifest, END the run.
+
+    With a manifest, the log is also COPIED into the run folder's ``logs/`` — the folder then holds the whole run.
 
     The end-of-run counterpart to :func:`log_run_context`, and the ONE place a run's terminal
     status is stated. Passing the manifest it returned stamps that status and pushes the final
@@ -933,6 +963,8 @@ def capture_log_file(
     log_file = resolve_log_file()
     if manifest is not None:
         manifest.finish(status)
+        if log_file is not None:
+            _copy_into_run_folder(log_file, manifest.directory / "logs")
     for tracker in trackers:
         try:
             if log_file is not None:
