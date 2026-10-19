@@ -265,7 +265,7 @@ task semantics. A collate or batch reader written here belongs in recordstream.
 - Releases use the hand-written `release.yml` (scaffold owns only `ci.yml`/`Jenkinsfile*`), with
   recordstream's discipline: an extra may name only a PyPI package (the release resolves every
   extra); a workspace spec on matrainer reads the first pre-release with what that project imports
-  (`>=0.1.0a2` for torpaido and waivefront, which use the model packages; `>=0.1.0a1` elsewhere) and
+  (`>=0.1.0a2` for the projects that use the model packages, torpaido among them; `>=0.1.0a1` elsewhere) and
   rises only when the project starts importing something newer (user choice 2026-10-14; aisland
   `tests/test_workspace_dependency_specs.py` checks each is satisfiable); floors state what the
   suite runs against; README links are absolute
