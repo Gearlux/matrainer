@@ -162,7 +162,7 @@ uses in `tracking/system.py`.
   hosted server or to a local directory, so a project can move between backends without a gap in its
   history.
 - **The manifest owns its own format and no other.** The configuration library's dump emits
-  `!class:` / `!ref:` / `!clone:` tags that only its own resolver can load; embedding that inside the
+  `!class:` / `!ref:` tags that only its own resolver can load; embedding that inside the
   manifest would make the manifest unreadable by a generic YAML tool, which defeats the point of
   choosing YAML. So the resolved configuration is written to its own `config/final.yaml` artifact and
   the manifest references it by path plus digest. This is the same rule `matrainer.artifacts` already
