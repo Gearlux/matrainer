@@ -13,7 +13,7 @@ level), through :func:`require`, so:
   ``ModuleNotFoundError`` the operator has to decode.
 
 This mirrors the workspace lazy-backend convention (see ``distilaide`` /
-``purifai``): validate/dispatch first, import the heavy library last.
+``curaitor``): validate/dispatch first, import the heavy library last.
 """
 
 from __future__ import annotations
