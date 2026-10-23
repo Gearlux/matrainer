@@ -49,7 +49,8 @@ task semantics. A collate or batch reader written here belongs in recordstream.
 - Backends are DISCOVERED (`discover_backends()` + PEP 562 `__getattr__`), never listed in an
   import list or `__all__`; a new backend is one new file
   (`tests/tracking/test_discovery.py::test_a_new_backend_file_needs_no_edit_to_an_existing_file`).
-  `[tool.aisland] trackers` stays a sibling of `frameworks`. In-tree backends are free and
+  The `tracker` selection (`[tool.aisland.selection.tracker]`, which this project defines) stays a sibling of
+  `framework`. In-tree backends are free and
   self-hostable. §4.
 - Keep all three hookup styles (functions, `TrackingCallback`, `TrackerLogger`); never reimplement
   a `pytorch_lightning` logger. `TrackingCallback` / `keras_tracking_callback` take `runnable=`;

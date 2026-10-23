@@ -344,6 +344,10 @@ folder name. Not: the manifest skipping a local tracker's folder, or a second fo
 > trackers` + the workspace `aisland tracker` command landed 2026-08-01. `AimTracker` and
 > `ClearMLTracker` were the first backends added under the new rules — each one new file plus one
 > extra, with no edit to any existing file, which is the claim this record makes.
+>
+> **Amendment (2026-10-23):** the declaration is now `[tool.aisland.selection.tracker]` (and `.framework`), which
+> this project DEFINES with its `question`; the workspace command is `aisland workspace configure tracker`. The
+> `[tool.aisland] trackers = [...]` spelling below is the 2026-08-01 one.
 
 **Context.** Backends are a *menu*, not a set. A machine that tracks to a local server has no reason
 to download the client of a hosted service it has no account for, and a continuous-integration runner

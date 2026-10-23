@@ -145,19 +145,24 @@ matrainer-model-package = "matrainer.model_package"
 # pytorch_lightning — discovery must warn-and-continue on a light install without the [lightning] extra.
 matrainer-lightning = "matrainer.lightning.configurables"
 
-# Which of this project's extras belong to each aisland selection axis. Selecting a name here
-# is what makes `aisland setup` add the matching extra to this project's install.
+# The two aisland selections this project DEFINES (the table with `question` asks it; every project's `choices` are
+# its menu, each an extra of its own). Choosing a name (`aisland setup` asks, `aisland workspace configure framework
+# set …` changes it) adds the matching extra to the install of every project that offers it.
 #
-# TWO SIBLING AXES, deliberately never merged: `frameworks` is what a machine TRAINS WITH,
-# `trackers` is where its results GO. They are unrelated choices, and folding the backends into
-# `frameworks` would install a tracking client because someone picked a training engine.
+# TWO SIBLING SELECTIONS, deliberately never merged: `framework` is what a machine TRAINS WITH, `tracker` is where its
+# results GO. They are unrelated choices, and folding the backends into `framework` would install a tracking client
+# because someone picked a training engine.
 #
-# `frameworks` lists the per-framework TRACKING helpers (matrainer.lightning / .keras).
-# `trackers` lists the Tracker backends; `CsvTracker` is absent on purpose — it is stdlib-only,
+# `framework` offers the per-framework TRACKING helpers (matrainer.lightning / .keras).
+# `tracker` offers the Tracker backends; `CsvTracker` is absent on purpose — it is stdlib-only,
 # always available, and has no extra to select.
-[tool.aisland]
-frameworks = ["torch", "lightning", "keras", "tensorflow"]
-trackers = ["mlflow", "tensorboard", "aim", "clearml", "wandb"]
+[tool.aisland.selection.framework]
+question = "Which ML frameworks should this machine install?"
+choices = ["torch", "lightning", "keras", "tensorflow"]
+
+[tool.aisland.selection.tracker]
+question = "Which experiment-tracking backends should this machine install?"
+choices = ["mlflow", "tensorboard", "aim", "clearml", "wandb"]
 
 [tool.setuptools.packages.find]
 where = ["."]
