@@ -639,6 +639,24 @@ manifest holds a list. The narrowing is explicit — the repository containing t
 containing the entry script, else a lone record — and yields *nothing* when none applies, rather
 than picking arbitrarily. An empty field sends you to the manifest; a wrong one just looks right.
 
+## The tracking servers as workspace services (`matrainer.services`)
+
+In an aisland workspace matrainer brings two services, found through its `aisland.plugins` entry points:
+
+```bash
+aisland aim start -b                 # the Aim UI on http://localhost:43800, over the service's own repository
+aisland aim start -b --repo ./runs/aim   # another repository
+aisland clearml start                # the ClearML server (Docker), on http://localhost:8080
+aisland clearml info                 # where its compose files, state and login are
+```
+
+Neither installs its backend: without `aim` or `clearml` the start names the command that adds it to the `tracker`
+selection, keeping the trackers already chosen. The Aim service writes the repository it serves into the workspace
+`.env` as `AIM_REPO`, so a run's `AimTracker(save_dir="$AIM_REPO")` writes where the UI reads. The ClearML service
+runs upstream's compose stack at a pinned release (its SHA-256 checked), keeps every container's data in the
+service's folder, and writes the hosts, the login and freshly minted SDK credentials into `.env` — so a
+`ClearMLTracker` connects with no further setup.
+
 ## Three ways to hook tracking into PyTorch Lightning
 
 `matrainer.lightning` (behind `[lightning]`) is **optional tracking helpers**, not a platform. Your

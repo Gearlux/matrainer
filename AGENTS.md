@@ -72,6 +72,21 @@ task semantics. A collate or batch reader written here belongs in recordstream.
 - `matrainer.artifacts` delegates to `LabelMap.save`/`.load` and is a no-op on `None`
   (`tests/test_artifacts.py`).
 
+## The tracking servers as services (`matrainer/services/`)
+
+User choice 2026-10-25: Aim and ClearML moved here from the service manager. Each is a class behind an `aisland.plugins`
+entry point (`pyproject.toml`) that imports nothing of the manager — it gets a context (`ctx.data_dir`, `ctx.port`,
+`ctx.options`, `ctx.run`, `ctx.read_env`/`write_env`, `ctx.choose_command`, `ctx.fail`, …) — and nothing here is
+imported by `import matrainer`. (`tests/services/`, `::test_the_module_imports_nothing_of_the_service_manager`)
+- Neither installs its backend: a missing one fails with `_messages.not_installed`, naming
+  `ctx.choose_command("tracker", <name>)` — the chosen trackers plus this one, never this one alone.
+- Aim: `start` publishes `AIM_REPO` to `.env` (run and UI must share it), passes `--yes`, finds `aim` venv-first;
+  `--repo` (`options`) serves another repository and publishes that one.
+- ClearML vendors nothing and is `supervised = False` (Docker runs it): upstream compose at a release TAG, checked
+  against `COMPOSE_SHA256` (bump both together); the override GENERATED from upstream, second in `-f`; the fixed
+  user in `state/config/apiserver.conf` (0600) before `up`, never `CLEARML__…fixed_users…` env vars; an existing
+  login reused, else the workspace's name and a generated password; minting credentials never raises.
+
 ## Run manifest (§3)
 
 - Every fact lands in the manifest; a native slot is written ALSO, never instead. The base

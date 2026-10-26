@@ -127,6 +127,12 @@ dev = [
 # `python -m matrainer.sweep` keeps working.
 matrainer = "matrainer.console:main"
 
+# The tracking servers as workspace services (`aisland aim …`, `aisland clearml …`): classes that import nothing of the
+# service manager, which finds them here and hands them a context (matrainer/services/).
+[project.entry-points."aisland.plugins"]
+aim = "matrainer.services.aim_service:Aim"
+clearml = "matrainer.services.clearml_service:ClearML"
+
 [project.entry-points."confluid.configurables"]
 # Light root: the tracking backends, run-name helper, and checkpoint policies.
 matrainer = "matrainer"
