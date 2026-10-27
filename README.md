@@ -811,6 +811,18 @@ sealed step: a step-through tracer sees `model`, not the package's inner steps. 
 gets the op without its loaded graph and reads the package itself. `read_package(path)` returns
 `package.yaml` as plain data. Rationale: [`docs/architecture.md`](https://github.com/Gearlux/matrainer/blob/main/docs/architecture.md) record 13.
 
+## Environment variables
+
+| Variable | Effect |
+|---|---|
+| `KERAS_BACKEND` | Keras 3 backend; `matrainer.tensorflow` and `--framework tensorflow` default it to `tensorflow` |
+| `MLFLOW_SYSTEM_METRICS_SAMPLING_INTERVAL` | seconds between system-metric samples (default 10) |
+| `PROJECT_ROOT`, `DATA_ROOT`, `MODEL_ROOT` | machine roots; paths under them are recorded as `$NAME/...` in the manifest |
+| `AIM_REPO` | the Aim repository, written by the Aim service and read as `$AIM_REPO` by run configs |
+| `PYTORCH_MPS_HIGH_WATERMARK_RATIO`, `PYTORCH_MPS_LOW_WATERMARK_RATIO` | Apple-GPU memory limits; set them in the shell before the process starts, or let the device options set them |
+
+`env.complete` lists them.
+
 ## System metrics (`matrainer.tracking.system`, framework-free)
 
 - `enable_mlflow_system_metrics()` — the process-wide MLflow enable for `mlflow.start_run` clients.
