@@ -171,9 +171,11 @@ imported by `import matrainer`. (`tests/services/`, `::test_the_module_imports_n
   `client.get_run(id).inputs.model_inputs`, not `search_runs`
   (`tests/tracking/test_mlflow_backend.py::test_a_second_log_manifest_does_not_duplicate_the_models`).
 - MLflow: every param, metric and tag KEY goes through `mlflow_safe_name` — one validator holds all
-  three to a character set, to being readable as a path, and to 250 characters, and a walked config
-  path (`config_params`' `[key]` / `[i]`) satisfies none of them, so one refused name cost the run its
-  whole `params` section. `[key]`→`.key`, anything else outside `[A-Za-z0-9_\-. :/]`→`_`, slashes
+  three to a character set, to being readable as a path, and to 250 characters. A walked config path
+  satisfied none of them while confluid's walk bracketed a container step, so one refused name cost the
+  run its whole `params` section; since confluid §34 (2026-10-28) that walk writes `kwargs.source`, so
+  the common case needs no mapping. Keep the rule anyway — it is what MLflow accepts, not what one
+  producer emits (a framework metric `metrics/mAP50-95(B)`, a user's tag key, an older confluid). `[key]`→`.key`, anything else outside `[A-Za-z0-9_\-. :/]`→`_`, slashes
   dropped only when the name is not canonical as a path, over-length truncated to its TAIL behind an
   8-char digest; an accepted name is returned unchanged. It is PUBLIC so a backend elsewhere speaking
   MLflow's dialect applies the rule rather than copying it. The rule lives in the MLflow backend

@@ -1339,9 +1339,9 @@ already canonical when read as a posix path (`path_not_unique`), and at most
 `MAX_ENTITY_KEY_LENGTH = 250` characters. The path rule and the length cap each refuse with their
 own message, so satisfying the character set is not enough.
 
-`config_params` derives a run's hyperparameters from the live object graph, and the walk spells a
-dict key as `[key]` and a list index as `[i]`. A configuration holding one dict therefore produced
-a name like `RFDETRDetector.train_set.Target.kwargs[source].Target.target`, which MLflow refused —
+`config_params` derives a run's hyperparameters from the live object graph, and at the time the walk
+spelled a dict key as `[key]` and a list index as `[i]`. A configuration holding one dict therefore
+produced a name like `RFDETRDetector.train_set.Target.kwargs[source].Target.target`, which MLflow refused —
 and because `log_hyperparams` raises the first failure after trying every name, the run lost its
 *whole* `params` section, the `log_manifest` it is projected from raised with it, and under
 `ResilientTracker` the manifest was dropped with a WARNING. A name is not a value: there is nothing
@@ -1377,6 +1377,18 @@ The truncation keeps the tail because the leaf setting is what identifies a hype
 paths ending the same way from collapsing into one parameter. Run-creation tags go through the same
 mapping although `create_run` does *not* validate a key (measured) — otherwise a tag stamped at
 creation and re-set during the run would stand twice in the UI, once per spelling.
+
+### Amendment (2026-10-28, same day)
+
+The bracket spelling this record was written against is gone: confluid's instance walk now writes every
+container step as a dotted segment (its record 34), because `kwargs[source]` was read by its own path
+grammar as an index *reference* to a variable named `source`. So `config_params` no longer produces a
+bracket, and the name that motivated this record now reaches MLflow unchanged — measured end to end.
+
+`mlflow_safe_name` keeps its bracket rule, and this record stands: the rule is what MLflow accepts, not
+what one producer happens to emit. A metric a training framework names `metrics/mAP50-95(B)`, a tag built
+from a user's key, or a name from an older confluid still arrive needing it. What changed is that the
+common case no longer exercises it.
 
 ### Consequences
 

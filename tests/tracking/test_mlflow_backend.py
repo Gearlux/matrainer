@@ -627,9 +627,13 @@ def test_each_name_rule_maps_the_name_it_is_for(logged: str, received: str) -> N
 def test_a_config_walk_parameter_name_reaches_a_real_mlflow(tmp_path: Any) -> None:
     """The defect this exists for: a dict in the configuration cost the run its WHOLE params section.
 
-    `config_params` writes a dict key as `[key]` and a list index as `[i]`, MLflow refused the
-    brackets, `log_hyperparams` raised, `log_manifest` raised with it and a `ResilientTracker`
-    dropped the call at WARNING. `raise_errors=True` is what makes a surviving refusal fail here.
+    A bracketed step in one name was enough: MLflow refused it, `log_hyperparams` raised,
+    `log_manifest` raised with it and a `ResilientTracker` dropped the call at WARNING.
+    `raise_errors=True` is what makes a surviving refusal fail here.
+
+    `config_params` no longer brackets a container step (confluid writes `kwargs.source` since its
+    record 34), so these inputs now stand for any producer that is not bound by MLflow's rules — a
+    framework's metric name, a user's tag key, a name from an older confluid.
     """
     pytest.importorskip("mlflow")
     tracker = _real_tracker(tmp_path, raise_errors=True)

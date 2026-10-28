@@ -628,9 +628,9 @@ comparable across backends:
 
 **MLflow renames the keys it would otherwise refuse.** A parameter, metric or tag *key* must hold
 only `A-Za-z0-9`, `_`, `-`, `.`, `:`, ` ` or `/`, must read as a canonical path, and must fit in 250
-characters — and the flat configuration view the manifest's `params` section is built from spells a
-dict key as `[key]` and a list index as `[i]`. So `MlflowTracker` maps every key through
-`mlflow_safe_name` first:
+characters. Names reaching a tracker come from a training framework's own log dict, from a user's tags
+and from the flat configuration view the manifest's `params` section is built from, and none of those is
+bound by MLflow's rules. So `MlflowTracker` maps every key through `mlflow_safe_name` first:
 
 | logged | reaches MLflow as |
 |---|---|

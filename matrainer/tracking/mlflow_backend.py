@@ -50,10 +50,10 @@ def _logged_model_name(name: Any) -> str:
     return _UNSAFE_MODEL_NAME.sub("_", str(name or "")).strip("_") or "model"
 
 
-#: A bracketed step in a walked configuration path. ``config_params``
-#: (:mod:`matrainer.tracking.provenance`, through confluid's schema walk) writes a dict key as
-#: ``[key]`` and a list index as ``[i]``, and MLflow rejects the brackets — so a run whose
-#: configuration holds a dict would lose its WHOLE ``params`` section to one refused name.
+#: A bracketed step in a path, which MLflow rejects. Names reaching a tracker are not MLflow's to
+#: shape: a training framework's log dict, a user's tag keys, and the walked configuration paths
+#: ``config_params`` derives (:mod:`matrainer.tracking.provenance`) all arrive as they are, and one
+#: refused name costs a call its whole batch — a run's entire ``params`` section, in that case.
 _BRACKETED_STEP = re.compile(r"\[([^\[\]]*)\]")
 
 #: Every character outside the set MLflow accepts in a parameter, metric or tag key. One
