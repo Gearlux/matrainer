@@ -6,6 +6,13 @@ All notable changes to this project are documented here. The format follows
 
 ## [Unreleased]
 
+### Documentation
+- **The README is a quickstart and each topic is its own page.** It was 1339 lines; it is now install, a
+  first run with its output, how to configure a tracker, a common-tasks table and an index — and the ten
+  feature sections moved, unchanged, to `docs/`: `tracking.md`, `backends.md`, `run-manifest.md`,
+  `trainer-api.md`, `lightning.md`, `metrics.md`, `torch.md`, `model-packages.md`, `cli.md`, `sweeps.md`.
+  Nothing was dropped, so a link into a README section now goes to that topic's page.
+
 ### Tracking
 - **`MlflowTracker` logs parameter, metric and tag names MLflow accepts** — every key goes through the new
   public `matrainer.tracking.mlflow_backend.mlflow_safe_name`: `[key]` becomes `.key` (so the config walk's

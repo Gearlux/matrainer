@@ -298,6 +298,13 @@ imported by `import matrainer`. (`tests/services/`, `::test_the_module_imports_n
   `tests/test_workspace_dependency_specs.py` checks each is satisfiable); floors state what the
   suite runs against; README links are absolute
   (`tests/test_docs_links.py`); the newest CHANGELOG entry is the version (`tests/test_packaging.py`).
+- **The README is the quickstart; a feature lives in `docs/<topic>.md` (2026-10-28).** It holds install, a
+  first run with its real output, configuring a tracker, the common-tasks table, the docs index, the
+  environment variables, what lives elsewhere and the dependencies — about 200 lines. A feature section
+  never grows back into it: add the page, add its index row and its common-tasks row in the same change.
+  Links from the README into the repo are ABSOLUTE (it is the PyPI landing page), links between
+  `docs/*.md` pages are relative — both pinned by `tests/test_docs_links.py`, which also fails a docs page
+  missing from the index. Ten pages have no runnable twin in `examples/` yet (`TASKS.md`).
 - CI runs `mypy .` here with only its extras and stricter flags: list every extra-gated import CI
   lacks in `[[tool.mypy.overrides]] ignore_missing_imports`, and reproduce CI in a throwaway
   Python 3.12 venv before pushing.

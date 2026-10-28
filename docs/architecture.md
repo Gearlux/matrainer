@@ -396,7 +396,7 @@ one does not touch an existing file.
 - Selection criterion for which backends this package implements in-tree: **free and self-hostable**.
   A backend whose server is a paid or hosted-only product can still be supported — the abstraction is
   the same — but it is not what a fresh checkout is steered toward. The user-facing survey of the
-  alternatives lives in the [README](../README.md#choosing-a-backend); this record carries only the
+  alternatives lives in [Choosing a backend](backends.md); this record carries only the
   rule that produced it.
 
 **Example.** A project declares its backend extras beside its framework extras:
