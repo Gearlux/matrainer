@@ -127,9 +127,10 @@ dev = [
 # `python -m matrainer.sweep` keeps working.
 matrainer = "matrainer.console:main"
 
-# The tracking servers as workspace services (`aisland aim …`, `aisland clearml …`): classes that import nothing of the
-# service manager, which finds them here and hands them a context (matrainer/services/).
+# The tracking servers as workspace services (`aisland mlflow …`, `aisland aim …`, `aisland clearml …`): classes that
+# import nothing of the service manager, which finds them here and hands them a context (matrainer/services/).
 [project.entry-points."aisland.plugins"]
+mlflow = "matrainer.services.mlflow_service:MLflow"
 aim = "matrainer.services.aim_service:Aim"
 clearml = "matrainer.services.clearml_service:ClearML"
 

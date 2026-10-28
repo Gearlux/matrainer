@@ -125,7 +125,7 @@ run, and list several trackers to log to all of them at once — see
 | Page | What it covers |
 |---|---|
 | [Tracking a run](https://github.com/Gearlux/matrainer/blob/main/docs/tracking.md) | the `Tracker` surface, `ResilientTracker`, run names, system metrics |
-| [Choosing a backend](https://github.com/Gearlux/matrainer/blob/main/docs/backends.md) | what each backend costs to run, and the two shipped as services |
+| [Choosing a backend](https://github.com/Gearlux/matrainer/blob/main/docs/backends.md) | what each backend costs to run, and the three shipped as services |
 | [The run manifest](https://github.com/Gearlux/matrainer/blob/main/docs/run-manifest.md) | automatic provenance, what the `capture_*` calls collect, portable paths, native slots |
 | [The trainer API](https://github.com/Gearlux/matrainer/blob/main/docs/trainer-api.md) | the four layers, and the checkpoint policies each framework translates |
 | [Tracking a Lightning run](https://github.com/Gearlux/matrainer/blob/main/docs/lightning.md) | the three hookup styles and when to use each |

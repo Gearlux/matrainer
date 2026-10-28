@@ -28,6 +28,10 @@ All notable changes to this project are documented here. The format follows
   Nothing was dropped, so a link into a README section now goes to that topic's page.
 
 ### Tracking
+- **The MLflow tracking server is a workspace service of this package** (`aisland mlflow start`), beside
+  Aim and ClearML: `mlflow server` over a SQLite store and an artifact folder in the service's data folder,
+  on port 5005, ready once `/health` answers. Without `mlflow` installed it names the command that adds it to
+  the `tracker` selection.
 - **`MlflowTracker` logs parameter, metric and tag names MLflow accepts** — every key goes through the new
   public `matrainer.tracking.mlflow_backend.mlflow_safe_name`: `[key]` becomes `.key` (so the config walk's
   `kwargs[source].Target.target` lands as `kwargs.source.Target.target` and `callbacks[0].patience` as

@@ -1,6 +1,6 @@
 # Choosing a tracking backend
 
-What each backend costs to run, and the two that this package can start for you as services.
+What each backend costs to run, and the three that this package can start for you as services.
 
 ## Choosing a backend
 
@@ -45,17 +45,20 @@ just one.
 
 ## The tracking servers as workspace services (`matrainer.services`)
 
-In an aisland workspace matrainer brings two services, found through its `aisland.plugins` entry points:
+In an aisland workspace matrainer brings three services, found through its `aisland.plugins` entry points:
 
 ```bash
+aisland mlflow start -b              # the MLflow server on http://localhost:5005, over the service's own store
 aisland aim start -b                 # the Aim UI on http://localhost:43800, over the service's own repository
 aisland aim start -b --repo ./runs/aim   # another repository
 aisland clearml start                # the ClearML server (Docker), on http://localhost:8080
 aisland clearml info                 # where its compose files, state and login are
 ```
 
-Neither installs its backend: without `aim` or `clearml` the start names the command that adds it to the `tracker`
-selection, keeping the trackers already chosen. The Aim service writes the repository it serves into the workspace
+None installs its backend: without `mlflow`, `aim` or `clearml` the start names the command that adds it to the `tracker`
+selection, keeping the trackers already chosen. The MLflow service keeps its runs in a SQLite store and its
+artifacts in a folder, both in the service's data folder; a run reaches it with
+`MlflowTracker(tracking_uri="http://localhost:5005")`. The Aim service writes the repository it serves into the workspace
 `.env` as `AIM_REPO`, so a run's `AimTracker(save_dir="$AIM_REPO")` writes where the UI reads. The ClearML service
 runs upstream's compose stack at a pinned release (its SHA-256 checked), keeps every container's data in the
 service's folder, and writes the hosts, the login and freshly minted SDK credentials into `.env` — so a
