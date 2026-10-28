@@ -2,6 +2,8 @@
 
 What each backend costs to run, and the three that this package can start for you as services.
 
+Runnable twin: none, by design — this page compares what each backend costs to *run*, which needs a server per backend. Its checkable claims are pinned by each backend's own suite (`tests/tracking/test_*_backend.py`, `tests/services/`); [`examples/standalone_tracking.py`](../examples/standalone_tracking.py) shows the one backend that needs nothing.
+
 ## Choosing a backend
 
 The `Tracker` surface is the same everywhere, so the choice is about **where the results live** and

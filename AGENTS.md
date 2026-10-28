@@ -309,8 +309,9 @@ imported by `import matrainer`. (`tests/services/`, `::test_the_module_imports_n
   `docs/*.md` pages are relative — both pinned by `tests/test_docs_links.py`, which also fails a docs page
   missing from the index. Each page names its runnable twin under its intro — nine of ten do, and
   `trainer-api` names TWO (the same task mixin composed onto the loop base and the Lightning one,
-  user choice 2026-10-28). Only `backends` has none: it needs a running tracking server per
-  backend, and what the page should say instead is an open item (`TASKS.md`). A twin that would need a framework, a server or a long run uses the project's own
+  user choice 2026-10-28). `backends` has none BY DESIGN — it compares what each backend costs to
+  run, which needs a server per backend — and its intro says so, naming the suites that pin its
+  checkable claims instead (user choice 2026-10-28: the wording, without a test over the table). A twin that would need a framework, a server or a long run uses the project's own
   seam instead — the sweep twin replaces the per-cell command with a stub via the spec's
   `command:` key, so it drives the real matrix in under a second (`TASKS.md`).
 - CI runs `mypy .` here with only its extras and stricter flags: list every extra-gated import CI
