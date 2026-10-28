@@ -2,6 +2,8 @@
 
 What produced a run — captured automatically, written as one document, and projected into every backend's native slots.
 
+Runnable twin: [`examples/run_manifest.py`](../examples/run_manifest.py) — a manifest written by hand and read back, portable paths included.
+
 ## Automatic provenance
 
 `log_run_context` is the **one call at the start of a run**. It fills a [run manifest](#the-run-manifest)

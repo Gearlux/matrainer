@@ -2,6 +2,8 @@
 
 A trained model as a folder another tool can run: its graph, its weights and its class names.
 
+Runnable twin: [`examples/model_package.py`](../examples/model_package.py) — a package written both ways, read back, and its weights in the slot.
+
 ## Model packages (`matrainer.model_package`, no extra needed)
 
 A checkpoint alone does not say how to run it: the model answers correctly only on inputs made the

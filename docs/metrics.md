@@ -2,6 +2,8 @@
 
 Per-split metric slots, the metrics a hand-written loop cannot average, what a metric is called, and how to report one that is not a single number.
 
+Runnable twin: [`examples/metrics.py`](../examples/metrics.py) — the metric-spec rules, the batch-averaging error measured, and the name translation.
+
 ## Per-split metric slots (`matrainer.metric_slots`, no extra needed)
 
 A training runnable typically takes `metrics` (what **every** split measures) plus

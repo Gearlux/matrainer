@@ -2,6 +2,8 @@
 
 Your project's `train|evaluate|predict` binary, built from a frameworks table and two calls.
 
+Runnable twin: [`examples/project_cli.py`](../examples/project_cli.py) — a project's app built from a frameworks table, and the flag rewrite.
+
 ## Building a project CLI (`matrainer.cli`, no extra needed)
 
 A training project's command line is three verbs (`train` / `evaluate` / `predict`) over a

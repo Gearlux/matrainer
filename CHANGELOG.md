@@ -7,6 +7,12 @@ All notable changes to this project are documented here. The format follows
 ## [Unreleased]
 
 ### Documentation
+- **Four docs pages gained the runnable example that proves them** — `examples/metrics.py` (the metric-spec
+  rules, the batch-averaging error measured at ~5 points of macro-F1, the name translation),
+  `examples/run_manifest.py` (a manifest written and read back, `$DATA_ROOT` contraction included),
+  `examples/project_cli.py` (an app from a frameworks table, the `--framework` rewrite, the lazy package
+  root) and `examples/model_package.py` (a package written `copy` and `reference`, read back, its weights in
+  the slot). All four run with no training framework and are run by CI, and each page links to its twin.
 - **The README is a quickstart and each topic is its own page.** It was 1339 lines; it is now install, a
   first run with its output, how to configure a tracker, a common-tasks table and an index — and the ten
   feature sections moved, unchanged, to `docs/`: `tracking.md`, `backends.md`, `run-manifest.md`,
