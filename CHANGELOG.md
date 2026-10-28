@@ -7,6 +7,13 @@ All notable changes to this project are documented here. The format follows
 ## [Unreleased]
 
 ### Tracking
+- **`MlflowTracker` logs parameter, metric and tag names MLflow accepts** — every key goes through the new
+  public `matrainer.tracking.mlflow_backend.mlflow_safe_name`: `[key]` becomes `.key` (so the config walk's
+  `kwargs[source].Target.target` lands as `kwargs.source.Target.target` and `callbacks[0].patience` as
+  `callbacks.0.patience`), any other character outside `[A-Za-z0-9_\-. :/]` becomes `_`, a name that is not
+  canonical as a path loses its slashes, and one over 250 characters keeps its tail behind a digest. A name
+  MLflow already accepts is unchanged. Previously one bracketed key made `log_hyperparams` — and the
+  `log_manifest` that projects it — raise, so the run lost its whole `params` section.
 - **A run tracked only on a server keeps its manifest beside its checkpoints**: when the first tracker keeps
   no local folder, `log_run_context` writes `manifest.yaml`, `config/final.yaml` and
   `environment/requirements.txt` into the runnable's `output_dir` instead of `runs/<experiment>/<run>`.

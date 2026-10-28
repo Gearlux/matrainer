@@ -626,6 +626,31 @@ comparable across backends:
 
 **A server-only slot degrades rather than replacing.** ClearML's `InputModel` needs a server — measured, it dies in offline mode with `AttributeError: 'NoneType' object has no attribute 'response'` — so `offline=True`, the mode that needs no server and no credentials at all, skips it once with a debug note and keeps the hyperparameter section, which is then the only projection it has. That is why the section stays rather than being replaced by the richer slot.
 
+**MLflow renames the keys it would otherwise refuse.** A parameter, metric or tag *key* must hold
+only `A-Za-z0-9`, `_`, `-`, `.`, `:`, ` ` or `/`, must read as a canonical path, and must fit in 250
+characters — and the flat configuration view the manifest's `params` section is built from spells a
+dict key as `[key]` and a list index as `[i]`. So `MlflowTracker` maps every key through
+`mlflow_safe_name` first:
+
+| logged | reaches MLflow as |
+|---|---|
+| `RFDETRDetector.train_set.Target.kwargs[source].Target.target` | `RFDETRDetector.train_set.Target.kwargs.source.Target.target` |
+| `callbacks[0].patience` | `callbacks.0.patience` |
+| `model<v2>`, `val/acc@1` | `model_v2_`, `val/acc_1` |
+| `datasets[$DATA_ROOT/set/]` | `datasets._DATA_ROOT_set_` (not a canonical path, so its slashes go) |
+| a key over 250 characters | its tail, behind an 8-character digest |
+| `RFDETRDetector.epochs`, `a:b-c d/e_f` | unchanged — a key MLflow accepts is never renamed |
+
+Without it a single bracketed key cost the run its **whole** `params` section: `log_hyperparams`
+raised, `log_manifest` raised with it, and under `ResilientTracker` the manifest was dropped with
+`Dropping log_manifest: …` at WARNING. Only this backend does it — the restriction is MLflow's own,
+and every other backend records names as written. The function is public, so a tracker elsewhere that
+speaks MLflow's dialect can hold itself to the same rule:
+
+```python
+from matrainer.tracking.mlflow_backend import mlflow_safe_name   # imports no mlflow
+```
+
 **Two things a native slot cannot do for itself**, both measured rather than assumed. MLflow does
 *not* deduplicate a logged model the way it deduplicates a dataset input by digest — and
 `log_manifest` runs at least twice per run — so the tracker remembers what it has already linked;

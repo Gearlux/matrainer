@@ -480,9 +480,9 @@ not yours to break for tidiness.
 
 ## 6. Metric names are a PAIR of vocabularies, not a canonicaliser (2026-08-04)
 
-**Context.** A `Tracker` records the key it is handed, verbatim — every backend does
-(`mlflow_backend.log_metrics` calls `client.log_metric(str(key), …)`, the CSV backend makes it a
-column, ClearML's `rpartition("/")` splits it into a graph title but renames nothing). So the
+**Context.** A `Tracker` records the key it is handed, verbatim — every backend does (the CSV
+backend makes it a column, ClearML's `rpartition("/")` splits it into a graph title but renames
+nothing; the MLflow backend maps only the characters its own library refuses, record 15). So the
 names in a tracker are whatever the training engine called them, and eight engines call the same
 three quantities eight ways. Measured from one sweep that trains ONE config on every backend, the
 header line of each run's `metrics.csv`:
@@ -1326,3 +1326,87 @@ time limit). What you may not do: let the wrapper raise into a training loop (a 
 is the one configuration error it raises), call the wrapped tracker outside `run_with_timeout`, or
 let a new call overtake a queued one; turn `raise_errors` on by default, or let a backend's
 `raise_errors` stop the names or parts after a failed one.
+
+## 15. A backend sanitises the names ITS library refuses, in that backend (2026-10-28)
+
+### Context
+
+MLflow restricts a parameter, metric or tag *key* three ways at once. Measured against mlflow 3.15,
+one validator — `mlflow.utils.validation.validate_param_and_metric_name` — is what
+`_validate_param_name`, `_validate_metric_name` *and* `_validate_tag_name` all call, so the three
+entity kinds share one rule: characters from `[/\w.\- :]` (no colon on Windows), a name that is
+already canonical when read as a posix path (`path_not_unique`), and at most
+`MAX_ENTITY_KEY_LENGTH = 250` characters. The path rule and the length cap each refuse with their
+own message, so satisfying the character set is not enough.
+
+`config_params` derives a run's hyperparameters from the live object graph, and the walk spells a
+dict key as `[key]` and a list index as `[i]`. A configuration holding one dict therefore produced
+a name like `RFDETRDetector.train_set.Target.kwargs[source].Target.target`, which MLflow refused —
+and because `log_hyperparams` raises the first failure after trying every name, the run lost its
+*whole* `params` section, the `log_manifest` it is projected from raised with it, and under
+`ResilientTracker` the manifest was dropped with a WARNING. A name is not a value: there is nothing
+to preserve by sending it verbatim, and nothing to be gained by refusing the run's provenance over
+a bracket.
+
+### Decision
+
+The MLflow backend maps every key it sends through one function, `mlflow_safe_name`:
+`[key]` → `.key` (so a walked path stays the readable path it was), any other character outside
+`[A-Za-z0-9_\-. :/]` → `_`, slashes → `_` *only* when the name is not canonical as a path, and an
+over-length name truncated to its **tail** behind an 8-character digest. A name MLflow already
+accepts is returned unchanged, so nothing that used to land is renamed now.
+
+Three placement questions, each decided deliberately (user choice 2026-10-28):
+
+* **Which backend.** This one only. The restriction is MLflow's, not experiment tracking's: Aim,
+  W&B, ClearML, TensorBoard and CSV record names as written. A shared opt-in helper on `Tracker`
+  would be a knob only MLflow ever turns on, which is the wrapper layer over the abstraction that
+  record 2 rules out. The backend already owns the sibling case, `_logged_model_name` for MLflow's
+  stricter *model*-name rule.
+* **Public, not private.** `mlflow_safe_name` is exported and importable without `mlflow` installed,
+  because a tracker outside this project that speaks MLflow's dialect needs the identical rule for a
+  run to read the same on both. The alternative is two copies of a measured rule, drifting.
+* **All three kinds, not parameters alone.** It is one validator, so a metric named `val/acc@1` or
+  `metrics/mAP50-95(B)` by a training framework is refused exactly like a parameter. Note what this
+  is *not*: the `metric_names` alias vocabulary (record 6) still never runs inside a tracker's
+  `log_metrics`. Making a library's own API accept a name is a backend's business — the same reason
+  `log_figure` already replaces `/` in a figure's filename.
+
+The truncation keeps the tail because the leaf setting is what identifies a hyperparameter
+(`…Target.target` says more than `RFDETRDetector.train_set…`); the digest is what keeps two deep
+paths ending the same way from collapsing into one parameter. Run-creation tags go through the same
+mapping although `create_run` does *not* validate a key (measured) — otherwise a tag stamped at
+creation and re-set during the run would stand twice in the UI, once per spelling.
+
+### Consequences
+
+Sanitising is many-to-one: `model<v2>` and a literal `model_v2_` map to the same key, and MLflow
+refuses a re-logged parameter whose value changed — so a collision surfaces as that refusal rather
+than as a silent overwrite. The exact original name is never lost: it stands in the manifest and in
+`config/final.yaml`, which rule 3 of the manifest contract already sends to every backend. `:` is
+kept, so a key holding one is portable everywhere except Windows, where MLflow's own validator drops
+it. The fake MLflow client in the tests enforces the real library's key rules, and
+`test_the_name_rules_match_the_installed_mlflow` asserts the property that matters — every name the
+mapping produces is one the *installed* MLflow accepts — rather than equality of the two rules
+(`mlflow_safe_name` is deliberately ASCII where MLflow's `\w` admits any Unicode letter).
+
+### Example
+
+```python
+from matrainer.tracking.mlflow_backend import mlflow_safe_name
+
+mlflow_safe_name("RFDETRDetector.train_set.Target.kwargs[source].Target.target")
+# 'RFDETRDetector.train_set.Target.kwargs.source.Target.target'   (was refused outright)
+mlflow_safe_name("callbacks[0].patience")      # 'callbacks.0.patience'
+mlflow_safe_name("val/acc@1")                  # 'val/acc_1'
+mlflow_safe_name("datasets[$DATA_ROOT/set/]")  # 'datasets._DATA_ROOT_set_'  (not a canonical path)
+mlflow_safe_name("a:b-c d/e_f")                # 'a:b-c d/e_f'               (accepted as written)
+```
+
+### What you may change
+
+The mapping characters, the digest length, the ASCII-vs-Unicode choice, and the set of call sites
+within this backend. What you may not do: hoist the rule onto `Tracker` as a shared knob or apply it
+in a backend whose library does not impose it; make it private again (another MLflow-speaking tracker
+imports it); rename a name MLflow already accepts; or drop the pin to the installed MLflow's own
+validators, which is what keeps every one of these claims measured rather than remembered.

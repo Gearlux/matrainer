@@ -170,6 +170,16 @@ imported by `import matrainer`. (`tests/services/`, `::test_the_module_imports_n
 - MLflow: keep the `_logged_models` memo; names are sanitised labels; read lineage back with
   `client.get_run(id).inputs.model_inputs`, not `search_runs`
   (`tests/tracking/test_mlflow_backend.py::test_a_second_log_manifest_does_not_duplicate_the_models`).
+- MLflow: every param, metric and tag KEY goes through `mlflow_safe_name` — one validator holds all
+  three to a character set, to being readable as a path, and to 250 characters, and a walked config
+  path (`config_params`' `[key]` / `[i]`) satisfies none of them, so one refused name cost the run its
+  whole `params` section. `[key]`→`.key`, anything else outside `[A-Za-z0-9_\-. :/]`→`_`, slashes
+  dropped only when the name is not canonical as a path, over-length truncated to its TAIL behind an
+  8-char digest; an accepted name is returned unchanged. It is PUBLIC so a backend elsewhere speaking
+  MLflow's dialect applies the rule rather than copying it. The rule lives in the MLflow backend
+  ALONE — Aim, W&B, ClearML, TensorBoard and CSV keep names as written (user choice 2026-10-28). Keep
+  the fake client enforcing MLflow's real key rules; the three rules are pinned to the installed
+  library by `::test_the_name_rules_match_the_installed_mlflow`. §15.
 - W&B: `_add_reference` keeps its own `try`; `expandvars` the URI first; only
   `REFERENCEABLE_SCHEMES` become references
   (`tests/tracking/test_wandb_backend.py::test_an_unresolvable_reference_still_reaches_the_lineage_graph`).
