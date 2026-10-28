@@ -304,7 +304,10 @@ imported by `import matrainer`. (`tests/services/`, `::test_the_module_imports_n
   never grows back into it: add the page, add its index row and its common-tasks row in the same change.
   Links from the README into the repo are ABSOLUTE (it is the PyPI landing page), links between
   `docs/*.md` pages are relative — both pinned by `tests/test_docs_links.py`, which also fails a docs page
-  missing from the index. Ten pages have no runnable twin in `examples/` yet (`TASKS.md`).
+  missing from the index. Each page names its runnable twin under its intro — eight do
+  (`tracking`, `metrics`, `run-manifest`, `cli`, `model-packages`, `lightning`, `torch`, and
+  `trainer-api`, which names TWO: the same task mixin composed onto the loop base and the
+  Lightning one, user choice 2026-10-28); `sweeps` and `backends` do not (`TASKS.md`).
 - CI runs `mypy .` here with only its extras and stricter flags: list every extra-gated import CI
   lacks in `[[tool.mypy.overrides]] ignore_missing_imports`, and reproduce CI in a throwaway
   Python 3.12 venv before pushing.

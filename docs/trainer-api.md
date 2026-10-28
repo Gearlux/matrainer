@@ -2,6 +2,8 @@
 
 One neutral base, one concrete base per framework — and the checkpoint policies every one of them translates.
 
+Runnable twins, one task on two engines: [`examples/trainer_api_loop.py`](../examples/trainer_api_loop.py) composes it onto the bare-torch base, [`examples/trainer_api_lightning.py`](../examples/trainer_api_lightning.py) onto the Lightning one. The task mixin is identical in both; 19 constructor slots come from the shared layers, the loop base adds `checkpoint_dir` / `device` / `grad_clip`, and the Lightning base adds none.
+
 ## The trainer API — one abstract base, one concrete base per framework
 
 Since 2026-08 matrainer also ships the shared TRAINER machinery a task project builds its merged

@@ -2,6 +2,8 @@
 
 The `Tracker` abstraction, the wrapper that survives a dropped server, run naming, and the system metrics every backend gets for free.
 
+Runnable twin: [`examples/standalone_tracking.py`](../examples/standalone_tracking.py) — hyperparameters, a metrics loop, a figure, provenance and finalize, with no training framework installed.
+
 ## The `Tracker` — the one abstraction
 
 `matrainer.Tracker` (in `matrainer.tracking.base`) mirrors the `pytorch_lightning.loggers.Logger`

@@ -2,6 +2,8 @@
 
 Three ways to hook a tracker into Lightning, and when to reach for each.
 
+Runnable twin: [`examples/lightning_tracking.py`](../examples/lightning_tracking.py) — a one-epoch fit on synthetic tensors that shows the checkpoint following the tracker's `save_dir`, the metrics arriving, and a run that raises recorded as `failed`.
+
 ## Three ways to hook tracking into PyTorch Lightning
 
 `matrainer.lightning` (behind `[lightning]`) is **optional tracking helpers**, not a platform. Your

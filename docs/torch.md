@@ -2,6 +2,8 @@
 
 The torch-only, Lightning-free helpers: checkpoint loading, device resolution and the dump spellings.
 
+Runnable twin: [`examples/torch_helpers.py`](../examples/torch_helpers.py) — the three checkpoint shapes loaded through one call, a state dict refused by `TorchModelFile`, `cpu` taken at its word, and the per-template sizing kwarg.
+
 ## `matrainer.torch` — torch-only, Lightning-free helpers (`matrainer[torch]`)
 
 - `load_lightning_checkpoint(model, path, strict=False)` — loads a Lightning `.ckpt` (strips the

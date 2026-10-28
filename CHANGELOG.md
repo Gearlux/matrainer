@@ -12,7 +12,15 @@ All notable changes to this project are documented here. The format follows
   `examples/run_manifest.py` (a manifest written and read back, `$DATA_ROOT` contraction included),
   `examples/project_cli.py` (an app from a frameworks table, the `--framework` rewrite, the lazy package
   root) and `examples/model_package.py` (a package written `copy` and `reference`, read back, its weights in
-  the slot). All four run with no training framework and are run by CI, and each page links to its twin.
+  the slot). Those four run with no training framework; `examples/lightning_tracking.py` adds a real
+  one-epoch fit showing a `ModelCheckpoint` with no `dirpath` landing under the tracker's `save_dir`
+  rather than the launch directory, the logged metrics arriving, and a run that raises recorded as
+  `failed`, and `examples/torch_helpers.py` loads a checkpoint in each of its three on-disk shapes, has a
+  state dict refused by `TorchModelFile`, and shows `resolve_device('cpu')` giving CPU on a GPU machine.
+  `examples/trainer_api_loop.py` and `examples/trainer_api_lightning.py` compose ONE task mixin onto two
+  machinery bases, which is the four-layer claim made checkable: 19 constructor slots come from the shared
+  layers, the loop base adds `checkpoint_dir` / `device` / `grad_clip`, and the Lightning base adds none.
+  CI runs them all, and each page links to its twin.
 - **The README is a quickstart and each topic is its own page.** It was 1339 lines; it is now install, a
   first run with its output, how to configure a tracker, a common-tasks table and an index — and the ten
   feature sections moved, unchanged, to `docs/`: `tracking.md`, `backends.md`, `run-manifest.md`,
