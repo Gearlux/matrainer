@@ -2,6 +2,8 @@
 
 One subprocess per cell, isolated failures, and a table read back from the tracker.
 
+Runnable twin: [`examples/sweep.py`](../examples/sweep.py) — a four-row matrix where one backend is absent and one cell dies, driven with a stub in place of the training, through to the folded table.
+
 ## Running and reading a SWEEP (`matrainer sweep`, no extra needed)
 
 A *sweep* is one config run under many backends and/or many trackers, so the runs become

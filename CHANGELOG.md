@@ -20,7 +20,10 @@ All notable changes to this project are documented here. The format follows
   `examples/trainer_api_loop.py` and `examples/trainer_api_lightning.py` compose ONE task mixin onto two
   machinery bases, which is the four-layer claim made checkable: 19 constructor slots come from the shared
   layers, the loop base adds `checkpoint_dir` / `device` / `grad_clip`, and the Lightning base adds none.
-  CI runs them all, and each page links to its twin.
+  `examples/sweep.py` drives a four-row sweep — one backend absent, one cell dying — through to the folded
+  comparison table, with the spec's `command:` key replacing the per-cell training with a stub, so the real
+  driver, the failure isolation, the tracker-counted experiment name and the report all run in well under
+  a second. CI runs them all, and nine of the ten pages link to a twin.
 - **The README is a quickstart and each topic is its own page.** It was 1339 lines; it is now install, a
   first run with its output, how to configure a tracker, a common-tasks table and an index — and the ten
   feature sections moved, unchanged, to `docs/`: `tracking.md`, `backends.md`, `run-manifest.md`,
