@@ -36,9 +36,9 @@ the named backend's registration modules are imported before the config loads. `
 Every verb takes the app framework's global flags, `--dump-config` among them: `myproject train config.yaml
 --framework keras --dump-config` prints the configuration that run resolves to — every setting of every class, the
 defaults included — and trains nothing; `--save-config PATH` writes it and then trains
-([global flags](https://github.com/Gearlux/liquifai/blob/main/docs/global-flags.md)). The verb sets the
-runnable's `task` when it runs, after the dump, so the dumped `task:` is the config's own (`fit` when it writes
-none).
+([global flags](https://github.com/Gearlux/liquifai/blob/main/docs/global-flags.md)). The dumped `task:` is the one
+the verb runs (`evaluate` → `test`): each verb adds `runnable.task` to the configuration when the runnable's class
+takes a `task`, and adds nothing to one that does not.
 
 A package root keeps its core framework-free with the same library — the PEP 562 resolver is
 `matrainer._exports.lazy_exports`; the name table stays the project's:

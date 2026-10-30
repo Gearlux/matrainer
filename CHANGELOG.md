@@ -6,6 +6,11 @@ All notable changes to this project are documented here. The format follows
 
 ## [Unreleased]
 
+### Changed
+- **`<project> evaluate cfg.yaml --dump-config` shows the task the verb runs** — `task: test` (`predict` for
+  `predict`), where it showed the config's own `task:`. Each verb adds `runnable.task` to the configuration when the
+  runnable's class takes a `task`; a runnable without one gets nothing added, and the other verbs still refuse it.
+
 ### Documentation
 - **Four docs pages gained the runnable example that proves them** — `examples/metrics.py` (the metric-spec
   rules, the batch-averaging error measured at ~5 points of macro-F1, the name translation),

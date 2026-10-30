@@ -275,6 +275,10 @@ imported by `import matrainer`. (`tests/services/`, `::test_the_module_imports_n
   (`tests/test_cli.py::test_the_pre_step_order_is_the_established_one`). `--framework` is
   rewritten to `--scope framework=…`, never appended. A runnable with no `task` runs for `train`
   only; other verbs raise (`::test_a_taskless_runnable_trains_as_is_and_refuses_the_other_verbs`).
+  Each verb's `config_keys=` (`_verb_task_keys`, user choice 2026-10-30) adds `runnable.task: <task>` to the loaded
+  configuration only when `confluid.accepts_key(<runnable's target>, "task")`, so `--dump-config` shows the verb's task
+  and a taskless runnable gets no undeclared-attribute warning; `default_dispatch` keeps forcing it on the built object
+  (`tests/test_cli_verb_task.py`).
   Package roots use `lazy_exports`; an empty extra marks a core name (`tests/test_exports.py`).
 - ONE binary, the `matrainer` console script (user-authorized 2026-08-07, do not re-litigate):
   `train|evaluate|predict <config.yaml>` plus `sweep`, built from `make_trainer_app(frameworks=None)`.
