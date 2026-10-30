@@ -57,6 +57,7 @@ def _isolated(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Iterator[Path]
     saved = confluid.get_app_name()
     yield tmp_path
     confluid.set_app_name(saved)
+    set_context(None)  # type: ignore[arg-type]  # a run leaves its context active: later tests must not read it
 
 
 def _run(monkeypatch: pytest.MonkeyPatch, *args: str) -> int:
