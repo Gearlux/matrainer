@@ -33,6 +33,13 @@ framework=X`; `--framework tensorflow` pins `KERAS_BACKEND` before anything impo
 the named backend's registration modules are imported before the config loads. `dispatch=` on
 `make_trainer_app` is the extension point when the default dispatch is not enough.
 
+Every verb takes the app framework's global flags, `--dump-config` among them: `myproject train config.yaml
+--framework keras --dump-config` prints the configuration that run resolves to — every setting of every class, the
+defaults included — and trains nothing; `--save-config PATH` writes it and then trains
+([global flags](https://github.com/Gearlux/liquifai/blob/main/docs/global-flags.md)). The verb sets the
+runnable's `task` when it runs, after the dump, so the dumped `task:` is the config's own (`fit` when it writes
+none).
+
 A package root keeps its core framework-free with the same library — the PEP 562 resolver is
 `matrainer._exports.lazy_exports`; the name table stays the project's:
 
