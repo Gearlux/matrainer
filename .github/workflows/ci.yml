@@ -63,7 +63,7 @@ jobs:
     - name: Run Tests
       run: |
         if [ -d tests ] && find tests -name '*.py' | grep -q .; then
-          pytest tests --junitxml=test-report.xml --cov=matrainer --cov-report=xml --cov-report=term
+          pytest tests --junitxml=test-report.xml --cov=matrainer --cov-branch --cov-report=xml --cov-report=term
         else
           echo "No tests found. Skipping."
         fi
