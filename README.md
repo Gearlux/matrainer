@@ -190,3 +190,7 @@ The one binary, `matrainer`, is the generic runner and the sweep driver describe
 
 Everything else — torch, pytorch-lightning, torchmetrics, mlflow, tensorboard, wandb, aim,
 clearml, tensorflow, matplotlib — is optional and behind an extra.
+
+## License
+
+[PolyForm Noncommercial License 1.0.0](https://polyformproject.org/licenses/noncommercial/1.0.0) (the `LICENSE` file): free for personal, academic and other noncommercial use. Commercial use needs a separate licence from the author.

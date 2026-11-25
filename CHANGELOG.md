@@ -7,6 +7,7 @@ All notable changes to this project are documented here. The format follows
 ## [Unreleased]
 
 ### Changed
+- **The licence is now the PolyForm Noncommercial License 1.0.0** (`LICENSE`, `pyproject.toml`): free for personal, academic and other noncommercial use; commercial use needs a separate licence from the author. It was MIT; the versions released under MIT keep that licence.
 - **`<project> evaluate cfg.yaml --dump-config` shows the task the verb runs** — `task: test` (`predict` for
   `predict`), where it showed the config's own `task:`. Each verb adds `runnable.task` to the configuration when the
   runnable's class takes a `task`; a runnable without one gets nothing added, and the other verbs still refuse it.
