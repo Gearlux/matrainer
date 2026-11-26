@@ -109,6 +109,18 @@ def test_after_fit_runs_and_is_handed_the_learner() -> None:
     assert train_ds is not None
 
 
+def test_the_fit_ends_its_run_however_it_ends() -> None:
+    """The learner's fit and everything after it run inside ``ending_the_run``: a raise ends the run as failed."""
+    import inspect
+
+    from matrainer.fastai.learner import FastaiRunnable
+
+    body = inspect.getsource(FastaiRunnable.fit)
+    assert body.index("log_run_context(") < body.index("with ending_the_run(trackers, manifest):")
+    assert body.index("with ending_the_run(trackers, manifest):") < body.index("_build_learner(")
+    assert "capture_log_file(" not in body
+
+
 def test_the_epoch_history_reaches_the_trackers() -> None:
     class _Tracker:
         def __init__(self) -> None:

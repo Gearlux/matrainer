@@ -252,6 +252,31 @@ def test_capture_log_file_ends_the_run_on_every_tracker(monkeypatch: pytest.Monk
     assert first.finalized == "failed" and second.finalized == "failed"
 
 
+def test_work_that_finishes_ends_the_run_as_a_success(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(provenance, "resolve_log_file", lambda: None)
+    tracker = RecordingTracker()
+    with provenance.ending_the_run([tracker], None):
+        assert tracker.finalized is None, "the run is ended when the work is over, not before"
+    assert tracker.finalized == "success"
+
+
+@pytest.mark.parametrize(
+    "raised, status", [(RuntimeError("training failed"), "failed"), (KeyboardInterrupt(), "interrupted")]
+)
+def test_work_that_raises_ends_the_run_as_what_happened_and_raises_again(
+    monkeypatch: pytest.MonkeyPatch, raised: BaseException, status: str
+) -> None:
+    """A run that raised never reached its terminal call: the tracker showed it running for ever, without its
+    log file, and the manifest's exit hook called a crash ``interrupted``."""
+    monkeypatch.setattr(provenance, "resolve_log_file", lambda: None)
+    tracker = RecordingTracker()
+    with pytest.raises(type(raised)) as caught:
+        with provenance.ending_the_run([tracker], None):
+            raise raised
+    assert caught.value is raised
+    assert tracker.finalized == status
+
+
 def test_the_run_is_ended_AFTER_the_artifacts_are_pushed(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
     """Ordering, not tidiness: a backend with a run lifecycle stops accepting writes when ended.
 

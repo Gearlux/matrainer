@@ -50,6 +50,7 @@ import shlex
 import shutil
 import subprocess
 import sys
+from contextlib import contextmanager
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Dict, Iterator, List, Mapping, Optional, Sequence, Set, Tuple
 
@@ -977,6 +978,36 @@ def capture_log_file(
             logger.debug(f"capture_log_file failed on {type(tracker).__name__}: {exc}")
 
 
+def failure_status(error: BaseException) -> "RunStatus":
+    """The terminal status of a run that ``error`` ended: ``interrupted`` for a Ctrl-C, else ``failed``."""
+    return "interrupted" if isinstance(error, KeyboardInterrupt) else "failed"
+
+
+@contextmanager
+def ending_the_run(trackers: Sequence["Tracker"], manifest: Optional["RunManifest"] = None) -> Iterator[None]:
+    """End the run on every tracker however the work inside ends.
+
+    Wrap everything between :func:`log_run_context` and the run's end in it. Work that finishes
+    ends the run as ``success``; work that RAISES ends it as :func:`failure_status` says and the
+    error is raised again. Both go through :func:`capture_log_file`, so a failed run keeps its
+    log file — the place its error is written.
+
+    Why it exists: a trainer whose last line was ``capture_log_file(..., status="success")``
+    never reached it when the training raised. The tracker then showed the run running for
+    ever, without its log, and the manifest's exit hook called a crash ``interrupted``.
+
+    Args:
+        trackers: The tracking backends of the run.
+        manifest: The manifest :func:`log_run_context` returned.
+    """
+    try:
+        yield
+    except BaseException as error:
+        capture_log_file(trackers, manifest=manifest, status=failure_status(error))
+        raise
+    capture_log_file(trackers, manifest=manifest, status="success")
+
+
 __all__ = [
     "DEFAULT_ENV_PREFIXES",
     "FREEZE_TIMEOUT_SECONDS",
@@ -999,7 +1030,9 @@ __all__ = [
     "configured_models",
     "configured_slots",
     "editable_source_paths",
+    "ending_the_run",
     "environment_snapshot",
+    "failure_status",
     "file_digest",
     "get_git_commit_hash",
     "git_state",

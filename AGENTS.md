@@ -108,6 +108,13 @@ imported by `import matrainer`. (`tests/services/`, `::test_the_module_imports_n
   (`tests/tracking/test_provenance.py::test_the_run_is_ended_AFTER_the_artifacts_are_pushed`,
   `::test_capture_log_file_can_upload_without_ending_the_run`; consumer-side
   `test_the_terminal_call_is_the_one_that_ends_the_run`).
+- A trainer's work between `log_run_context` and the run's end runs inside `with ending_the_run(trackers, manifest):`,
+  never before a last-line `capture_log_file(..., status="success")`: a run that raises is ended as `failed`
+  (`interrupted` for a Ctrl-C) with its log file, and the error raised again. Keras calls no callback when a fit
+  raises, so `KerasRunnable.fit` tells the tracking callback (`end_run`)
+  (`tests/tracking/test_provenance.py::test_work_that_raises_ends_the_run_as_what_happened_and_raises_again`,
+  `tests/test_torch_loop.py::test_a_fit_that_raises_ends_the_trackers_run_as_failed`,
+  `tests/test_keras_family.py::test_a_fit_that_raises_ends_the_trackers_run`).
 - `primary_code()` returns `None` rather than `entries[0]`
   (`tests/tracking/test_manifest.py::test_primary_code_is_none_when_nothing_ties_the_run_to_a_repository`).
 - `capture_code` returns a LIST. `environment_snapshot` keeps a `SECRET_MARKERS` name, redacts the

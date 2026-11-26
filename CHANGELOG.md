@@ -6,7 +6,18 @@ All notable changes to this project are documented here. The format follows
 
 ## [Unreleased]
 
+## [0.1.0a3] — 2026-11-26
+
+### Added
+- **`matrainer.tracking.ending_the_run(trackers, manifest)`** — a context manager around a run's work: work that
+  finishes ends the run as `success`, work that raises ends it as `failed` (`interrupted` for a Ctrl-C) and the error
+  is raised again. Both go through `capture_log_file`, so a failed run keeps its log file
+  ([`docs/run-manifest.md`](https://github.com/Gearlux/matrainer/blob/main/docs/run-manifest.md)).
+
 ### Fixed
+- **A run that raises is ended on its trackers** — the torch loop, fastai, Hugging Face, JAX and MLX trainers and
+  `KerasRunnable` ended a run only on their last line, so a training that raised stayed "running" on the tracker for
+  ever, without its log file. They now end it as `failed` or `interrupted`.
 - **A run that fails on a Mac ends** — the Apple-GPU sampler's thread is a daemon its exit hook stops and joins. As a
   non-daemon thread it kept the process alive for ever when a run raised before its tracker was finalized: Python
   joins such threads before it runs exit hooks.

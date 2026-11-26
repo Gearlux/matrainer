@@ -143,6 +143,31 @@ def test_the_artifact_prologue_runs_before_the_fit() -> None:
     assert body.index("_before_fit()") < body.index("model.fit(")
 
 
+def test_a_fit_that_raises_ends_the_trackers_run(monkeypatch: Any) -> None:
+    """Keras calls no callback when its fit raises: the runnable ends the run on the tracking callback itself."""
+
+    class _Callback:
+        ended: Any = None
+
+        def end_run(self, status: str) -> None:
+            self.ended = status
+
+    class _Model:
+        def fit(self, *args: Any, **kwargs: Any) -> Any:
+            raise RuntimeError("training failed")
+
+    callback, other = _Callback(), object()
+    runnable = _Hooked()
+    runnable.train_set = [1]
+    runnable.model = _Model()
+    monkeypatch.setattr(runnable, "_sequence", lambda *a, **k: None, raising=False)
+    monkeypatch.setattr(runnable, "_before_fit", lambda: None, raising=False)
+    monkeypatch.setattr(runnable, "_callbacks", lambda: [other, callback])
+    with pytest.raises(RuntimeError, match="training failed"):
+        KerasRunnable.fit(runnable)  # type: ignore[arg-type]
+    assert callback.ended == "failed"
+
+
 def test_the_fit_never_lets_keras_shuffle_batch_order() -> None:
     """`model.fit(shuffle=False)` — the sequence owns row order (private seeded RNG, reshuffled
     per epoch via `on_epoch_end`, which Keras drives). Keras's PyDataset shuffle permutes BATCH

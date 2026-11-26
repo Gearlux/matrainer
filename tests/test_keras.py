@@ -124,6 +124,21 @@ def test_epoch_logs_reach_the_trackers_in_the_canonical_vocabulary() -> None:
     assert set(logs) == {"loss", "sparse_categorical_accuracy", "val_loss", "val_accuracy"}
 
 
+def test_the_callback_ends_the_run_with_the_status_it_is_told(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Keras calls no callback when a fit raises, so the runnable tells the callback how the run ended."""
+    from matrainer.keras import keras_tracking_callback
+    from matrainer.tracking import provenance
+
+    ended: list = []
+    monkeypatch.setattr(
+        provenance, "capture_log_file", lambda trackers, manifest=None, status="success": ended.append(status)
+    )
+    callback = keras_tracking_callback([])
+    callback.end_run("failed")
+    callback.on_train_end()
+    assert ended == ["failed", "success"]
+
+
 def test_a_wired_metric_names_overrides_the_vocabulary() -> None:
     """`metric_names:` is config's knob — here, keep recording in Keras' own spelling."""
     from matrainer import MetricNames

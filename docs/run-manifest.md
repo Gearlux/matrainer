@@ -31,6 +31,17 @@ manifest.record_output("epoch=3.ckpt", monitor="val/acc", value=0.91)
 capture_log_file(trackers, manifest=manifest, status="success")
 ```
 
+A run that can fail wraps its work in `ending_the_run`, which makes that last call for you — as
+`success`, or as `failed` (`interrupted` for a Ctrl-C) when the work raises, the error raised again:
+
+```python
+from matrainer.tracking import ending_the_run
+
+manifest = log_run_context(trackers, runnable=my_configured_runnable)
+with ending_the_run(trackers, manifest):
+    ...  # run training
+```
+
 Hand it the configured object and it derives the hyperparameters and dumps the resolved config —
 don't hand-build a params dict for something it can read. `params=` is still there for values that
 live outside the config, and it wins over anything derived:

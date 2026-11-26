@@ -5,7 +5,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "matrainer"
-version = "0.1.0a2"
+version = "0.1.0a3"
 description = "Experiment tracking for any training platform (MLflow / TensorBoard / CSV / W&B)."
 readme = "README.md"
 authors = [{name = "Gert Behiels"}]

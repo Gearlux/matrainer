@@ -92,10 +92,18 @@ def keras_tracking_callback(
                 tracker.log_metrics(reported, step=epoch)
 
         def on_train_end(self, logs: Optional[Dict[str, float]] = None) -> None:
+            self.end_run("success")
+
+        def end_run(self, status: Any) -> None:
+            """End the run on every tracker with ``status``.
+
+            Keras calls no callback when a fit RAISES, so the code driving the fit calls this
+            with :func:`~matrainer.tracking.provenance.failure_status` of the error.
+            """
             # Finishing is not optional once a manifest exists: left at `running`, matrainer's
             # atexit hook would label a successful run `interrupted`.
             if capture_log or self.manifest is not None:
-                provenance.capture_log_file(members, manifest=self.manifest, status="success")
+                provenance.capture_log_file(members, manifest=self.manifest, status=status)
 
     return _KerasTrackingCallback()
 

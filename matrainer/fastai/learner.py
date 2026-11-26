@@ -481,25 +481,25 @@ class FastaiRunnable(TorchTrainerRunnable):
             raise ValueError(f"{type(self).__name__}.fit() requires a 'train_set'.")
         # Provenance through matrainer's plain FUNCTIONS — `runnable=self` so the
         # hyperparameters and the resolved config come from matrainer's ONE derivation.
-        from matrainer.tracking.provenance import capture_log_file, log_run_context
+        from matrainer.tracking.provenance import ending_the_run, log_run_context
 
         trackers = self._live_trackers()
         manifest = log_run_context(trackers, runnable=self)
-        learner = self._build_learner(self._dataloaders(), "val")
-        if self.one_cycle:
-            learner.fit_one_cycle(self.max_epochs, lr_max=self.learning_rate)
-        else:
-            learner.fit(self.max_epochs, lr=self.learning_rate)
-        names = as_metric_names(self.metric_names)
-        self._computed_metrics = self._fit_results(learner, names)
-        self._log_epoch_history(learner, trackers, names)
-        logger.info(f"Training complete: {self._computed_metrics}")
-        self._after_fit(learner, self.train_set, self.val_set, self.test_set)
-        write_metrics_sidecar(self.metrics_sidecar_path, self._computed_metrics, self.experiment_name, self.run_name)
-        # Uploads the log file, stamps the manifest's terminal status AND finalizes every
-        # tracker — left unfinished a manifest stays `running`, and matrainer's atexit hook
-        # then calls a successful run `interrupted`.
-        capture_log_file(trackers, manifest=manifest, status="success")
+        # Ends the run on every tracker: as a success, or as failed when anything below raises.
+        with ending_the_run(trackers, manifest):
+            learner = self._build_learner(self._dataloaders(), "val")
+            if self.one_cycle:
+                learner.fit_one_cycle(self.max_epochs, lr_max=self.learning_rate)
+            else:
+                learner.fit(self.max_epochs, lr=self.learning_rate)
+            names = as_metric_names(self.metric_names)
+            self._computed_metrics = self._fit_results(learner, names)
+            self._log_epoch_history(learner, trackers, names)
+            logger.info(f"Training complete: {self._computed_metrics}")
+            self._after_fit(learner, self.train_set, self.val_set, self.test_set)
+            write_metrics_sidecar(
+                self.metrics_sidecar_path, self._computed_metrics, self.experiment_name, self.run_name
+            )
 
     def _fit_results(self, learner: Learner, names: MetricNames) -> Dict[str, float]:
         """What a finished fit RECORDS — **hook**; default: the Recorder's last epoch."""

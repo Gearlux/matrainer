@@ -117,7 +117,8 @@ def test_evaluate_scores_the_validation_split() -> None:
 
 def test_an_eval_task_records_the_run() -> None:
     body = inspect.getsource(JaxLoopRunnable._run_eval_task)
-    assert "log_run_context(" in body and "capture_log_file(" in body
+    assert body.index("log_run_context(") < body.index("with ending_the_run(trackers, manifest):")
+    assert body.index("with ending_the_run(trackers, manifest):") < body.index("_evaluate_split(")
     assert "tracker.log_metrics(" in body
 
 
@@ -125,7 +126,10 @@ def test_fit_warms_the_splits_and_records_the_run() -> None:
     body = inspect.getsource(JaxLoopRunnable.fit)
     assert body.index("_prepare(") < body.index("log_run_context(")
     assert body.index("_fit_scores(") < body.index("_fit_epilogue()")
-    assert body.index("_fit_epilogue()") < body.index("capture_log_file(")
+    # The run is ended by `ending_the_run`, as failed when anything inside raises.
+    assert body.index("log_run_context(") < body.index("with ending_the_run(trackers, manifest):")
+    assert body.index("with ending_the_run(trackers, manifest):") < body.index("_fit_scores(")
+    assert "capture_log_file(" not in body
 
 
 def test_computed_metrics_raises_before_the_run() -> None:
