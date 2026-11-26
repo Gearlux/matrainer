@@ -7,7 +7,7 @@ repeated here.
 ## Current state
 
 Experiment tracking plus the workspace's shared trainer machinery (user-authorized 2026-08-06,
-§9). On PyPI as pre-releases (`0.1.0aN`, the version in `pyproject.toml`); the repo is private.
+§9). On PyPI as pre-releases (`0.1.0aN`, the version in `pyproject.toml`); the repo is public.
 
 | area | modules |
 |---|---|
