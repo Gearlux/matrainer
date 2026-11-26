@@ -6,6 +6,11 @@ All notable changes to this project are documented here. The format follows
 
 ## [Unreleased]
 
+### Fixed
+- **A run that fails on a Mac ends** — the Apple-GPU sampler's thread is a daemon its exit hook stops and joins. As a
+  non-daemon thread it kept the process alive for ever when a run raised before its tracker was finalized: Python
+  joins such threads before it runs exit hooks.
+
 ### Changed
 - **The licence is now the PolyForm Noncommercial License 1.0.0** (`LICENSE`, `pyproject.toml`): free for personal, academic and other noncommercial use; commercial use needs a separate licence from the author. It was MIT; the versions released under MIT keep that licence.
 - **`<project> evaluate cfg.yaml --dump-config` shows the task the verb runs** — `task: test` (`predict` for
