@@ -243,7 +243,7 @@ def test_the_epoch_splats_the_batch() -> None:
 def test_a_tensorflow_fit_that_raises_ends_the_trackers_run(monkeypatch: Any) -> None:
     """The loop drives the callbacks by hand, so a raise skips `on_train_end`: the runnable ends the run itself."""
 
-    class _Callback(keras.callbacks.Callback):  # type: ignore[misc]
+    class _Callback(keras.callbacks.Callback):  # type: ignore[name-defined]
         ended: Any = None
 
         def end_run(self, status: str) -> None:

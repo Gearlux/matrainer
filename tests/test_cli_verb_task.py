@@ -48,7 +48,7 @@ TASKLESS = f"runnable: !class:{VerbTasklessRunnable.__module__}.VerbTasklessRunn
 
 @pytest.fixture(autouse=True)
 def _isolated(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Iterator[Path]:
-    set_context(None)  # type: ignore[arg-type]
+    set_context(None)
     monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path / "xdg"))
     monkeypatch.setenv("XDG_CONFIG_DIRS", str(tmp_path / "xdg_sys"))
     monkeypatch.setenv("HOME", str(tmp_path / "home"))
@@ -57,7 +57,7 @@ def _isolated(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Iterator[Path]
     saved = confluid.get_app_name()
     yield tmp_path
     confluid.set_app_name(saved)
-    set_context(None)  # type: ignore[arg-type]  # a run leaves its context active: later tests must not read it
+    set_context(None)  # a run leaves its context active: later tests must not read it
 
 
 def _run(monkeypatch: pytest.MonkeyPatch, *args: str) -> int:

@@ -27,14 +27,16 @@ classifiers = [
 # library — those live behind the extras below, each imported lazily (matrainer._imports.require).
 # It is not small on disk: recordstream is core (the runnable base and the label-map artifacts
 # import it) and brings its data stack — measured 2026-09-26, a bare install is 65 packages / 457 MB.
-# Floors are what the suite actually runs against — measured 2026-10-14 in a clean Python 3.12 venv:
-# the 0.1.0a2 wheel with every workspace dependency AT its floor (liquifai 0.3.0, loggair 0.2.0,
-# confluid 0.4.1, recordstream 0.1.0a3) and CI's extras, from PyPI alone (1015 passed, 4 skipped).
+# Floors are what the suite actually runs against — measured 2026-11-26 in a clean Python 3.12 venv:
+# the 0.1.0a3 checkout with every workspace dependency AT its floor (liquifai 0.4.0, loggair 0.2.0,
+# confluid 0.5.0, recordstream 0.1.0a3) and CI's extras, from PyPI alone (1166 passed, 2 skipped).
 dependencies = [
-    "liquifai>=0.3.0",
+    # 0.4.0 is the first liquifai with `script_command(config_keys=...)`, which every verb of
+    # `make_trainer_app` passes: against 0.3.x the app fails to build with a TypeError.
+    "liquifai>=0.4.0",
     "loggair>=0.2.0",
-    # recordstream 0.1.0a3 requires confluid>=0.4.1, so nothing older can be installed beside it.
-    "confluid>=0.4.1",
+    # liquifai 0.4.0 requires confluid>=0.5.0, so nothing older can be installed beside it.
+    "confluid>=0.5.0",
     # recordstream ships as pre-releases (0.1.0aN). Under PEP 440 a plain `>=0.1.0` EXCLUDES every
     # pre-release of 0.1.0, so it would resolve to nothing. 0.1.0a3 is the first with
     # `recordstream.flow.subgraph`, which the model packages import.

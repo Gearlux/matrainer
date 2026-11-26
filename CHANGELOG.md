@@ -23,6 +23,9 @@ All notable changes to this project are documented here. The format follows
   joins such threads before it runs exit hooks.
 
 ### Changed
+- **matrainer requires liquifai 0.4.0 and confluid 0.5.0** (`liquifai>=0.4.0`, was `>=0.3.0`; `confluid>=0.5.0`, was
+  `>=0.4.1`): every verb passes `script_command(config_keys=...)`, new in liquifai 0.4.0, which itself requires
+  confluid 0.5.0.
 - **The licence is now the PolyForm Noncommercial License 1.0.0** (`LICENSE`, `pyproject.toml`): free for personal, academic and other noncommercial use; commercial use needs a separate licence from the author. It was MIT; the versions released under MIT keep that licence.
 - **`<project> evaluate cfg.yaml --dump-config` shows the task the verb runs** — `task: test` (`predict` for
   `predict`), where it showed the config's own `task:`. Each verb adds `runnable.task` to the configuration when the
