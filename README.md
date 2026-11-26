@@ -142,6 +142,7 @@ Why a mechanism exists, rather than how to use it: [`docs/architecture.md`](http
 | Variable | Effect |
 |---|---|
 | `KERAS_BACKEND` | Keras 3 backend; `matrainer.tensorflow` and `--framework tensorflow` default it to `tensorflow` |
+| `MLFLOW_TRACKING_URI` | the MLflow server a run is stored on when its tracker names none (`MlflowTracker`'s `tracking_uri`); unset means MLflow's own default, a local `./mlruns` folder, which MLflow 3.15 and later refuse unless `MLFLOW_ALLOW_FILE_STORE=true` |
 | `MLFLOW_SYSTEM_METRICS_SAMPLING_INTERVAL` | seconds between system-metric samples (default 10) |
 | `PROJECT_ROOT`, `DATA_ROOT`, `MODEL_ROOT` | machine roots; paths under them are recorded as `$NAME/...` in the manifest |
 | `AIM_REPO` | the Aim repository, written by the Aim service and read as `$AIM_REPO` by run configs |
