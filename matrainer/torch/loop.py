@@ -266,36 +266,38 @@ class TorchLoopRunnable(TorchTrainerRunnable):
         optimizer = cast(Optimizer, flow(self.optimizer, params=cast(nn.Module, self.model).parameters()))
         trackers = self._live_trackers()
         manifest = self._log_run_context(trackers)
-        self._move_metrics()
+        from matrainer.tracking.provenance import ending_the_run
 
-        for epoch in range(self.max_epochs):
-            logs: Dict[str, float] = {"train/loss": self._train_epoch(train_loader, optimizer)}
-            logs.update(self._epoch_metrics(self.train_metrics, step=epoch))
-            if loaders["val"] is not None:
-                val_loss = self._eval_epoch(loaders["val"], self.val_metrics)
-                if val_loss is not None:
-                    logs["val/loss"] = val_loss
-                logs.update(self._epoch_metrics(self.val_metrics, step=epoch))
-            logs = as_metric_names(self.metric_names)(logs)
-            for tracker in trackers:
-                tracker.log_metrics(logs, step=epoch)
-            for key, value in logs.items():
-                self._history.setdefault(key, []).append(value)
-            logger.info(f"epoch {epoch + 1}/{self.max_epochs}: " + ", ".join(f"{k}={v:.4f}" for k, v in logs.items()))
-            self._computed_metrics = dict(logs)
+        # Ends the run on every tracker: as a success, or as failed when anything below raises.
+        with ending_the_run(trackers, manifest):
+            self._move_metrics()
 
-        logger.info("Training complete.")
-        self._save_checkpoint()
-        self._after_fit(self, self.train_set, self.val_set, self.test_set)
-        write_metrics_sidecar(self.metrics_sidecar_path, self._computed_metrics, self.experiment_name, self.run_name)
-        if loaders["test"] is not None:
-            self._computed_metrics.update(self._score(loaders["test"]))
-        # Uploads the log file, stamps the manifest's terminal status AND finalizes every
-        # tracker. Not optional once a manifest exists: left unfinished it stays `running`, and
-        # matrainer's atexit hook then calls a successful run `interrupted`.
-        from matrainer.tracking.provenance import capture_log_file
+            for epoch in range(self.max_epochs):
+                logs: Dict[str, float] = {"train/loss": self._train_epoch(train_loader, optimizer)}
+                logs.update(self._epoch_metrics(self.train_metrics, step=epoch))
+                if loaders["val"] is not None:
+                    val_loss = self._eval_epoch(loaders["val"], self.val_metrics)
+                    if val_loss is not None:
+                        logs["val/loss"] = val_loss
+                    logs.update(self._epoch_metrics(self.val_metrics, step=epoch))
+                logs = as_metric_names(self.metric_names)(logs)
+                for tracker in trackers:
+                    tracker.log_metrics(logs, step=epoch)
+                for key, value in logs.items():
+                    self._history.setdefault(key, []).append(value)
+                logger.info(
+                    f"epoch {epoch + 1}/{self.max_epochs}: " + ", ".join(f"{k}={v:.4f}" for k, v in logs.items())
+                )
+                self._computed_metrics = dict(logs)
 
-        capture_log_file(trackers, manifest=manifest, status="success")
+            logger.info("Training complete.")
+            self._save_checkpoint()
+            self._after_fit(self, self.train_set, self.val_set, self.test_set)
+            write_metrics_sidecar(
+                self.metrics_sidecar_path, self._computed_metrics, self.experiment_name, self.run_name
+            )
+            if loaders["test"] is not None:
+                self._computed_metrics.update(self._score(loaders["test"]))
 
     def evaluate(self) -> None:
         """Score the VALIDATION split — the `evaluate` / `test` split is the only difference."""

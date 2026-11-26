@@ -6,6 +6,10 @@ same reason ``pytorch_lightning.loggers.MLFlowLogger`` uses the client directly)
 ``mlflow`` is imported lazily on first :attr:`experiment` access — importing this
 module needs no MLflow installed.
 
+Every parameter, metric and tag key goes through :func:`mlflow_safe_name` first: MLflow
+restricts a key to one character set, must be able to read it as a path, and caps its
+length — and a walked configuration path satisfies none of the three by itself.
+
 When ``log_system_metrics`` is set, the run also starts MLflow's own
 ``SystemMetricsMonitor`` (CPU / RAM / disk) plus, on Apple Silicon, the
 framework-free :class:`matrainer.tracking.system.MpsMetricsSampler` — so a
@@ -17,6 +21,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import posixpath
 import re
 from functools import partial
 from pathlib import Path
@@ -43,6 +48,76 @@ _UNSAFE_MODEL_NAME = re.compile(r"""[/:.%"']+""")
 def _logged_model_name(name: Any) -> str:
     """A display name MLflow will accept for ``name``, never empty."""
     return _UNSAFE_MODEL_NAME.sub("_", str(name or "")).strip("_") or "model"
+
+
+#: A bracketed step in a path, which MLflow rejects. Names reaching a tracker are not MLflow's to
+#: shape: a training framework's log dict, a user's tag keys, and the walked configuration paths
+#: ``config_params`` derives (:mod:`matrainer.tracking.provenance`) all arrive as they are, and one
+#: refused name costs a call its whole batch — a run's entire ``params`` section, in that case.
+_BRACKETED_STEP = re.compile(r"\[([^\[\]]*)\]")
+
+#: Every character outside the set MLflow accepts in a parameter, metric or tag key. One
+#: validator serves all three (``mlflow.utils.validation.validate_param_and_metric_name``,
+#: measured against mlflow 3.15), and its own set is ``[/\w.\- :]``. This one is deliberately
+#: ASCII where MLflow's ``\w`` admits any Unicode letter: the stricter set is always accepted,
+#: and MLflow's own refusal text says "alphanumerics".
+_UNSAFE_NAME_CHARACTER = re.compile(r"[^A-Za-z0-9_\-. :/]")
+
+#: MLflow's key-length ceiling (its ``MAX_ENTITY_KEY_LENGTH``). A walked path through a deep
+#: object graph passes it, and that is a SECOND refusal with its own message — so mapping the
+#: characters alone would still cost such a run its parameters.
+MAX_NAME_LENGTH = 250
+
+#: Characters of a truncated name's digest: enough that two long paths sharing a tail stay
+#: distinct runs' parameters, short enough to leave the readable tail nearly whole.
+_NAME_DIGEST_LENGTH = 8
+
+
+def _is_path_ambiguous(name: str) -> bool:
+    """Whether MLflow's SECOND name rule refuses ``name`` (mirrors its ``validation.path_not_unique``).
+
+    A name may be treated as a file, so it must already be canonical as a posix path: ``a//b``,
+    ``a/./b``, a trailing slash, a leading ``/`` and a leading ``..`` are each refused — with a
+    different message than the character rule gives, and while holding only legal characters.
+    Pinned against the installed MLflow by
+    ``tests/tracking/test_mlflow_backend.py::test_the_name_rules_match_the_installed_mlflow``.
+    """
+    canonical = posixpath.normpath(name)
+    return canonical != name or canonical == "." or canonical.startswith(("..", "/"))
+
+
+def mlflow_safe_name(name: Any) -> str:
+    """A parameter, metric or tag key MLflow will accept for ``name``.
+
+    Three rules, each measured against a real store rather than read off the documentation:
+
+    * ``[key]`` becomes ``.key``, so a walked configuration path stays the readable path it
+      was: ``kwargs[source].Target.target`` → ``kwargs.source.Target.target``, and
+      ``callbacks[0].patience`` → ``callbacks.0.patience``.
+    * any other character outside MLflow's set becomes ``_``: ``model<v2>`` → ``model_v2_``.
+    * a name that is not canonical as a path loses its slashes, and one longer than
+      :data:`MAX_NAME_LENGTH` keeps its TAIL behind a digest — the leaf setting is what
+      identifies a hyperparameter, and the digest keeps two long paths apart.
+
+    A name MLflow already accepts is returned unchanged (``RFDETRDetector.epochs``,
+    ``a:b-c d/e_f``), so nothing that used to land is renamed now. Public and importable —
+    it needs no ``mlflow`` installed — so another backend speaking MLflow's dialect applies
+    this same rule instead of keeping a second copy of it that drifts.
+
+    Two consequences worth knowing. Sanitising can map two different names onto one, and MLflow
+    refuses a re-logged parameter whose value changed; a collision therefore surfaces as that
+    refusal rather than as silent overwriting. And ``:`` is kept, which MLflow accepts
+    everywhere except Windows — its validator drops the colon there.
+    """
+    text = _UNSAFE_NAME_CHARACTER.sub("_", _BRACKETED_STEP.sub(r".\1", str(name)))
+    if len(text) > MAX_NAME_LENGTH:
+        digest = hashlib.sha256(text.encode()).hexdigest()[:_NAME_DIGEST_LENGTH]
+        text = f"{digest}.{text[_NAME_DIGEST_LENGTH + 1 - MAX_NAME_LENGTH :]}"
+    if _is_path_ambiguous(text):
+        text = text.replace("/", "_")
+        if text.startswith(".."):
+            text = f"_{text[2:]}"
+    return text if text and text != "." else "param"
 
 
 def _reference_digest(fields: Mapping[str, Any]) -> str:
@@ -114,7 +189,10 @@ class MlflowTracker(Tracker):
             client = MlflowClient(tracking_uri=self.tracking_uri)
             exp = client.get_experiment_by_name(self.experiment_name)
             exp_id = exp.experiment_id if exp is not None else client.create_experiment(self.experiment_name)
-            run = client.create_run(experiment_id=exp_id, run_name=self.run_name, tags=self.tags or None)
+            # `create_run` does NOT validate a tag key (measured), but `set_tag` does — so a tag
+            # stamped here and re-set later would appear twice, under two names. One name per tag.
+            creation_tags = {mlflow_safe_name(key): value for key, value in (self.tags or {}).items()}
+            run = client.create_run(experiment_id=exp_id, run_name=self.run_name, tags=creation_tags or None)
             self._client = client
             self._experiment_id = exp_id
             self._run_id = run.info.run_id
@@ -135,7 +213,7 @@ class MlflowTracker(Tracker):
         failed: Optional[Exception] = None
         for key, value in params.items():
             try:
-                client.log_param(self._run_id, str(key), value)
+                client.log_param(self._run_id, mlflow_safe_name(key), value)
             except Exception as exc:  # mlflow rejects a re-logged param with a changed value
                 logger.debug(f"MLflow log_param failed for {key}: {exc}")
                 failed = failed or exc
@@ -146,7 +224,7 @@ class MlflowTracker(Tracker):
         failed: Optional[Exception] = None
         for key, value in metrics.items():
             try:
-                client.log_metric(self._run_id, str(key), float(value), step=step or 0)
+                client.log_metric(self._run_id, mlflow_safe_name(key), float(value), step=step or 0)
             except Exception as exc:
                 logger.debug(f"MLflow log_metric failed for {key}: {exc}")
                 failed = failed or exc
@@ -158,7 +236,7 @@ class MlflowTracker(Tracker):
         failed: Optional[Exception] = None
         for key, value in tags.items():
             try:
-                client.set_tag(self._run_id, str(key), str(value))
+                client.set_tag(self._run_id, mlflow_safe_name(key), str(value))
             except Exception as exc:
                 logger.debug(f"MLflow set_tag failed for {key}: {exc}")
                 failed = failed or exc
@@ -369,4 +447,4 @@ class MlflowTracker(Tracker):
                 self._raise_failure(exc)
 
 
-__all__ = ["MlflowTracker"]
+__all__ = ["MAX_NAME_LENGTH", "MlflowTracker", "mlflow_safe_name"]

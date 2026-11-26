@@ -52,7 +52,7 @@ from matrainer.artifacts import write_metrics_sidecar
 from matrainer.metric_names import MetricNames, as_metric_names
 from matrainer.torch.runnable import TorchTrainerRunnable
 from matrainer.tracking.base import Tracker
-from matrainer.tracking.provenance import capture_log_file, log_run_context
+from matrainer.tracking.provenance import ending_the_run, log_run_context
 
 if TYPE_CHECKING:  # the deferred slots' real types, without the module-level import
     from transformers import Trainer, TrainingArguments
@@ -332,25 +332,24 @@ class HuggingFaceRunnable(TorchTrainerRunnable):
         # hyperparameters and the resolved config come from the ONE derivation.
         trackers = self._live_trackers()
         manifest = log_run_context(trackers, runnable=self)
-        trainer = self._build_trainer(train=self.train_set, evaluate=self.val_set)
-        result = trainer.train()
-        names = as_metric_names(self.metric_names)
-        scored = {k: float(v) for k, v in result.metrics.items() if _is_number(v)}
-        if self.val_set is not None:
-            scored.update(self._fit_val_scores(trainer))
-        # Idempotent over a task hook that already produced canonical `<split>/<name>` keys —
-        # the vocabulary recognises the canonical shape whatever the source.
-        self._computed_metrics = names(scored, source="huggingface")
-        _log_trainer_history(trainer, trackers, names)
-        for tracker in trackers:
-            tracker.log_metrics(self._computed_metrics)
-        logger.info(f"Training complete: {self._computed_metrics}")
-        self._after_fit(trainer, self.train_set, self.val_set, self.test_set)
-        write_metrics_sidecar(self.metrics_sidecar_path, self._computed_metrics, self.experiment_name, self.run_name)
-        # Uploads the log file AND stamps the manifest's terminal status. Not optional once a
-        # manifest exists: left unfinished it stays `running`, and matrainer's atexit hook
-        # then calls a successful run `interrupted`.
-        capture_log_file(trackers, manifest=manifest, status="success")
+        with ending_the_run(trackers, manifest):
+            trainer = self._build_trainer(train=self.train_set, evaluate=self.val_set)
+            result = trainer.train()
+            names = as_metric_names(self.metric_names)
+            scored = {k: float(v) for k, v in result.metrics.items() if _is_number(v)}
+            if self.val_set is not None:
+                scored.update(self._fit_val_scores(trainer))
+            # Idempotent over a task hook that already produced canonical `<split>/<name>` keys —
+            # the vocabulary recognises the canonical shape whatever the source.
+            self._computed_metrics = names(scored, source="huggingface")
+            _log_trainer_history(trainer, trackers, names)
+            for tracker in trackers:
+                tracker.log_metrics(self._computed_metrics)
+            logger.info(f"Training complete: {self._computed_metrics}")
+            self._after_fit(trainer, self.train_set, self.val_set, self.test_set)
+            write_metrics_sidecar(
+                self.metrics_sidecar_path, self._computed_metrics, self.experiment_name, self.run_name
+            )
 
     def _fit_val_scores(self, trainer: Any) -> Dict[str, float]:
         """The post-fit validation scores merged into the fit's computed metrics.
@@ -377,12 +376,14 @@ class HuggingFaceRunnable(TorchTrainerRunnable):
         """One eval entry point's body: score, put it on the trackers, record the run."""
         trackers = self._live_trackers()
         manifest = log_run_context(trackers, runnable=self)
-        self._computed_metrics = self._evaluate_split(source, split)
-        for tracker in trackers:
-            tracker.log_metrics(self._computed_metrics)
-        logger.info(f"Evaluation complete: {self._computed_metrics}")
-        write_metrics_sidecar(self.metrics_sidecar_path, self._computed_metrics, self.experiment_name, self.run_name)
-        capture_log_file(trackers, manifest=manifest, status="success")
+        with ending_the_run(trackers, manifest):
+            self._computed_metrics = self._evaluate_split(source, split)
+            for tracker in trackers:
+                tracker.log_metrics(self._computed_metrics)
+            logger.info(f"Evaluation complete: {self._computed_metrics}")
+            write_metrics_sidecar(
+                self.metrics_sidecar_path, self._computed_metrics, self.experiment_name, self.run_name
+            )
 
     def _evaluate_split(self, source: Any, split: Literal["val", "test"]) -> Dict[str, float]:
         """``Trainer.evaluate`` over one split, translated into the canonical vocabulary.

@@ -100,6 +100,38 @@ def test_fit_runs_end_to_end_and_the_loss_descends() -> None:
     assert len(history["val/mae"]) == 8, "one entry per epoch — what a Trainer's logger would keep"
 
 
+class _EndRecorder:
+    """A tracker as far as a run's ending goes: it writes down the status it was ended with."""
+
+    save_dir = None
+    log_dir = None
+
+    def __init__(self) -> None:
+        self.finalized: Any = None
+
+    def __getattr__(self, name: str) -> Any:
+        return lambda *args, **kwargs: None
+
+    def finalize(self, status: str = "success") -> None:
+        self.finalized = status
+
+
+def test_a_fit_that_raises_ends_the_trackers_run_as_failed(monkeypatch: pytest.MonkeyPatch) -> None:
+    tracker = _EndRecorder()
+    runnable = _mini(train_set=_records(), max_epochs=1)
+    runnable.trackers = [tracker]  # type: ignore[list-item]
+    monkeypatch.setattr(runnable, "_live_trackers", lambda: [tracker])
+    monkeypatch.setattr(runnable, "_log_run_context", lambda trackers: None)
+
+    def failing(*args: Any) -> None:
+        raise RuntimeError("training failed")
+
+    monkeypatch.setattr(runnable, "_after_fit", failing)
+    with pytest.raises(RuntimeError, match="training failed"):
+        runnable.run()
+    assert tracker.finalized == "failed"
+
+
 def test_the_device_brackets_wrap_the_task_initialize() -> None:
     """`run()` resolves the device BEFORE the task's initialize and moves model+loss AFTER."""
     runnable = _mini(train_set=_records(), max_epochs=1)

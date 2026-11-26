@@ -106,8 +106,15 @@ def test_evaluate_scores_the_validation_split() -> None:
 
 def test_an_eval_task_records_the_run() -> None:
     body = inspect.getsource(MlxLoopRunnable._run_eval_task)
-    assert "log_run_context(" in body and "capture_log_file(" in body
+    assert body.index("log_run_context(") < body.index("with ending_the_run(trackers, manifest):")
+    assert body.index("with ending_the_run(trackers, manifest):") < body.index("_evaluate_split(")
     assert "tracker.log_metrics(" in body
+
+
+def test_the_fit_ends_its_run_however_it_ends() -> None:
+    body = inspect.getsource(MlxLoopRunnable.fit)
+    assert body.index("log_run_context(") < body.index("with ending_the_run(trackers, manifest):")
+    assert "capture_log_file(" not in body
 
 
 def test_computed_metrics_raises_before_the_run() -> None:

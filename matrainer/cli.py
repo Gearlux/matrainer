@@ -49,6 +49,7 @@ import os
 import sys
 from typing import Any, Callable, List, Mapping, NamedTuple, Optional, Sequence, Tuple, Union
 
+from confluid import Target, accepts_key
 from liquifai import LiquifyApp
 from loggair import get_logger
 
@@ -131,6 +132,22 @@ def default_dispatch(runnable: Any, task: str) -> None:
     runnable.run()
 
 
+def _verb_task_keys(task: str) -> Callable[[Mapping[str, Any]], Mapping[str, Any]]:
+    """The keys a verb adds to the loaded configuration: ``runnable.task: <task>`` when the runnable's class takes a
+    ``task`` (``confluid.accepts_key``), nothing otherwise. liquifai merges them in before ``--dump-config`` writes
+    the configuration, so the dumped file shows the task the verb runs; a taskless runnable gets nothing — written
+    there, the key would be warned about as an undeclared attribute on every train run. ``default_dispatch`` still
+    forces the task on the built runnable, for a project ``dispatch`` and a runnable built outside the config."""
+
+    def keys(document: Mapping[str, Any]) -> Mapping[str, Any]:
+        runnable = document.get("runnable")
+        if isinstance(runnable, Target) and accepts_key(runnable.target, "task"):
+            return {"runnable.task": task}
+        return {}
+
+    return keys
+
+
 def _verb_command(verb: str, doc: str, dispatch: Callable[[Any, str], None]) -> Callable[[Any], None]:
     """One verb — a factory, never a default-argument closure (liquifai reads the handler's
     SIGNATURE to build the command, so a smuggled loop variable would surface as a ``--_verb``
@@ -159,7 +176,9 @@ def make_trainer_app(
     app = LiquifyApp(name=name, description=description)
     docs = {**DEFAULT_VERB_DOCS, **(verb_docs or {})}
     for verb in VERB_TASKS:
-        app.script_command(name=verb, flow_mode="manual")(_verb_command(verb, docs[verb], dispatch))
+        app.script_command(name=verb, flow_mode="manual", config_keys=_verb_task_keys(VERB_TASKS[verb]))(
+            _verb_command(verb, docs[verb], dispatch)
+        )
 
     if frameworks is not None:
         table = dict(frameworks)

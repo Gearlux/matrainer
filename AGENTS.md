@@ -49,7 +49,8 @@ task semantics. A collate or batch reader written here belongs in recordstream.
 - Backends are DISCOVERED (`discover_backends()` + PEP 562 `__getattr__`), never listed in an
   import list or `__all__`; a new backend is one new file
   (`tests/tracking/test_discovery.py::test_a_new_backend_file_needs_no_edit_to_an_existing_file`).
-  `[tool.aisland] trackers` stays a sibling of `frameworks`. In-tree backends are free and
+  The `tracker` selection (`[tool.aisland.selection.tracker]`, which this project defines) stays a sibling of
+  `framework`. In-tree backends are free and
   self-hostable. §4.
 - Keep all three hookup styles (functions, `TrackingCallback`, `TrackerLogger`); never reimplement
   a `pytorch_lightning` logger. `TrackingCallback` / `keras_tracking_callback` take `runnable=`;
@@ -71,10 +72,34 @@ task semantics. A collate or batch reader written here belongs in recordstream.
 - `matrainer.artifacts` delegates to `LabelMap.save`/`.load` and is a no-op on `None`
   (`tests/test_artifacts.py`).
 
+## The tracking servers as services (`matrainer/services/`)
+
+User choice 2026-10-25: Aim and ClearML moved here from the service manager; MLflow followed 2026-10-28 (user choice:
+its "not installed" message named a `tracker` selection only this project defines). Each is a class behind an `aisland.plugins`
+entry point (`pyproject.toml`) that imports nothing of the manager — it gets a context (`ctx.data_dir`, `ctx.port`,
+`ctx.options`, `ctx.run`, `ctx.read_env`/`write_env`, `ctx.choose_command`, `ctx.fail`, …) — and nothing here is
+imported by `import matrainer`. (`tests/services/`, `::test_the_module_imports_nothing_of_the_service_manager`)
+- None installs its backend: a missing one fails with `_messages.not_installed`, naming
+  `ctx.choose_command("tracker", <name>)` — the chosen trackers plus this one, never this one alone.
+- MLflow: `python -m mlflow server` with this venv's interpreter over `data_dir`'s `mlflow.db` (SQLite) and
+  `artifacts/` (made before the start), ready on `/health`, default port 5005 (`tests/services/test_mlflow_service.py`).
+- Aim: `start` publishes `AIM_REPO` to `.env` (run and UI must share it), passes `--yes`, finds `aim` venv-first;
+  `--repo` (`options`) serves another repository and publishes that one.
+- ClearML vendors nothing and is `supervised = False` (Docker runs it): upstream compose at a release TAG, checked
+  against `COMPOSE_SHA256` (bump both together); the override GENERATED from upstream, second in `-f`; the fixed
+  user in `state/config/apiserver.conf` (0600) before `up`, never `CLEARML__…fixed_users…` env vars; an existing
+  login reused, else the workspace's name and a generated password; minting credentials never raises.
+
 ## Run manifest (§3)
 
 - Every fact lands in the manifest; a native slot is written ALSO, never instead. The base
   `log_manifest` projects `params` via `log_hyperparams`; an override calls `super()` first.
+- The manifest's folder (`provenance._manifest_folder`): the first tracker's `log_dir`; else (a remote-only
+  tracker) the runnable's `output_dir`, beside its checkpoints; else `runs/<experiment>/<run>`. Never a second
+  folder for a run whose trainer has one. `capture_log_file` copies the log into that folder's `logs/` — a copy,
+  never a manifest artifact (the trackers already receive the log), a log already there left alone, a failed copy
+  a debug line (`tests/tracking/test_provenance.py::test_a_remote_only_tracker_puts_the_manifest_in_the_runnables_output_folder`,
+  `::test_a_tracker_with_a_local_folder_keeps_the_manifest_beside_it`, `::test_capture_log_file_copies_the_log_into_the_run_folder`). §3.
 - `log_run_context` is the one entry and captures datasets, models and packages itself; never a
   per-consumer `record_dataset`/`record_model` call. `kind`/`name` come from the URI, so capture
   holds no source-specific code. A capture failure is a debug log, never a raise.
@@ -83,6 +108,15 @@ task semantics. A collate or batch reader written here belongs in recordstream.
   (`tests/tracking/test_provenance.py::test_the_run_is_ended_AFTER_the_artifacts_are_pushed`,
   `::test_capture_log_file_can_upload_without_ending_the_run`; consumer-side
   `test_the_terminal_call_is_the_one_that_ends_the_run`).
+- A trainer's work between `log_run_context` and the run's end runs inside `with ending_the_run(trackers, manifest):`,
+  never before a last-line `capture_log_file(..., status="success")`: a run that raises is ended as `failed`
+  (`interrupted` for a Ctrl-C) with its log file, and the error raised again. Keras calls no callback when a fit
+  raises, and `TensorFlowRunnable.fit` drives the callbacks by hand, so both tell the tracking callback (`end_run`)
+  through `matrainer.keras.trainer.end_tracked_run`
+  (`tests/tracking/test_provenance.py::test_work_that_raises_ends_the_run_as_what_happened_and_raises_again`,
+  `tests/test_torch_loop.py::test_a_fit_that_raises_ends_the_trackers_run_as_failed`,
+  `tests/test_keras_family.py::test_a_fit_that_raises_ends_the_trackers_run`,
+  `::test_a_tensorflow_fit_that_raises_ends_the_trackers_run`).
 - `primary_code()` returns `None` rather than `entries[0]`
   (`tests/tracking/test_manifest.py::test_primary_code_is_none_when_nothing_ties_the_run_to_a_repository`).
 - `capture_code` returns a LIST. `environment_snapshot` keeps a `SECRET_MARKERS` name, redacts the
@@ -148,6 +182,18 @@ task semantics. A collate or batch reader written here belongs in recordstream.
 - MLflow: keep the `_logged_models` memo; names are sanitised labels; read lineage back with
   `client.get_run(id).inputs.model_inputs`, not `search_runs`
   (`tests/tracking/test_mlflow_backend.py::test_a_second_log_manifest_does_not_duplicate_the_models`).
+- MLflow: every param, metric and tag KEY goes through `mlflow_safe_name` — one validator holds all
+  three to a character set, to being readable as a path, and to 250 characters. A walked config path
+  satisfied none of them while confluid's walk bracketed a container step, so one refused name cost the
+  run its whole `params` section; since confluid §34 (2026-10-28) that walk writes `kwargs.source`, so
+  the common case needs no mapping. Keep the rule anyway — it is what MLflow accepts, not what one
+  producer emits (a framework metric `metrics/mAP50-95(B)`, a user's tag key, an older confluid). `[key]`→`.key`, anything else outside `[A-Za-z0-9_\-. :/]`→`_`, slashes
+  dropped only when the name is not canonical as a path, over-length truncated to its TAIL behind an
+  8-char digest; an accepted name is returned unchanged. It is PUBLIC so a backend elsewhere speaking
+  MLflow's dialect applies the rule rather than copying it. The rule lives in the MLflow backend
+  ALONE — Aim, W&B, ClearML, TensorBoard and CSV keep names as written (user choice 2026-10-28). Keep
+  the fake client enforcing MLflow's real key rules; the three rules are pinned to the installed
+  library by `::test_the_name_rules_match_the_installed_mlflow`. §15.
 - W&B: `_add_reference` keeps its own `try`; `expandvars` the URI first; only
   `REFERENCEABLE_SCHEMES` become references
   (`tests/tracking/test_wandb_backend.py::test_an_unresolvable_reference_still_reaches_the_lineage_graph`).
@@ -238,6 +284,10 @@ task semantics. A collate or batch reader written here belongs in recordstream.
   (`tests/test_cli.py::test_the_pre_step_order_is_the_established_one`). `--framework` is
   rewritten to `--scope framework=…`, never appended. A runnable with no `task` runs for `train`
   only; other verbs raise (`::test_a_taskless_runnable_trains_as_is_and_refuses_the_other_verbs`).
+  Each verb's `config_keys=` (`_verb_task_keys`, user choice 2026-10-30) adds `runnable.task: <task>` to the loaded
+  configuration only when `confluid.accepts_key(<runnable's target>, "task")`, so `--dump-config` shows the verb's task
+  and a taskless runnable gets no undeclared-attribute warning; `default_dispatch` keeps forcing it on the built object
+  (`tests/test_cli_verb_task.py`).
   Package roots use `lazy_exports`; an empty extra marks a core name (`tests/test_exports.py`).
 - ONE binary, the `matrainer` console script (user-authorized 2026-08-07, do not re-litigate):
   `train|evaluate|predict <config.yaml>` plus `sweep`, built from `make_trainer_app(frameworks=None)`.
@@ -259,11 +309,24 @@ task semantics. A collate or batch reader written here belongs in recordstream.
 - Releases use the hand-written `release.yml` (scaffold owns only `ci.yml`/`Jenkinsfile*`), with
   recordstream's discipline: an extra may name only a PyPI package (the release resolves every
   extra); a workspace spec on matrainer reads the first pre-release with what that project imports
-  (`>=0.1.0a2` for torpaido and waivefront, which use the model packages; `>=0.1.0a1` elsewhere) and
+  (`>=0.1.0a2` for the projects that use the model packages, torpaido among them; `>=0.1.0a1` elsewhere) and
   rises only when the project starts importing something newer (user choice 2026-10-14; aisland
   `tests/test_workspace_dependency_specs.py` checks each is satisfiable); floors state what the
   suite runs against; README links are absolute
   (`tests/test_docs_links.py`); the newest CHANGELOG entry is the version (`tests/test_packaging.py`).
+- **The README is the quickstart; a feature lives in `docs/<topic>.md` (2026-10-28).** It holds install, a
+  first run with its real output, configuring a tracker, the common-tasks table, the docs index, the
+  environment variables, what lives elsewhere and the dependencies — about 200 lines. A feature section
+  never grows back into it: add the page, add its index row and its common-tasks row in the same change.
+  Links from the README into the repo are ABSOLUTE (it is the PyPI landing page), links between
+  `docs/*.md` pages are relative — both pinned by `tests/test_docs_links.py`, which also fails a docs page
+  missing from the index. Each page names its runnable twin under its intro — nine of ten do, and
+  `trainer-api` names TWO (the same task mixin composed onto the loop base and the Lightning one,
+  user choice 2026-10-28). `backends` has none BY DESIGN — it compares what each backend costs to
+  run, which needs a server per backend — and its intro says so, naming the suites that pin its
+  checkable claims instead (user choice 2026-10-28: the wording, without a test over the table). A twin that would need a framework, a server or a long run uses the project's own
+  seam instead — the sweep twin replaces the per-cell command with a stub via the spec's
+  `command:` key, so it drives the real matrix in under a second (`TASKS.md`).
 - CI runs `mypy .` here with only its extras and stricter flags: list every extra-gated import CI
   lacks in `[[tool.mypy.overrides]] ignore_missing_imports`, and reproduce CI in a throwaway
   Python 3.12 venv before pushing.

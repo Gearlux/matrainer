@@ -42,6 +42,7 @@ from matrainer.tracking.base import Tracker, TrackerGroup
 from matrainer.tracking.manifest import RunManifest, RunStatus
 from matrainer.tracking.provenance import (
     capture_log_file,
+    ending_the_run,
     get_git_commit_hash,
     included_config_paths,
     log_run_context,
@@ -76,6 +77,7 @@ __all__ = [
     "start_system_metrics_monitor",
     "capture_log_file",
     "discover_backends",
+    "ending_the_run",
     "get_git_commit_hash",
     "included_config_paths",
     "log_run_context",

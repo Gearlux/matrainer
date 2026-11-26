@@ -40,7 +40,7 @@ from matrainer.artifacts import write_metrics_sidecar
 from matrainer.metric_names import MetricNames, as_metric_names
 from matrainer.runnable import TrainerRunnable
 from matrainer.tracking.base import Tracker
-from matrainer.tracking.provenance import capture_log_file, log_run_context
+from matrainer.tracking.provenance import ending_the_run, log_run_context
 
 logger = get_logger(__name__)
 
@@ -342,33 +342,37 @@ class MlxLoopRunnable(TrainerRunnable):
         trackers = self._live_trackers()
         names = as_metric_names(self.metric_names)
         manifest = log_run_context(trackers, runnable=self)
-        optimizer = self._optimizer()
-        step = self._make_step()
-        train_seq = self._sequence(self.train_set, shuffle=True)
-        val_seq = self._sequence(self.val_set) if self.val_set is not None else None
+        with ending_the_run(trackers, manifest):
+            optimizer = self._optimizer()
+            step = self._make_step()
+            train_seq = self._sequence(self.train_set, shuffle=True)
+            val_seq = self._sequence(self.val_set) if self.val_set is not None else None
 
-        logs: Dict[str, float] = {}
-        for epoch in range(self.max_epochs):
-            logs = self._train_epoch(train_seq, step, optimizer, epoch)
-            if val_seq is not None:
-                logs.update(self._eval_pass(val_seq, "val", epoch))
-            # A `fit()` would have reshuffled for us; a hand-written loop has to. Forgetting
-            # it is INVISIBLE — training just runs on one fixed row order forever.
-            train_seq.on_epoch_end()
-            for callback in self.callbacks or []:
-                flow(callback)(epoch, logs)
-            translated = names(logs)
-            for tracker in trackers:
-                tracker.log_metrics(translated, step=epoch)
-            for key, value in translated.items():
-                self._history.setdefault(key, []).append(value)
-            logger.info(f"epoch {epoch + 1}/{self.max_epochs}: " + ", ".join(f"{k}={v:.4f}" for k, v in logs.items()))
+            logs: Dict[str, float] = {}
+            for epoch in range(self.max_epochs):
+                logs = self._train_epoch(train_seq, step, optimizer, epoch)
+                if val_seq is not None:
+                    logs.update(self._eval_pass(val_seq, "val", epoch))
+                # A `fit()` would have reshuffled for us; a hand-written loop has to. Forgetting
+                # it is INVISIBLE — training just runs on one fixed row order forever.
+                train_seq.on_epoch_end()
+                for callback in self.callbacks or []:
+                    flow(callback)(epoch, logs)
+                translated = names(logs)
+                for tracker in trackers:
+                    tracker.log_metrics(translated, step=epoch)
+                for key, value in translated.items():
+                    self._history.setdefault(key, []).append(value)
+                logger.info(
+                    f"epoch {epoch + 1}/{self.max_epochs}: " + ", ".join(f"{k}={v:.4f}" for k, v in logs.items())
+                )
 
-        self._computed_metrics = names(self._fit_scores(logs))
-        logger.info(f"Training complete: {self._computed_metrics}")
-        self._fit_epilogue()
-        write_metrics_sidecar(self.metrics_sidecar_path, self._computed_metrics, self.experiment_name, self.run_name)
-        capture_log_file(trackers, manifest=manifest, status="success")
+            self._computed_metrics = names(self._fit_scores(logs))
+            logger.info(f"Training complete: {self._computed_metrics}")
+            self._fit_epilogue()
+            write_metrics_sidecar(
+                self.metrics_sidecar_path, self._computed_metrics, self.experiment_name, self.run_name
+            )
 
     def evaluate(self) -> None:
         """Score the VALIDATION split — the ``evaluate`` / ``test`` split is the only difference."""
@@ -387,12 +391,14 @@ class MlxLoopRunnable(TrainerRunnable):
         """One eval entry point's body: score, put it on the trackers, record the run."""
         trackers = self._live_trackers()
         manifest = log_run_context(trackers, runnable=self)
-        self._computed_metrics = self._evaluate_split(source, split)
-        for tracker in trackers:
-            tracker.log_metrics(self._computed_metrics)
-        logger.info(f"Evaluation complete: {self._computed_metrics}")
-        write_metrics_sidecar(self.metrics_sidecar_path, self._computed_metrics, self.experiment_name, self.run_name)
-        capture_log_file(trackers, manifest=manifest, status="success")
+        with ending_the_run(trackers, manifest):
+            self._computed_metrics = self._evaluate_split(source, split)
+            for tracker in trackers:
+                tracker.log_metrics(self._computed_metrics)
+            logger.info(f"Evaluation complete: {self._computed_metrics}")
+            write_metrics_sidecar(
+                self.metrics_sidecar_path, self._computed_metrics, self.experiment_name, self.run_name
+            )
 
     def _evaluate_split(self, source: Any, split: Literal["val", "test"]) -> Dict[str, float]:
         """One split through the eval pass, translated into the canonical vocabulary."""

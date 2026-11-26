@@ -30,7 +30,7 @@ BEFORE ``model.fit`` where they touch a tracker (the run has ENDED when ``fit`` 
 keeps only local file writes after.
 """
 
-from typing import Any, Dict, Literal, cast
+from typing import Any, Dict, Iterable, Literal, cast
 
 import numpy as np
 from confluid import configurable, flow
@@ -41,10 +41,22 @@ from recordstream.runnable import run_entrypoint
 from matrainer.artifacts import write_metrics_sidecar
 from matrainer.keras.runnable import KerasTrainerRunnable, keras_backend
 from matrainer.metric_names import as_metric_names
+from matrainer.tracking.provenance import failure_status
 
 logger = get_logger(__name__)
 
-__all__ = ["KerasRunnable"]
+__all__ = ["KerasRunnable", "end_tracked_run"]
+
+
+def end_tracked_run(callbacks: Iterable[Any], error: BaseException) -> None:
+    """End the tracker run of a fit that raised ``error``, on every callback that can (``end_run``).
+
+    The tracking callback ends its run in ``on_train_end``, which a fit that raises never reaches.
+    """
+    for callback in callbacks:
+        end_run = getattr(callback, "end_run", None)
+        if end_run is not None:
+            end_run(failure_status(error))
 
 
 @configurable(validate=False)
@@ -133,13 +145,19 @@ class KerasRunnable(KerasTrainerRunnable):
         # through the global `random` module, so leaving it on makes the trajectory depend on how
         # many draws ambient code consumed — measured: mlflow's telemetry client draws one
         # `random.randint` at run creation, which alone shifted a seeded run's final loss.
-        history = self.model.fit(
-            train_seq,
-            validation_data=val_seq,
-            epochs=self.max_epochs,
-            callbacks=self._callbacks(),
-            shuffle=False,
-        )
+        callbacks = self._callbacks()
+        try:
+            history = self.model.fit(
+                train_seq,
+                validation_data=val_seq,
+                epochs=self.max_epochs,
+                callbacks=callbacks,
+                shuffle=False,
+            )
+        except BaseException as error:
+            # Keras calls no callback when its fit raises: the run is ended here, as what happened.
+            end_tracked_run(callbacks, error)
+            raise
         self._history = {k: [float(x) for x in v] for k, v in history.history.items()}
         final = self._fit_scores({k: v[-1] for k, v in self._history.items()})
         self._computed_metrics = as_metric_names(self.metric_names)(final, source="keras")

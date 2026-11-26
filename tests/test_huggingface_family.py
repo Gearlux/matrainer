@@ -159,7 +159,10 @@ def test_fit_sequences_warm_provenance_train_scores_and_terminal_capture() -> No
     assert body.index("log_run_context(") < body.index("trainer.train()")
     assert body.index("trainer.train()") < body.index("_fit_val_scores(")
     assert body.index("_log_trainer_history(") < body.index("_after_fit(")
-    assert body.index("_after_fit(") < body.index("capture_log_file(")
+    # The run is ended by `ending_the_run`, as failed when anything inside raises.
+    assert body.index("log_run_context(") < body.index("with ending_the_run(trackers, manifest):")
+    assert body.index("with ending_the_run(trackers, manifest):") < body.index("trainer.train()")
+    assert "capture_log_file(" not in body
     assert "tracker.log_metrics(self._computed_metrics)" in body
 
 
@@ -180,7 +183,8 @@ def test_an_eval_task_records_the_run() -> None:
     """The distilaide sweep lesson: an eval run without the tracker + manifest wiring shows a
     blank row and gets relabelled `interrupted` by the atexit hook."""
     body = inspect.getsource(HuggingFaceRunnable._run_eval_task)
-    assert "log_run_context(" in body and "capture_log_file(" in body
+    assert body.index("log_run_context(") < body.index("with ending_the_run(trackers, manifest):")
+    assert body.index("with ending_the_run(trackers, manifest):") < body.index("_evaluate_split(")
     assert "tracker.log_metrics(" in body
 
 

@@ -4,6 +4,75 @@ All notable changes to this project are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and the versioning is
 [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+## [0.1.0a3] — 2026-11-26
+
+### Added
+- **`matrainer.tracking.ending_the_run(trackers, manifest)`** — a context manager around a run's work: work that
+  finishes ends the run as `success`, work that raises ends it as `failed` (`interrupted` for a Ctrl-C) and the error
+  is raised again. Both go through `capture_log_file`, so a failed run keeps its log file
+  ([`docs/run-manifest.md`](https://github.com/Gearlux/matrainer/blob/main/docs/run-manifest.md)).
+
+### Fixed
+- **A run that raises is ended on its trackers** — the torch loop, fastai, Hugging Face, JAX and MLX trainers,
+  `KerasRunnable` and `TensorFlowRunnable` ended a run only on their last line, so a training that raised stayed "running" on the tracker for
+  ever, without its log file. They now end it as `failed` or `interrupted`.
+- **A run that fails on a Mac ends** — the Apple-GPU sampler's thread is a daemon its exit hook stops and joins. As a
+  non-daemon thread it kept the process alive for ever when a run raised before its tracker was finalized: Python
+  joins such threads before it runs exit hooks.
+
+### Changed
+- **matrainer requires liquifai 0.4.0 and confluid 0.5.0** (`liquifai>=0.4.0`, was `>=0.3.0`; `confluid>=0.5.0`, was
+  `>=0.4.1`): every verb passes `script_command(config_keys=...)`, new in liquifai 0.4.0, which itself requires
+  confluid 0.5.0.
+- **The licence is now the PolyForm Noncommercial License 1.0.0** (`LICENSE`, `pyproject.toml`): free for personal, academic and other noncommercial use; commercial use needs a separate licence from the author. It was MIT; the versions released under MIT keep that licence.
+- **`<project> evaluate cfg.yaml --dump-config` shows the task the verb runs** — `task: test` (`predict` for
+  `predict`), where it showed the config's own `task:`. Each verb adds `runnable.task` to the configuration when the
+  runnable's class takes a `task`; a runnable without one gets nothing added, and the other verbs still refuse it.
+
+### Documentation
+- **Four docs pages gained the runnable example that proves them** — `examples/metrics.py` (the metric-spec
+  rules, the batch-averaging error measured at ~5 points of macro-F1, the name translation),
+  `examples/run_manifest.py` (a manifest written and read back, `$DATA_ROOT` contraction included),
+  `examples/project_cli.py` (an app from a frameworks table, the `--framework` rewrite, the lazy package
+  root) and `examples/model_package.py` (a package written `copy` and `reference`, read back, its weights in
+  the slot). Those four run with no training framework; `examples/lightning_tracking.py` adds a real
+  one-epoch fit showing a `ModelCheckpoint` with no `dirpath` landing under the tracker's `save_dir`
+  rather than the launch directory, the logged metrics arriving, and a run that raises recorded as
+  `failed`, and `examples/torch_helpers.py` loads a checkpoint in each of its three on-disk shapes, has a
+  state dict refused by `TorchModelFile`, and shows `resolve_device('cpu')` giving CPU on a GPU machine.
+  `examples/trainer_api_loop.py` and `examples/trainer_api_lightning.py` compose ONE task mixin onto two
+  machinery bases, which is the four-layer claim made checkable: 19 constructor slots come from the shared
+  layers, the loop base adds `checkpoint_dir` / `device` / `grad_clip`, and the Lightning base adds none.
+  `examples/sweep.py` drives a four-row sweep — one backend absent, one cell dying — through to the folded
+  comparison table, with the spec's `command:` key replacing the per-cell training with a stub, so the real
+  driver, the failure isolation, the tracker-counted experiment name and the report all run in well under
+  a second. CI runs them all, and nine of the ten pages link to a twin; `backends.md` says it has none by
+  design, because comparing what each backend costs to run needs a server per backend.
+- **The README is a quickstart and each topic is its own page.** It was 1339 lines; it is now install, a
+  first run with its output, how to configure a tracker, a common-tasks table and an index — and the ten
+  feature sections moved, unchanged, to `docs/`: `tracking.md`, `backends.md`, `run-manifest.md`,
+  `trainer-api.md`, `lightning.md`, `metrics.md`, `torch.md`, `model-packages.md`, `cli.md`, `sweeps.md`.
+  Nothing was dropped, so a link into a README section now goes to that topic's page.
+
+### Tracking
+- **The MLflow tracking server is a workspace service of this package** (`aisland mlflow start`), beside
+  Aim and ClearML: `mlflow server` over a SQLite store and an artifact folder in the service's data folder,
+  on port 5005, ready once `/health` answers. Without `mlflow` installed it names the command that adds it to
+  the `tracker` selection.
+- **`MlflowTracker` logs parameter, metric and tag names MLflow accepts** — every key goes through the new
+  public `matrainer.tracking.mlflow_backend.mlflow_safe_name`: `[key]` becomes `.key` (so the config walk's
+  `kwargs[source].Target.target` lands as `kwargs.source.Target.target` and `callbacks[0].patience` as
+  `callbacks.0.patience`), any other character outside `[A-Za-z0-9_\-. :/]` becomes `_`, a name that is not
+  canonical as a path loses its slashes, and one over 250 characters keeps its tail behind a digest. A name
+  MLflow already accepts is unchanged. Previously one bracketed key made `log_hyperparams` — and the
+  `log_manifest` that projects it — raise, so the run lost its whole `params` section.
+- **A run tracked only on a server keeps its manifest beside its checkpoints**: when the first tracker keeps
+  no local folder, `log_run_context` writes `manifest.yaml`, `config/final.yaml` and
+  `environment/requirements.txt` into the runnable's `output_dir` instead of `runs/<experiment>/<run>`.
+- **`capture_log_file` copies the run's log into the run folder's `logs/`**, beside the manifest.
+
 ## [0.1.0a2] — 2026-10-15
 
 ### Trainers

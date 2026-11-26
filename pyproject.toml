@@ -5,11 +5,11 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "matrainer"
-version = "0.1.0a2"
+version = "0.1.0a3"
 description = "Experiment tracking for any training platform (MLflow / TensorBoard / CSV / W&B)."
 readme = "README.md"
 authors = [{name = "Gert Behiels"}]
-license = "MIT"
+license = "PolyForm-Noncommercial-1.0.0"
 license-files = ["LICENSE"]
 classifiers = [
     "Development Status :: 3 - Alpha",
@@ -27,14 +27,16 @@ classifiers = [
 # library — those live behind the extras below, each imported lazily (matrainer._imports.require).
 # It is not small on disk: recordstream is core (the runnable base and the label-map artifacts
 # import it) and brings its data stack — measured 2026-09-26, a bare install is 65 packages / 457 MB.
-# Floors are what the suite actually runs against — measured 2026-10-14 in a clean Python 3.12 venv:
-# the 0.1.0a2 wheel with every workspace dependency AT its floor (liquifai 0.3.0, loggair 0.2.0,
-# confluid 0.4.1, recordstream 0.1.0a3) and CI's extras, from PyPI alone (1015 passed, 4 skipped).
+# Floors are what the suite actually runs against — measured 2026-11-26 in a clean Python 3.12 venv:
+# the 0.1.0a3 checkout with every workspace dependency AT its floor (liquifai 0.4.0, loggair 0.2.0,
+# confluid 0.5.0, recordstream 0.1.0a3) and CI's extras, from PyPI alone (1166 passed, 2 skipped).
 dependencies = [
-    "liquifai>=0.3.0",
+    # 0.4.0 is the first liquifai with `script_command(config_keys=...)`, which every verb of
+    # `make_trainer_app` passes: against 0.3.x the app fails to build with a TypeError.
+    "liquifai>=0.4.0",
     "loggair>=0.2.0",
-    # recordstream 0.1.0a3 requires confluid>=0.4.1, so nothing older can be installed beside it.
-    "confluid>=0.4.1",
+    # liquifai 0.4.0 requires confluid>=0.5.0, so nothing older can be installed beside it.
+    "confluid>=0.5.0",
     # recordstream ships as pre-releases (0.1.0aN). Under PEP 440 a plain `>=0.1.0` EXCLUDES every
     # pre-release of 0.1.0, so it would resolve to nothing. 0.1.0a3 is the first with
     # `recordstream.flow.subgraph`, which the model packages import.
@@ -127,6 +129,13 @@ dev = [
 # `python -m matrainer.sweep` keeps working.
 matrainer = "matrainer.console:main"
 
+# The tracking servers as workspace services (`aisland mlflow …`, `aisland aim …`, `aisland clearml …`): classes that
+# import nothing of the service manager, which finds them here and hands them a context (matrainer/services/).
+[project.entry-points."aisland.plugins"]
+mlflow = "matrainer.services.mlflow_service:MLflow"
+aim = "matrainer.services.aim_service:Aim"
+clearml = "matrainer.services.clearml_service:ClearML"
+
 [project.entry-points."confluid.configurables"]
 # Light root: the tracking backends, run-name helper, and checkpoint policies.
 matrainer = "matrainer"
@@ -145,19 +154,24 @@ matrainer-model-package = "matrainer.model_package"
 # pytorch_lightning — discovery must warn-and-continue on a light install without the [lightning] extra.
 matrainer-lightning = "matrainer.lightning.configurables"
 
-# Which of this project's extras belong to each aisland selection axis. Selecting a name here
-# is what makes `aisland setup` add the matching extra to this project's install.
+# The two aisland selections this project DEFINES (the table with `question` asks it; every project's `choices` are
+# its menu, each an extra of its own). Choosing a name (`aisland setup` asks, `aisland workspace configure framework
+# set …` changes it) adds the matching extra to the install of every project that offers it.
 #
-# TWO SIBLING AXES, deliberately never merged: `frameworks` is what a machine TRAINS WITH,
-# `trackers` is where its results GO. They are unrelated choices, and folding the backends into
-# `frameworks` would install a tracking client because someone picked a training engine.
+# TWO SIBLING SELECTIONS, deliberately never merged: `framework` is what a machine TRAINS WITH, `tracker` is where its
+# results GO. They are unrelated choices, and folding the backends into `framework` would install a tracking client
+# because someone picked a training engine.
 #
-# `frameworks` lists the per-framework TRACKING helpers (matrainer.lightning / .keras).
-# `trackers` lists the Tracker backends; `CsvTracker` is absent on purpose — it is stdlib-only,
+# `framework` offers the per-framework TRACKING helpers (matrainer.lightning / .keras).
+# `tracker` offers the Tracker backends; `CsvTracker` is absent on purpose — it is stdlib-only,
 # always available, and has no extra to select.
-[tool.aisland]
-frameworks = ["torch", "lightning", "keras", "tensorflow"]
-trackers = ["mlflow", "tensorboard", "aim", "clearml", "wandb"]
+[tool.aisland.selection.framework]
+question = "Which ML frameworks should this machine install?"
+choices = ["torch", "lightning", "keras", "tensorflow"]
+
+[tool.aisland.selection.tracker]
+question = "Which experiment-tracking backends should this machine install?"
+choices = ["mlflow", "tensorboard", "aim", "clearml", "wandb"]
 
 [tool.setuptools.packages.find]
 where = ["."]

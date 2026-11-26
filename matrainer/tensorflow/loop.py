@@ -55,6 +55,7 @@ from recordstream.runnable import RunnableTask, run_entrypoint  # noqa: E402
 
 from matrainer.artifacts import write_metrics_sidecar  # noqa: E402
 from matrainer.keras.runnable import KerasMetric, KerasOptimizer, KerasTrainerRunnable  # noqa: E402
+from matrainer.keras.trainer import end_tracked_run  # noqa: E402
 from matrainer.metric_names import MetricNames, as_metric_names  # noqa: E402
 from matrainer.metric_slots import merge_metric_specs  # noqa: E402
 from matrainer.tracking.base import Tracker  # noqa: E402
@@ -340,22 +341,29 @@ class TensorFlowRunnable(KerasTrainerRunnable):
         # trained under this CallbackList for months in two projects).
         callbacks = keras.callbacks.CallbackList(self._callbacks(), add_history=True, model=self.model)
         callbacks.set_params({"epochs": self.max_epochs, "steps": len(sequence), "verbose": 0})
-        callbacks.on_train_begin()
-        self._before_fit()
+        try:
+            callbacks.on_train_begin()
+            self._before_fit()
 
-        logs: Dict[str, float] = {}
-        for epoch in range(self.max_epochs):
-            callbacks.on_epoch_begin(epoch)
-            logs = self._run_epoch(train_data, train_step, callbacks)
-            if val_data is not None:
-                logs.update({f"val_{k}": v for k, v in self._run_epoch(val_data, eval_step, split="val").items()})
-            callbacks.on_epoch_end(epoch, logs)
-            # The per-epoch reshuffle `fit()` would have done. Forgetting it is INVISIBLE —
-            # the run trains every epoch on the same row order.
-            sequence.on_epoch_end()
-            for key, value in logs.items():
-                self._history.setdefault(key, []).append(float(value))
-            logger.info(f"epoch {epoch + 1}/{self.max_epochs}: " + ", ".join(f"{k}={v:.4f}" for k, v in logs.items()))
+            logs: Dict[str, float] = {}
+            for epoch in range(self.max_epochs):
+                callbacks.on_epoch_begin(epoch)
+                logs = self._run_epoch(train_data, train_step, callbacks)
+                if val_data is not None:
+                    logs.update({f"val_{k}": v for k, v in self._run_epoch(val_data, eval_step, split="val").items()})
+                callbacks.on_epoch_end(epoch, logs)
+                # The per-epoch reshuffle `fit()` would have done. Forgetting it is INVISIBLE —
+                # the run trains every epoch on the same row order.
+                sequence.on_epoch_end()
+                for key, value in logs.items():
+                    self._history.setdefault(key, []).append(float(value))
+                logger.info(
+                    f"epoch {epoch + 1}/{self.max_epochs}: " + ", ".join(f"{k}={v:.4f}" for k, v in logs.items())
+                )
+        except BaseException as error:
+            # The loop drives the callbacks by hand, so a raise skips `on_train_end`: the run is ended here.
+            end_tracked_run(callbacks.callbacks, error)
+            raise
         callbacks.on_train_end(logs)
 
         final = self._fit_scores({k: v[-1] for k, v in self._history.items()})

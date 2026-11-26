@@ -175,9 +175,11 @@ class MpsMetricsSampler:
     come from ``torch.mps``; six system-level scalars come from the inlined IOKit
     ``PerformanceStatistics`` read. A no-op when MPS/torch is unavailable.
 
-    The thread is **non-daemon** and an ``atexit`` hook also signals stop — both
-    prevent the sampler from touching ``torch.mps`` / IOKit / MLflow C state during
-    interpreter teardown (which segfaults on macOS).
+    The thread is a **daemon** and an ``atexit`` hook stops and joins it, so the sampler
+    never touches ``torch.mps`` / IOKit / MLflow C state during interpreter teardown (which
+    segfaults on macOS). It must be a daemon for that hook to run at all: Python joins every
+    non-daemon thread BEFORE its exit hooks, so a run that failed without calling
+    :meth:`stop` never ended.
 
     Args:
         mlflow_client: A live ``mlflow.tracking.MlflowClient`` to push to.
@@ -250,7 +252,7 @@ class MpsMetricsSampler:
         if not _mps_available() or self._run_id is None or self._client is None:
             return
         self._stop_event.clear()
-        self._thread = threading.Thread(target=self._record_loop, name="MPSMetricsSampler", daemon=False)
+        self._thread = threading.Thread(target=self._record_loop, name="MPSMetricsSampler", daemon=True)
         self._register_atexit_stop()
         self._thread.start()
         logger.info(f"MPS metrics sampler started for run {self._run_id} (interval={self.sample_interval_s}s).")

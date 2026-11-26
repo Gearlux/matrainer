@@ -1,5 +1,7 @@
 """Tests for MlflowTracker with mlflow mocked via sys.modules injection."""
 
+import posixpath
+import re
 import sys
 import types
 from pathlib import Path
@@ -7,7 +9,12 @@ from typing import Any, List
 
 import pytest
 
-from matrainer.tracking.mlflow_backend import MlflowTracker
+from matrainer.tracking.mlflow_backend import MAX_NAME_LENGTH, MlflowTracker, _is_path_ambiguous, mlflow_safe_name
+
+#: MLflow's own key rules, which `_FakeClient` below enforces so a mocked test cannot pass on a
+#: name the real library refuses. Pinned to the installed MLflow by
+#: `test_the_name_rules_match_the_installed_mlflow`.
+_MLFLOW_KEY_CHARACTERS = re.compile(r"^[/\w.\- :]*$")
 
 #: The standard tag NAMES, verified against the installed MLflow in
 #: ``test_the_standard_tag_names_match_the_installed_mlflow`` — so the fakes here cannot
@@ -46,6 +53,18 @@ class _FakeRun:
         self.info = types.SimpleNamespace(run_id=run_id)
 
 
+def _require_mlflow_key(name: Any) -> str:
+    """Refuse ``name`` exactly as MLflow does — the fake is held to the real library's rules."""
+    if not isinstance(name, str) or not _MLFLOW_KEY_CHARACTERS.match(name):
+        raise ValueError(f"Invalid value {name!r} for parameter 'key' supplied: Names may only contain …")
+    canonical = posixpath.normpath(name)
+    if canonical != name or canonical == "." or canonical.startswith(("..", "/")):
+        raise ValueError(f"Invalid value {name!r} for parameter 'key' supplied: … must not resolve to other names")
+    if len(name) > 250:
+        raise ValueError("'Param key' exceeds the maximum length of 250 characters")
+    return name
+
+
 class _FakeClient:
     """Records calls; stands in for mlflow.tracking.MlflowClient."""
 
@@ -53,6 +72,7 @@ class _FakeClient:
 
     def __init__(self, tracking_uri: Any = None) -> None:
         self.tracking_uri = tracking_uri
+        self.created_tags: dict = {}
         self.params: dict = {}
         self.metrics: List[tuple] = []
         self.tags: dict = {}
@@ -71,16 +91,18 @@ class _FakeClient:
         return "exp-1"
 
     def create_run(self, experiment_id: str, run_name: str, tags: Any = None) -> _FakeRun:
+        # `create_run` is the one call that does NOT validate a key (measured against mlflow 3.15).
+        self.created_tags = dict(tags or {})
         return _FakeRun("run-42")
 
     def log_param(self, run_id: str, key: str, value: Any) -> None:
-        self.params[key] = value
+        self.params[_require_mlflow_key(key)] = value
 
     def log_metric(self, run_id: str, key: str, value: float, step: int = 0, **kw: Any) -> None:
-        self.metrics.append((key, value, step))
+        self.metrics.append((_require_mlflow_key(key), value, step))
 
     def set_tag(self, run_id: str, key: str, value: str) -> None:
-        self.tags[key] = value
+        self.tags[_require_mlflow_key(key)] = value
 
     def log_artifact(self, run_id: str, path: str, artifact_dir: Any = None) -> None:
         self.artifacts.append((path, artifact_dir))
@@ -566,3 +588,172 @@ def test_a_resilient_tracker_replays_the_metric_mlflow_could_not_send(
     monkeypatch.setattr(client, "log_metric", sending)
     wrapped.log_metrics({"loss": 0.25}, step=2)
     assert [step for _, _, step in client.metrics] == [0, 1, 2] and wrapped.pending == []
+
+
+# --- parameter / metric / tag names (mlflow_safe_name) ---------------------------------------
+#
+# MLflow holds a key to three rules at once: a character set, readability as a path, and a
+# length cap. Each example below was measured against a real store BEFORE the mapping existed
+# (refused) and after it (accepted); `test_the_name_rules_match_the_installed_mlflow` is what
+# keeps that measurement honest as MLflow moves.
+
+#: `(name the caller logs, name MLflow receives)`. The first three were refused outright before
+#: `mlflow_safe_name`; the last two were already accepted and must stay byte-identical.
+NAME_MAPPINGS = [
+    ("x.kwargs[source].y", "x.kwargs.source.y"),
+    ("callbacks[0].patience", "callbacks.0.patience"),
+    ("model<v2>", "model_v2_"),
+    ("RFDETRDetector.epochs", "RFDETRDetector.epochs"),
+    ("a:b-c d/e_f", "a:b-c d/e_f"),
+]
+
+
+def _real_tracker(tmp_path: Any, **kw: Any) -> MlflowTracker:
+    """A tracker on a real sqlite-backed store — MLflow 3.x refuses the file store outright."""
+    return MlflowTracker(
+        experiment_name="names",
+        run_name="r",
+        tracking_uri=f"sqlite:///{tmp_path}/mlflow.db",
+        log_system_metrics=False,
+        **kw,
+    )
+
+
+@pytest.mark.parametrize(("logged", "received"), NAME_MAPPINGS)
+def test_each_name_rule_maps_the_name_it_is_for(logged: str, received: str) -> None:
+    assert mlflow_safe_name(logged) == received
+
+
+def test_a_config_walk_parameter_name_reaches_a_real_mlflow(tmp_path: Any) -> None:
+    """The defect this exists for: a dict in the configuration cost the run its WHOLE params section.
+
+    A bracketed step in one name was enough: MLflow refused it, `log_hyperparams` raised,
+    `log_manifest` raised with it and a `ResilientTracker` dropped the call at WARNING.
+    `raise_errors=True` is what makes a surviving refusal fail here.
+
+    `config_params` no longer brackets a container step (confluid writes `kwargs.source` since its
+    record 34), so these inputs now stand for any producer that is not bound by MLflow's rules — a
+    framework's metric name, a user's tag key, a name from an older confluid.
+    """
+    pytest.importorskip("mlflow")
+    tracker = _real_tracker(tmp_path, raise_errors=True)
+
+    tracker.log_hyperparams({logged: 1 for logged, _ in NAME_MAPPINGS})
+
+    params = tracker.experiment.get_run(tracker.run_id).data.params
+    assert sorted(params) == sorted(received for _, received in NAME_MAPPINGS)
+
+
+def test_a_metric_and_a_tag_name_are_held_to_the_same_rule(tmp_path: Any) -> None:
+    """Not a params-only restriction: one MLflow validator serves parameters, metrics AND tags.
+
+    So a metric a training framework names `val/acc@1`, and a tag named from a configuration
+    key, land through the same mapping rather than being refused one call at a time.
+    """
+    pytest.importorskip("mlflow")
+    tracker = _real_tracker(tmp_path, raise_errors=True)
+
+    tracker.log_metrics({"val/acc@1": 0.5}, step=0)
+    tracker.set_tags({"model<v2>": "x"})
+
+    run = tracker.experiment.get_run(tracker.run_id)
+    assert run.data.metrics["val/acc_1"] == 0.5
+    assert run.data.tags["model_v2_"] == "x"
+
+
+def test_a_path_shaped_dict_key_loses_its_slashes(tmp_path: Any) -> None:
+    """MLflow's second rule: a key must ALREADY be canonical as a posix path.
+
+    `datasets[$DATA_ROOT/set/]` passes the character rule once `$` becomes `_`, and is still
+    refused — `must not resolve to other names` — because a trailing slash does not survive
+    normalisation. Each slash becomes `_` (the trailing one too, rather than being dropped: a
+    name keeps every step it had, so two keys cannot collapse into one), and only in that case —
+    `a:b-c d/e_f` above keeps its own slash.
+    """
+    pytest.importorskip("mlflow")
+    tracker = _real_tracker(tmp_path, raise_errors=True)
+
+    tracker.log_hyperparams({"datasets[$DATA_ROOT/set/]": 1})
+
+    assert "datasets._DATA_ROOT_set_" in tracker.experiment.get_run(tracker.run_id).data.params
+
+
+@pytest.mark.parametrize("name", ["", ".", "..", "..x", "/abs/x", "a//b", "a/./b", "x/.."])
+def test_a_name_that_is_only_path_syntax_still_becomes_a_usable_key(name: str) -> None:
+    """Nothing degenerate escapes: each of these is refused by MLflow as written."""
+    safe = mlflow_safe_name(name)
+    assert safe and not _is_path_ambiguous(safe)
+
+
+def test_a_long_name_keeps_its_tail_behind_a_digest(tmp_path: Any) -> None:
+    """Over 250 characters MLflow refuses the key for a THIRD reason, with its own message.
+
+    The tail is what is kept because the leaf setting is what identifies a hyperparameter; the
+    digest is what keeps two deep paths that end the same way from colliding into one parameter.
+    """
+    pytest.importorskip("mlflow")
+    deep = "Runnable." + ".".join(f"level_{i}" for i in range(40))
+    sibling = "Other." + ".".join(f"level_{i}" for i in range(40))
+    assert len(deep) > MAX_NAME_LENGTH and deep[-60:] == sibling[-60:]
+
+    first, second = mlflow_safe_name(deep), mlflow_safe_name(sibling)
+    assert len(first) == MAX_NAME_LENGTH and first.endswith("level_39")
+    assert first != second  # the digest is what separates them
+
+    tracker = _real_tracker(tmp_path, raise_errors=True)
+    tracker.log_hyperparams({deep: 1, sibling: 2})
+    assert sorted(tracker.experiment.get_run(tracker.run_id).data.params) == sorted([first, second])
+
+
+def test_the_name_rules_match_the_installed_mlflow() -> None:
+    """Pin the three rules to MLflow's own validators, so an upstream change fails HERE.
+
+    Asserts the property that matters rather than equality of the rules: every name the mapping
+    produces is one the installed MLflow accepts. `mlflow_safe_name`'s character set is
+    deliberately narrower than MLflow's (ASCII, where its `\\w` admits any Unicode letter), so
+    equality would fail while the contract holds.
+    """
+    pytest.importorskip("mlflow")
+    from mlflow.utils.validation import MAX_ENTITY_KEY_LENGTH, path_not_unique, validate_param_and_metric_name
+
+    assert MAX_NAME_LENGTH == MAX_ENTITY_KEY_LENGTH
+    nasty = [logged for logged, _ in NAME_MAPPINGS] + [
+        "",
+        ".",
+        "..",
+        "..x",
+        "/abs/x",
+        "a//b",
+        "a/./b",
+        "x/..",
+        "datasets[$DATA_ROOT/set/]",
+        "val/acc@1",
+        "metrics/mAP50-95(B)",
+        "héllo",
+        "x" * 400,
+        "kwargs[a/./b]",
+        "[0]",
+        "a\nb",
+        "a\tb",
+        "100%",
+        'say "no"',
+    ]
+    for name in nasty:
+        safe = mlflow_safe_name(name)
+        assert validate_param_and_metric_name(safe), f"{name!r} -> {safe!r} fails the character rule"
+        assert not path_not_unique(safe), f"{name!r} -> {safe!r} fails the path rule"
+        assert 0 < len(safe) <= MAX_ENTITY_KEY_LENGTH, f"{name!r} -> {safe!r} fails the length rule"
+
+
+def test_constructor_tags_get_the_same_name_as_a_later_set_tag(fake_mlflow: Any) -> None:
+    """`create_run` does not validate a tag key but `set_tag` does (measured) — one name per tag.
+
+    Without this a tag stamped at creation and re-set during the run would stand twice in the
+    UI, once under each spelling.
+    """
+    tracker = MlflowTracker(run_name="r", tags={"model<v2>": "a"}, log_system_metrics=False)
+    client = tracker.experiment
+    tracker.set_tags({"model<v2>": "b"})
+
+    assert client.created_tags == {"model_v2_": "a"}
+    assert list(client.tags) == ["model_v2_"]
