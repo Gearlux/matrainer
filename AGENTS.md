@@ -308,10 +308,10 @@ imported by `import matrainer`. (`tests/services/`, `::test_the_module_imports_n
   library goes behind an extra plus a lazy `require(...)`.
 - Releases use the hand-written `release.yml` (scaffold owns only `ci.yml`/`Jenkinsfile*`), with
   recordstream's discipline: an extra may name only a PyPI package (the release resolves every
-  extra); a workspace spec on matrainer reads the first pre-release with what that project imports
-  (`>=0.1.0a2` for the projects that use the model packages, torpaido among them; `>=0.1.0a1` elsewhere) and
-  rises only when the project starts importing something newer (user choice 2026-10-14; aisland
-  `tests/test_workspace_dependency_specs.py` checks each is satisfiable); floors state what the
+  extra); each release raises every workspace floor, core and extras, to the newest release and
+  runs the suite there, and a dependent's next release raises its `matrainer>=` the same way (user choice 2026-11-26,
+  replacing 2026-10-14's first-pre-release rule; aisland `tests/test_workspace_dependency_specs.py` checks each is
+  satisfiable); floors state what the
   suite runs against; README links are absolute
   (`tests/test_docs_links.py`); the newest CHANGELOG entry is the version (`tests/test_packaging.py`).
 - **The README is the quickstart; a feature lives in `docs/<topic>.md` (2026-10-28).** It holds install, a
