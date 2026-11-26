@@ -30,7 +30,7 @@ BEFORE ``model.fit`` where they touch a tracker (the run has ENDED when ``fit`` 
 keeps only local file writes after.
 """
 
-from typing import Any, Dict, Literal, cast
+from typing import Any, Dict, Iterable, Literal, cast
 
 import numpy as np
 from confluid import configurable, flow
@@ -45,7 +45,18 @@ from matrainer.tracking.provenance import failure_status
 
 logger = get_logger(__name__)
 
-__all__ = ["KerasRunnable"]
+__all__ = ["KerasRunnable", "end_tracked_run"]
+
+
+def end_tracked_run(callbacks: Iterable[Any], error: BaseException) -> None:
+    """End the tracker run of a fit that raised ``error``, on every callback that can (``end_run``).
+
+    The tracking callback ends its run in ``on_train_end``, which a fit that raises never reaches.
+    """
+    for callback in callbacks:
+        end_run = getattr(callback, "end_run", None)
+        if end_run is not None:
+            end_run(failure_status(error))
 
 
 @configurable(validate=False)
@@ -145,10 +156,7 @@ class KerasRunnable(KerasTrainerRunnable):
             )
         except BaseException as error:
             # Keras calls no callback when its fit raises: the run is ended here, as what happened.
-            for callback in callbacks:
-                end_run = getattr(callback, "end_run", None)
-                if end_run is not None:
-                    end_run(failure_status(error))
+            end_tracked_run(callbacks, error)
             raise
         self._history = {k: [float(x) for x in v] for k, v in history.history.items()}
         final = self._fit_scores({k: v[-1] for k, v in self._history.items()})

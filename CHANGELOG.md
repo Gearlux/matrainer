@@ -15,8 +15,8 @@ All notable changes to this project are documented here. The format follows
   ([`docs/run-manifest.md`](https://github.com/Gearlux/matrainer/blob/main/docs/run-manifest.md)).
 
 ### Fixed
-- **A run that raises is ended on its trackers** — the torch loop, fastai, Hugging Face, JAX and MLX trainers and
-  `KerasRunnable` ended a run only on their last line, so a training that raised stayed "running" on the tracker for
+- **A run that raises is ended on its trackers** — the torch loop, fastai, Hugging Face, JAX and MLX trainers,
+  `KerasRunnable` and `TensorFlowRunnable` ended a run only on their last line, so a training that raised stayed "running" on the tracker for
   ever, without its log file. They now end it as `failed` or `interrupted`.
 - **A run that fails on a Mac ends** — the Apple-GPU sampler's thread is a daemon its exit hook stops and joins. As a
   non-daemon thread it kept the process alive for ever when a run raised before its tracker was finalized: Python

@@ -238,3 +238,40 @@ def test_the_epoch_splats_the_batch() -> None:
     """`step(*batch)` — a task whose batch is not a pair (dense detection maps) drives the same
     loop with its own step arity."""
     assert "step(*batch)" in inspect.getsource(TensorFlowRunnable._run_epoch)
+
+
+def test_a_tensorflow_fit_that_raises_ends_the_trackers_run(monkeypatch: Any) -> None:
+    """The loop drives the callbacks by hand, so a raise skips `on_train_end`: the runnable ends the run itself."""
+
+    class _Callback(keras.callbacks.Callback):  # type: ignore[misc]
+        ended: Any = None
+
+        def end_run(self, status: str) -> None:
+            self.ended = status
+
+    class _Model:
+        trainable_variables: List[Any] = []
+
+    class _Optimizer:
+        def build(self, variables: Any) -> None:
+            pass
+
+    class _TfHooked(TensorFlowRunnable):
+        def initialize(self) -> None:  # pragma: no cover - structure only
+            pass
+
+        def _before_fit(self) -> None:
+            raise RuntimeError("training failed")
+
+    callback = _Callback()
+    runnable = _TfHooked()
+    runnable.train_set = [1]
+    runnable.model = _Model()
+    runnable._optimizer = _Optimizer()
+    monkeypatch.setattr(runnable, "_dataset", lambda *a, **k: ([], [1]))
+    monkeypatch.setattr(runnable, "_train_step_fn", lambda: None)
+    monkeypatch.setattr(runnable, "_eval_step_fn", lambda split: None)
+    monkeypatch.setattr(runnable, "_callbacks", lambda: [keras.callbacks.Callback(), callback])
+    with pytest.raises(RuntimeError, match="training failed"):
+        runnable.fit()
+    assert callback.ended == "failed"
